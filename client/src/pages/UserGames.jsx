@@ -2051,8 +2051,8 @@ const GameLivePricePanel = ({
   niftyLtpTape = false,
   /** Callback for bid/ask price updates (for Nifty Bracket) */
   onBidAskUpdate,
-  /** Nifty when market closed: 'spot' for close stick, 'ltp' for last live LTP stick */
-  closedNiftyStickMode = 'spot',
+  /** Nifty when market closed: 'clearing' for clearing stick, 'ltp' for last live LTP stick */
+  closedNiftyStickMode = 'clearing',
 }) => {
   const socketRef = useRef(null);
   const isLiveRef = useRef(false);
@@ -4883,6 +4883,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             <GameLivePricePanel 
               gameId={game.id} 
               fullHeight 
+              closedNiftyStickMode={!isBTC && game.id === 'updown' ? 'clearing' : undefined}
               onPriceUpdate={handlePriceUpdate}
               onSyncedNiftyCandlesForLtp={game.id === 'updown' ? handleSyncedNiftyCandlesForLtp : undefined}
               priceLines={openUpDownTrades
@@ -5828,6 +5829,7 @@ const NiftyNumberScreen = ({
             <GameLivePricePanel
               gameId={livePriceGameId}
               fullHeight
+              closedNiftyStickMode={livePriceGameId === 'updown' ? 'clearing' : undefined}
               onSessionClearingUpdate={setSessionClearing}
               onPriceDataUpdate={({ displayPrice, priceChange }) => {
                 setDisplayPrice(displayPrice);
@@ -7412,7 +7414,12 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
           {/* CENTER COLUMN - Nifty live price */}
           <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
-            <GameLivePricePanel gameId="updown" fullHeight onPriceUpdate={handleJackpotChartPrice} />
+            <GameLivePricePanel
+              gameId="updown"
+              fullHeight
+              closedNiftyStickMode="clearing"
+              onPriceUpdate={handleJackpotChartPrice}
+            />
           </div>
 
           {/* RIGHT COLUMN - Kitty + Top 5 + Bid Controls */}
