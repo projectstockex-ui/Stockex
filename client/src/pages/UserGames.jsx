@@ -6927,6 +6927,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [predictionDrafts, setPredictionDrafts] = useState({});
   const [last5DaysData, setLast5DaysData] = useState([]);
   const [showLast5Days, setShowLast5Days] = useState(false);
+  const [jackpotChartSpot, setJackpotChartSpot] = useState(null);
   const spotPrefillDoneRef = useRef(false);
   /** Same LTP as center chart — sent as `?spot=` so LIVE TOP 5 ranks move with ticks (no full page refresh). */
   const jackpotChartSpotRef = useRef(null);
@@ -7038,7 +7039,9 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
   const handleJackpotChartPrice = useCallback((price) => {
     if (price == null || !Number.isFinite(Number(price)) || Number(price) <= 0) return;
-    jackpotChartSpotRef.current = Number(price);
+    const spot = Number(price);
+    jackpotChartSpotRef.current = spot;
+    setJackpotChartSpot(spot);
     if (jackpotLbThrottleTimerRef.current) return;
     jackpotLbThrottleTimerRef.current = setTimeout(() => {
       jackpotLbThrottleTimerRef.current = null;
@@ -7445,14 +7448,24 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <TrendingUp size={10} /> NIFTY SPOT
                 </div>
                 <div className="text-2xl font-bold text-cyan-300 tabular-nums">
-                  {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference)))
-                    ? jackpotRankingReference.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot)))
-                      ? leaderboardSpot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                      : 'Loading...'}
+                  {(() => {
+                    const displaySpot =
+                      jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))
+                        ? Number(jackpotRankingReference)
+                        : leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))
+                          ? Number(leaderboardSpot)
+                          : jackpotChartSpot != null && Number.isFinite(Number(jackpotChartSpot))
+                            ? Number(jackpotChartSpot)
+                            : lockedPrice != null && Number.isFinite(Number(lockedPrice))
+                              ? Number(lockedPrice)
+                              : null;
+                    return displaySpot != null
+                      ? displaySpot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : 'Loading...';
+                  })()}
                 </div>
                 <div className="text-[10px] text-gray-400 mt-1">
-                  {jackpotRankingMode === 'nearest_locked_close' ? 'Locked result' : 'Live price'}
+                  {jackpotRankingMode === 'nearest_locked_close' || priceLocked ? 'Clearing price' : 'Live price'}
                 </div>
               </div>
 
