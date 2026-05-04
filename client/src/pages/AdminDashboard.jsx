@@ -156,40 +156,56 @@ import {
 
 
 
-/** Polls background Zerodha reset-and-sync until completed/failed (POST returns 202). */
-
-async function pollZerodhaResetSyncResult(authToken, options = {}) {
-
+/** Polls background Zerodha reset-and-sync until completed/failed (POST returns 202/409). */
+async function pollZerodhaResetSyncResult(authToken, statusUrl, options = {}) {
   const intervalMs = options.intervalMs ?? 2000;
-
   const maxAttempts = options.maxAttempts ?? 300;
+  const pollUrl = statusUrl || '/api/zerodha/sync/jobs';
+
+  const normalizeResult = (jobData) => {
+    // Progress service stores completion payload under `job.result`.
+    // Older flows may nest one more level: { result: {...} }.
+    const payload = jobData?.result ?? null;
+    if (payload?.result && typeof payload.result === 'object') return payload.result;
+    return payload;
+  };
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const { data } = await axios.get(pollUrl, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
 
-    const { data } = await axios.get('/api/zerodha/reset-and-sync/status', {
+      // Status endpoint returns single job; jobs endpoint returns list.
+      const job = Array.isArray(data?.jobs)
+        ? data.jobs.find((j) => j?.status === 'running') || data.jobs[0]
+        : data;
 
-      headers: { Authorization: `Bearer ${authToken}` },
+      if (!job) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        continue;
+      }
 
-    });
+      if (job.status === 'completed') {
+        const normalized = normalizeResult(job);
+        if (normalized) return normalized;
+        throw new Error('Sync completed but result payload is missing');
+      }
 
-    if (data.status === 'completed' && data.result) return data.result;
-
-    if (data.status === 'failed') {
-
-      throw new Error(data.error || data.message || 'Reset & sync failed');
-
+      if (job.status === 'failed' || job.status === 'cancelled') {
+        throw new Error(job.error?.message || job.error || job.message || 'Reset & sync failed');
+      }
+    } catch (error) {
+      // Job may not be visible instantly after 202 response; tolerate transient 404.
+      if (error?.response?.status !== 404) throw error;
     }
 
     await new Promise((r) => setTimeout(r, intervalMs));
-
   }
 
   throw new Error(
-
-    'Reset & sync is still running after a long wait. Check server logs or refresh later.'
-
+    'Reset & sync is still running after a long wait. Check server logs or refresh later.',
   );
-
 }
 
 
@@ -20411,7 +20427,7 @@ const InstrumentManagement = () => {
 
           if (res.status === 202 && res.data?.statusUrl) {
 
-            summary = await pollZerodhaResetSyncResult(admin.token);
+            summary = await pollZerodhaResetSyncResult(admin.token, res.data.statusUrl);
 
           } else if (res.data?.added != null || res.data?.totalInDatabase != null) {
 
@@ -20427,7 +20443,10 @@ const InstrumentManagement = () => {
 
           if (err.response?.status === 409 && admin.token) {
 
-            summary = await pollZerodhaResetSyncResult(admin.token);
+            summary = await pollZerodhaResetSyncResult(
+              admin.token,
+              err.response?.data?.statusUrl || '/api/zerodha/sync/jobs',
+            );
 
           } else {
 
@@ -21749,7 +21768,7 @@ const MarketControl = () => {
 
                           btn.textContent = 'Syncing…';
 
-                          data = await pollZerodhaResetSyncResult(admin.token);
+                          data = await pollZerodhaResetSyncResult(admin.token, res.data.statusUrl);
 
                         } else if (
 
@@ -21775,7 +21794,10 @@ const MarketControl = () => {
 
                           btn.textContent = 'Syncing…';
 
-                          data = await pollZerodhaResetSyncResult(admin.token);
+                          data = await pollZerodhaResetSyncResult(
+                            admin.token,
+                            err.response?.data?.statusUrl || '/api/zerodha/sync/jobs',
+                          );
 
                         } else {
 
