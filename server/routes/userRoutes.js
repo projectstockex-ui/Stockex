@@ -5492,13 +5492,15 @@ router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
   try {
     const today = getTodayIST();
     const settings = await GameSettings.getSettings();
-    const jpCfg = settings.games?.niftyJackpot || {};
-    const oneTicketRs = Number(settings.games?.niftyJackpot?.ticketPrice || settings.tokenValue || 300);
+    const settingsObj = settings && typeof settings === 'object' ? settings : {};
+    const gamesCfg = settingsObj.games && typeof settingsObj.games === 'object' ? settingsObj.games : {};
+    const oneTicketRs = Number(gamesCfg?.niftyJackpot?.ticketPrice || settingsObj.tokenValue || 300);
+    const safeTicketRs = Number.isFinite(oneTicketRs) && oneTicketRs > 0 ? oneTicketRs : 300;
     const bids = await NiftyJackpotBid.find({
       $and: [{ user: req.user._id }, buildNiftyJackpotIstDayQuery(today)],
     }).sort({ createdAt: -1 });
     const ticketsToday = bids.reduce(
-      (s, b) => s + niftyJackpotTicketUnitsForBid(b, oneTicketRs),
+      (s, b) => s + niftyJackpotTicketUnitsForBid(b, safeTicketRs),
       0
     );
     const totalStakedToday = bids.reduce((s, b) => s + (Number(b.amount) || 0), 0);
@@ -5523,7 +5525,7 @@ router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
       bids: bids.map((b) => ({
           _id: b._id,
           amount: b.amount,
-          ticketCount: niftyJackpotTicketUnitsForBid(b, oneTicketRs),
+          ticketCount: niftyJackpotTicketUnitsForBid(b, safeTicketRs),
           status: b.status,
           rank: b.rank,
           prize: b.prize,
@@ -5532,7 +5534,17 @@ router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
         })),
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('[nifty-jackpot/today] error:', error);
+    // Avoid repeated 500 polling loops on client.
+    return res.json({
+      hasBid: false,
+      ticketsToday: 0,
+      totalStakedToday: 0,
+      bid: null,
+      bids: [],
+      degraded: true,
+      message: error.message,
+    });
   }
 });
 
