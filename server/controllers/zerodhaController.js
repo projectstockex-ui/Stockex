@@ -676,6 +676,20 @@ class ZerodhaController {
         .select('token symbol tradingSymbol exchange ltp open high low close previousDayClosePrice lastBid lastAsk')
         .lean();
 
+      // Secondary fallback: for MCX base symbols, pick any recently-priced contract in same base family.
+      let baseFamilyRow = null;
+      if (!dbRow && baseSymbolRaw) {
+        baseFamilyRow = await Instrument.findOne({
+          $or: [
+            { symbol: { $regex: `^${escapeRegex(baseSymbolRaw)}`, $options: 'i' } },
+            { tradingSymbol: { $regex: `^${escapeRegex(baseSymbolRaw)}`, $options: 'i' } },
+          ],
+        })
+          .sort({ lastUpdated: -1, updatedAt: -1, ltp: -1 })
+          .select('token symbol tradingSymbol exchange ltp open high low close previousDayClosePrice lastBid lastAsk')
+          .lean();
+      }
+
       const toNum = (v) => {
         const n = Number(v);
         return Number.isFinite(n) && n > 0 ? n : null;
@@ -688,27 +702,42 @@ class ZerodhaController {
         return null;
       };
 
-      const ltp = pick(tick?.ltp, dbRow?.ltp, dbRow?.close, dbRow?.previousDayClosePrice);
+      const sourceRow = dbRow || baseFamilyRow;
+      const ltp = pick(
+        tick?.ltp,
+        sourceRow?.ltp,
+        sourceRow?.close,
+        sourceRow?.previousDayClosePrice,
+        sourceRow?.lastBid,
+        sourceRow?.lastAsk,
+        sourceRow?.open
+      );
       if (ltp == null) {
         return res.status(404).json({ message: 'Price unavailable for requested contract' });
       }
-      const bid = pick(tick?.rawBid, tick?.bid, dbRow?.lastBid, ltp);
-      const ask = pick(tick?.rawAsk, tick?.ask, dbRow?.lastAsk, ltp);
+      const bid = pick(tick?.rawBid, tick?.bid, sourceRow?.lastBid, sourceRow?.open, ltp);
+      const ask = pick(tick?.rawAsk, tick?.ask, sourceRow?.lastAsk, sourceRow?.open, ltp);
 
       return res.json({
-        token: tick?.token || dbRow?.token || tokenKey || null,
-        symbol: tick?.symbol || dbRow?.symbol || symbolRaw || null,
-        tradingSymbol: tick?.tradingSymbol || dbRow?.tradingSymbol || tradingSymbolRaw || null,
-        exchange: tick?.exchange || dbRow?.exchange || 'MCX',
+        token: tick?.token || sourceRow?.token || tokenKey || null,
+        symbol: tick?.symbol || sourceRow?.symbol || symbolRaw || baseSymbolRaw || null,
+        tradingSymbol: tick?.tradingSymbol || sourceRow?.tradingSymbol || tradingSymbolRaw || null,
+        exchange: tick?.exchange || sourceRow?.exchange || 'MCX',
         ltp,
         bid,
         ask,
-        open: pick(tick?.open, dbRow?.open, ltp),
-        high: pick(tick?.high, dbRow?.high, ltp),
-        low: pick(tick?.low, dbRow?.low, ltp),
-        close: pick(tick?.close, dbRow?.close, ltp),
-        prevDayClose: pick(dbRow?.previousDayClosePrice, dbRow?.close, ltp),
-        source: tick ? 'ws_orchestrator' : baseSymbolRaw ? 'instrument_base_fallback' : 'instrument_db_fallback',
+        open: pick(tick?.open, sourceRow?.open, ltp),
+        high: pick(tick?.high, sourceRow?.high, sourceRow?.open, ltp),
+        low: pick(tick?.low, sourceRow?.low, sourceRow?.open, ltp),
+        close: pick(tick?.close, sourceRow?.close, sourceRow?.previousDayClosePrice, ltp),
+        prevDayClose: pick(sourceRow?.previousDayClosePrice, sourceRow?.close, ltp),
+        source: tick
+          ? 'ws_orchestrator'
+          : baseFamilyRow
+            ? 'instrument_base_family_fallback'
+            : baseSymbolRaw
+              ? 'instrument_base_fallback'
+              : 'instrument_db_fallback',
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
