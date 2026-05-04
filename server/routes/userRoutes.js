@@ -651,8 +651,8 @@ router.post('/demo-register', async (req, res) => {
   }
 });
 
-// User Login
-router.post('/login', async (req, res) => {
+// Legacy login route kept for backward compatibility and to avoid duplicate /login registration.
+router.post('/login-legacy', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');

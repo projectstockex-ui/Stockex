@@ -175,7 +175,7 @@ export const loginUser = async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
     
-    if (!user || !(await user.matchPassword(password))) {
+    if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
@@ -316,7 +316,7 @@ export const changeUserPassword = async (req, res) => {
     }
 
     // Verify old password
-    const isOldPasswordValid = await user.matchPassword(oldPassword);
+    const isOldPasswordValid = await user.comparePassword(oldPassword);
     if (!isOldPasswordValid) {
       return res.status(400).json({ message: 'Current password is incorrect' });
     }

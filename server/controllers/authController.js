@@ -254,7 +254,7 @@ export const loginUser = async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
     
-    if (!user || !(await user.matchPassword(password))) {
+    if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
@@ -262,39 +262,47 @@ export const loginUser = async (req, res) => {
       return res.status(401).json({ message: 'Your account has been deactivated. Contact your admin.' });
     }
 
-    // Update last login
-    user.lastLogin = new Date();
-    await user.save();
-
-    // Generate tokens
-    const token = generateToken(user._id);
+    // Generate unique session token for single-device enforcement.
     const sessionToken = generateSessionToken();
 
-    // Update session token
-    user.activeSessionToken = sessionToken;
-    await user.save();
-
-    res.json({
-      message: 'Login successful',
-      token,
-      sessionToken,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        phone: user.phone,
-        phoneVerified: user.phoneVerified,
-        isDemo: user.isDemo,
-        adminCode: user.adminCode,
-        referralCode: user.referralCode,
-        referredBy: user.referredBy,
-        referralStats: user.referralStats,
-        createdAt: user.createdAt,
-        lastLogin: user.lastLogin,
-        createdBy: user.createdBy,
-        demoExpiresAt: user.demoExpiresAt
+    // Track login metadata and active session token.
+    const userAgent = req.headers['user-agent'] || 'Unknown device';
+    const deviceType = userAgent.includes('Mobile') ? 'Mobile' : 'Desktop';
+    await User.updateOne(
+      { _id: user._id },
+      {
+        activeSessionToken: sessionToken,
+        isLogin: true,
+        lastLoginAt: new Date(),
+        lastLoginDevice: deviceType
       }
+    );
+
+    const parentAdmin = user.createdBy
+      ? {
+          adminCode: user.createdBy.adminCode,
+          name: user.createdBy.name || user.createdBy.username,
+          role: user.createdBy.role
+        }
+      : null;
+
+    // Keep response shape backward-compatible with existing client/auth context.
+    res.json({
+      _id: user._id,
+      userId: user.userId,
+      username: user.username,
+      email: user.email,
+      fullName: user.fullName,
+      phone: user.phone,
+      role: user.role,
+      wallet: user.wallet,
+      marginAvailable: user.marginAvailable,
+      isReadOnly: user.isReadOnly || false,
+      isDemo: user.isDemo || false,
+      demoExpiresAt: user.demoExpiresAt,
+      createdAt: user.createdAt,
+      parentAdmin,
+      token: generateToken(user._id, sessionToken)
     });
   } catch (error) {
     console.error('[AuthController] Error in user login:', error);

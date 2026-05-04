@@ -117,7 +117,7 @@ export const authenticateUser = async (email, password) => {
     throw new Error('Your account has been deactivated. Contact your admin.');
   }
 
-  const isPasswordValid = await user.matchPassword(password);
+  const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
     throw new Error('Invalid email or password');
   }
@@ -445,7 +445,7 @@ export const changeUserPassword = async (userId, passwordData) => {
   }
 
   // Verify old password
-  const isOldPasswordValid = await user.matchPassword(passwordData.oldPassword);
+  const isOldPasswordValid = await user.comparePassword(passwordData.oldPassword);
   if (!isOldPasswordValid) {
     throw new Error('Current password is incorrect');
   }
