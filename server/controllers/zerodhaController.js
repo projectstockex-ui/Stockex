@@ -7,7 +7,6 @@
 
 import crypto from 'crypto';
 import axios from 'axios';
-import { connectTicker, disconnectTicker, getTickerStatus } from '../services/zerodhaWebSocket.js';
 import { ZerodhaOrchestrator } from '../services/zerodha/ZerodhaOrchestrator.js';
 import { ZerodhaConnectionManager } from '../services/zerodha/ZerodhaConnectionManager.js';
 import { ZerodhaSubscriptionManager } from '../services/zerodha/ZerodhaSubscriptionManager.js';
@@ -96,7 +95,6 @@ class ZerodhaController {
       
       // Load existing session
       await this.loadSession();
-      await this.ensureLiveTickerConnected('initialize');
       
       this.logger.info('Zerodha controller initialized successfully');
       
@@ -186,7 +184,6 @@ class ZerodhaController {
       connected: true,
     };
     await this.saveSession();
-    await this.ensureLiveTickerConnected('oauth_callback');
   }
 
   /**
@@ -266,7 +263,6 @@ class ZerodhaController {
    */
   async disconnect(req, res) {
     try {
-      disconnectTicker();
       if (this.orchestrator) {
         await this.orchestrator.disconnect();
       }
@@ -603,7 +599,6 @@ class ZerodhaController {
           const data = await fs.readFile(this.sessionFile, 'utf8');
           this.session = JSON.parse(data);
           this.logger.info('Session loaded from file');
-          await this.ensureLiveTickerConnected('load_session');
         } catch (error) {
           // File doesn't exist or is invalid
           this.logger.debug('No existing session file found');
@@ -633,7 +628,6 @@ class ZerodhaController {
       userId: null,
       loginTime: null
     };
-    disconnectTicker();
     
     try {
       if (this.sessionFile) {
@@ -663,27 +657,6 @@ class ZerodhaController {
     }
   }
 
-  /**
-   * Bridge persisted OAuth session to live ticker connection used by User dashboard sockets.
-   */
-  async ensureLiveTickerConnected(reason = 'unknown') {
-    try {
-      const apiKey = this.session?.apiKey;
-      const accessToken = this.session?.accessToken;
-      if (!apiKey || !accessToken) return;
-
-      const tickerState = getTickerStatus();
-      if (tickerState?.connected) return;
-
-      this.logger.info('Connecting Zerodha live ticker', { reason, userId: this.session?.userId });
-      connectTicker(apiKey, accessToken, []);
-    } catch (error) {
-      this.logger.warn('Failed to connect live ticker', {
-        reason,
-        error: error?.message || String(error),
-      });
-    }
-  }
 }
 
 // Singleton instance

@@ -46,14 +46,8 @@ import cron from 'node-cron';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load base env from server/.env first (most deployments keep production values here).
-// Then optionally load .env.production as additive overrides, without clobbering existing keys.
-const baseEnvFile = path.join(__dirname, '.env');
-dotenv.config({ path: baseEnvFile });
-if (process.env.NODE_ENV === 'production') {
-  const prodEnvFile = path.join(__dirname, '.env.production');
-  dotenv.config({ path: prodEnvFile, override: false });
-}
+// Always load server/.env (PM2 cwd is often repo root — default dotenv cwd breaks MONGODB_URI)
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 /** CORS + Socket.IO: merge CLIENT_URL, comma-separated CORS_ORIGIN, and local dev defaults */
 function buildAllowedOrigins() {

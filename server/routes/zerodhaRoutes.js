@@ -24,6 +24,8 @@ import {
 } from '../middleware/zerodhaMiddleware.js';
 import zerodhaController from '../controllers/zerodhaController.js';
 import environmentConfig from '../utils/environmentConfig.js';
+import Instrument from '../models/Instrument.js';
+import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
 
 const router = express.Router();
 
@@ -163,6 +165,59 @@ router.get('/market-data',
   rateLimitZerodha(100, 60000), // 100 requests per minute for users
   zc(zerodhaController.getMarketData)
 );
+
+// Public game price endpoint used by client live game panel fallback polling
+router.get('/game-price/:symbol', async (req, res) => {
+  try {
+    const raw = String(req.params.symbol || '').toUpperCase();
+    const symbol = raw === 'NIFTY50' ? 'NIFTY' : raw;
+    if (symbol !== 'NIFTY') {
+      return res.status(400).json({ message: 'Only NIFTY is supported for game-price endpoint' });
+    }
+
+    // Prefer authoritative Kite quote from persisted Zerodha session.
+    const kitePrice = await fetchNifty50LastPriceFromKite();
+    if (Number.isFinite(Number(kitePrice)) && Number(kitePrice) > 0) {
+      return res.json({
+        symbol: 'NIFTY',
+        price: Number(kitePrice),
+        close: Number(kitePrice),
+        prevDayClose: null,
+        source: 'kite',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Fallback to last cached instrument row so UI still gets a valid price.
+    const inst = await Instrument.findOne({
+      $or: [{ token: '256265' }, { symbol: { $in: ['NIFTY', 'NIFTY 50'] } }],
+    })
+      .select('ltp open high low close')
+      .lean();
+
+    const fallback = Number(inst?.ltp || inst?.close || 0);
+    if (!Number.isFinite(fallback) || fallback <= 0) {
+      return res.status(404).json({ message: 'NIFTY price unavailable' });
+    }
+
+    return res.json({
+      symbol: 'NIFTY',
+      price: fallback,
+      open: Number(inst?.open) || fallback,
+      high: Number(inst?.high) || fallback,
+      low: Number(inst?.low) || fallback,
+      close: Number(inst?.close) || fallback,
+      prevDayClose: Number(inst?.close) || fallback,
+      source: 'db_fallback',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: 'Failed to fetch game price',
+      error: error.message,
+    });
+  }
+});
 
 /**
  * Health and Maintenance Routes
