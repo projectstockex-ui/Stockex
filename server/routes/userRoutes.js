@@ -165,7 +165,10 @@ import WalletLedger from '../models/WalletLedger.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
-import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
+import {
+  fetchNifty50LastPriceFromKite,
+  fetchNifty50SessionClearing15mCached,
+} from '../utils/kiteNiftyQuote.js';
 import {
   niftyResultSecForWindow,
 } from '../../lib/niftyUpDownWindows.js';
@@ -5538,6 +5541,22 @@ router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
 router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
   try {
     const date = req.query.date || getTodayIST();
+    const nowIstParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+    const part = (t) => nowIstParts.find((p) => p.type === t)?.value;
+    const weekday = String(part('weekday') || '');
+    const secNow =
+      Number(part('hour') || 0) * 3600 +
+      Number(part('minute') || 0) * 60 +
+      Number(part('second') || 0);
+    const isWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday);
+    const isNseOpen = isWeekday && secNow >= 33300 && secNow < 55800;
 
     const rawBids = await NiftyJackpotBid.find(buildNiftyJackpotIstDayQuery(date))
       .populate('user', 'name username')
@@ -5552,19 +5571,43 @@ router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
         : null;
     const resultDeclared = !!jackpotResultDoc?.resultDeclared;
 
-    const referenceSpot =
-      req.query.spot != null && req.query.spot !== '' && Number.isFinite(Number(req.query.spot))
-        ? Number(req.query.spot)
-        : await resolveNiftyJackpotSpotPrice();
+    let referenceSpot = null;
+    if (isNseOpen) {
+      referenceSpot =
+        req.query.spot != null && req.query.spot !== '' && Number.isFinite(Number(req.query.spot))
+          ? Number(req.query.spot)
+          : await resolveNiftyJackpotSpotPrice();
+    } else {
+      const clearing = await fetchNifty50SessionClearing15mCached();
+      referenceSpot =
+        clearing?.close != null && Number.isFinite(Number(clearing.close)) && Number(clearing.close) > 0
+          ? Number(clearing.close)
+          : await resolveNiftyJackpotSpotPrice();
+    }
 
     // Fallback: if referenceSpot is still null, use a default value to ensure ranking works
     if (referenceSpot == null || !Number.isFinite(Number(referenceSpot)) || Number(referenceSpot) <= 0) {
       console.warn('[nifty-jackpot/leaderboard] No valid spot price resolved, using fallback');
     }
 
+    const bidTimeMs = (b) => {
+      if (b?.createdAt) return new Date(b.createdAt).getTime();
+      if (b?._id?.getTimestamp?.()) return b._id.getTimestamp().getTime();
+      return 0;
+    };
+    const validBidPrice = rawBids.find(
+      (b) => b?.niftyPriceAtBid != null && Number.isFinite(Number(b.niftyPriceAtBid)) && Number(b.niftyPriceAtBid) > 0
+    );
+    const fallbackBidRef =
+      validBidPrice?.niftyPriceAtBid != null ? Number(validBidPrice.niftyPriceAtBid) : null;
+
     const useLockedForRanking =
       resultDeclared && lockedPriceNum != null && lockedPriceNum > 0;
-    const rankingRef = useLockedForRanking ? lockedPriceNum : (Number(referenceSpot) || 24050.07);
+    const rankingRef = useLockedForRanking
+      ? lockedPriceNum
+      : (Number.isFinite(Number(referenceSpot)) && Number(referenceSpot) > 0
+          ? Number(referenceSpot)
+          : fallbackBidRef);
 
     const bids = sortJackpotBidsByDistanceToReference(rawBids, rankingRef);
     const uniquePlayerIds = new Set(
@@ -5662,7 +5705,7 @@ router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
           const ra = Number(a.rank);
           const rb = Number(b.rank);
           if (Number.isFinite(ra) && Number.isFinite(rb) && ra !== rb) return ra - rb;
-          return getBidTimeMs(a) - getBidTimeMs(b);
+          return bidTimeMs(a) - bidTimeMs(b);
         });
       }
       anonymousPodium = ordered.slice(0, 3).map((b) => ({
@@ -5707,7 +5750,29 @@ router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
       ticketsToday: myTicketsToday,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('[nifty-jackpot/leaderboard] error:', error);
+    // Keep client stable (no 500 spam loop) with a safe empty payload.
+    return res.json({
+      date: req.query.date || getTodayIST(),
+      referenceSpot: null,
+      rankingReference: null,
+      rankingMode: 'nearest_spot',
+      podiumIsOfficial: false,
+      anonymousPodium: [],
+      totalBids: 0,
+      uniquePlayerCount: 0,
+      totalPool: 0,
+      netPool: 0,
+      brokeragePercent: 0,
+      topWinners: 20,
+      prizePercentages: null,
+      leaderboard: [],
+      myRank: null,
+      myBid: null,
+      ticketsToday: 0,
+      degraded: true,
+      message: error.message,
+    });
   }
 });
 
@@ -5842,51 +5907,71 @@ router.get('/nifty-jackpot/last-5-days-clearing', protectUser, async (req, res) 
 // Get last 5 days closing LTP for Nifty Bracket
 router.get('/nifty-bracket/last-5-days', protectUser, async (req, res) => {
   try {
-    // Import Kite functions
-    const { fetchNifty50LastPriceFromKite, istCalendarDateString } = await import('../utils/kiteNiftyQuote.js');
-    
-    // Get current real-time LTP
-    const currentLTP = await fetchNifty50LastPriceFromKite();
-    
-    if (!currentLTP || !Number.isFinite(Number(currentLTP))) {
-      return res.status(500).json({ message: 'Could not fetch current LTP' });
-    }
-    
-    // Get last 5 completed trading days
+    const {
+      fetchNifty50HistoricalFromKite,
+      fetchNifty50LastPriceFromKite,
+      istCalendarDateString,
+    } = await import('../utils/kiteNiftyQuote.js');
+
     const today = istCalendarDateString();
-    const results = [];
-    
-    for (let i = 1; i <= 7; i++) { // Check last 7 days to get 5 completed days
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = istCalendarDateString(date);
-      
-      // Skip today and weekends
-      if (dateStr === today || date.getDay() === 0 || date.getDay() === 6) {
-        continue;
+    const out = [];
+
+    // Preferred source: Kite daily candles (true previous session closes).
+    const candles = await fetchNifty50HistoricalFromKite({
+      interval: 'day',
+      daysBack: 45,
+      maxCandles: 60,
+    });
+
+    const weekdayCompleted = (dateStr) => {
+      const d = new Date(`${dateStr}T12:00:00+05:30`);
+      const w = d.getDay();
+      return w !== 0 && w !== 6;
+    };
+
+    if (Array.isArray(candles) && candles.length > 0) {
+      const byDay = new Map();
+      for (const c of candles) {
+        const dayKey = istCalendarDateString(new Date(c.time * 1000));
+        const prev = byDay.get(dayKey);
+        if (!prev || c.time > prev.time) {
+          byDay.set(dayKey, { time: c.time, close: c.close });
+        }
       }
-      
-      if (results.length >= 5) break;
-      
-      // Use current LTP for all days (this ensures we show LTP, not clearing price)
-      results.push({
-        date: dateStr,
-        closingLTP: Number(currentLTP), // Current real-time LTP
-        closedAt: new Date(date).toISOString(),
-        note: 'REAL LTP (current price)'
-      });
+
+      const historical = [...byDay.entries()]
+        .filter(([d]) => d !== today && weekdayCompleted(d))
+        .sort((a, b) => b[1].time - a[1].time)
+        .slice(0, 5)
+        .map(([d, { time, close }]) => ({
+          date: d,
+          closingLTP: Number(close),
+          closedAt: new Date(time * 1000).toISOString(),
+          source: 'Kite day close',
+        }));
+
+      out.push(...historical);
     }
-    
-    // Sort results by date and return last 5
-    const sortedResults = results
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .slice(-5);
-    
-    console.log('Nifty Bracket LTP Results (using current LTP):', sortedResults);
-    res.json(sortedResults);
+
+    // Fallback: if Kite day candles unavailable, still return stable shape (no 500).
+    if (out.length === 0) {
+      const spot = await resolveNiftyJackpotSpotPrice();
+      const spotNum = Number(spot);
+      if (Number.isFinite(spotNum) && spotNum > 0) {
+        out.push({
+          date: today,
+          closingLTP: spotNum,
+          closedAt: new Date().toISOString(),
+          source: 'live_spot_fallback',
+        });
+      }
+    }
+
+    return res.json(out.slice(0, 5));
   } catch (error) {
     console.error('Error fetching last 5 days LTP for Nifty Bracket:', error);
-    res.status(500).json({ message: error.message });
+    // Keep client stable: avoid 500 polling spam loops.
+    return res.json([]);
   }
 });
 
