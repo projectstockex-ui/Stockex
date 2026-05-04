@@ -37,6 +37,26 @@ const router = express.Router();
 /** Express passes handlers without `this` — bind ZerodhaController instance */
 const zc = (fn) => fn.bind(zerodhaController);
 
+function isNseCashSessionOpenNowIST() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  const weekday = String(get('weekday') || '');
+  const h = Number(get('hour') || 0);
+  const m = Number(get('minute') || 0);
+  const s = Number(get('second') || 0);
+  const sec = h * 3600 + m * 60 + s;
+  const isWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday);
+  // NSE cash session: 09:15:00 to 15:30:00 IST.
+  return isWeekday && sec >= 33300 && sec < 55800;
+}
+
 /**
  * Set Socket.IO instance for controller
  */
@@ -185,6 +205,23 @@ router.get('/game-price/:symbol', async (req, res) => {
     const sessionClearing = Number(clearing?.close);
     const safeSessionClearing =
       Number.isFinite(sessionClearing) && sessionClearing > 0 ? sessionClearing : null;
+    const isNseOpen = isNseCashSessionOpenNowIST();
+
+    // After market close, stick to the official session close so UI matches Zerodha close.
+    if (!isNseOpen && safeSessionClearing != null) {
+      return res.json({
+        symbol: 'NIFTY',
+        price: safeSessionClearing,
+        open: safeSessionClearing,
+        high: safeSessionClearing,
+        low: safeSessionClearing,
+        close: safeSessionClearing,
+        prevDayClose: safeSessionClearing,
+        sessionClearing: safeSessionClearing,
+        source: 'session_clearing',
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     // Prefer authoritative Kite quote from persisted Zerodha session.
     const kitePrice = await fetchNifty50LastPriceFromKite();
