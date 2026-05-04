@@ -2193,10 +2193,13 @@ const GameLivePricePanel = ({
   // Nifty: if Zerodha/socket never delivers a tick, feed a demo LTP so bracket / up-down UI can be tested.
   useEffect(() => {
     if (isBTC) return;
-    const delayMs = loadingHistory ? 4000 : 800;
+    // When Zerodha is connected, do not rush into demo fallback.
+    // Give live socket/API quote enough time before marking as dummy.
+    const delayMs = zerodhaConnected ? 12000 : loadingHistory ? 4000 : 800;
     const t = setTimeout(() => {
       if (!isNseCashMarketOpen()) return;
       if (livePriceRef.current != null && livePriceRef.current > 0) return;
+      if (zerodhaConnected) return;
       const hist = historicalDataRef.current;
       const lastClose = hist?.length ? Number(hist[hist.length - 1]?.close) : NaN;
       const p =
@@ -2211,7 +2214,7 @@ const GameLivePricePanel = ({
       onDemoPriceActiveRef.current?.(true);
     }, delayMs);
     return () => clearTimeout(t);
-  }, [isBTC, loadingHistory, historicalData.length]);
+  }, [isBTC, loadingHistory, historicalData.length, zerodhaConnected]);
 
   // Fetch historical candles — NIFTY uses ?interval= to match Kite (15m default).
   useEffect(() => {

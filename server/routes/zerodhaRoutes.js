@@ -26,6 +26,7 @@ import zerodhaController from '../controllers/zerodhaController.js';
 import environmentConfig from '../utils/environmentConfig.js';
 import Instrument from '../models/Instrument.js';
 import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
+import { getMarketData } from '../services/zerodhaWebSocket.js';
 
 const router = express.Router();
 
@@ -184,6 +185,24 @@ router.get('/game-price/:symbol', async (req, res) => {
         close: Number(kitePrice),
         prevDayClose: null,
         source: 'kite',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Fast fallback: in-memory websocket tick cache (if stream is active).
+    const liveMap = getMarketData();
+    const liveTick = liveMap?.['256265'] || liveMap?.[256265];
+    const livePrice = Number(liveTick?.ltp || 0);
+    if (Number.isFinite(livePrice) && livePrice > 0) {
+      return res.json({
+        symbol: 'NIFTY',
+        price: livePrice,
+        open: Number(liveTick?.open) || livePrice,
+        high: Number(liveTick?.high) || livePrice,
+        low: Number(liveTick?.low) || livePrice,
+        close: Number(liveTick?.close) || livePrice,
+        prevDayClose: Number(liveTick?.close) || livePrice,
+        source: 'ws_cache',
         timestamp: new Date().toISOString(),
       });
     }
