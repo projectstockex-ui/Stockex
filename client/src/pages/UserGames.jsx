@@ -2491,6 +2491,20 @@ const GameLivePricePanel = ({
     ? BTC_CHART_OPTIONS.find((o) => o.interval === btcChartInterval)?.label || btcChartInterval
     : NIFTY_KITE_CHART_OPTIONS.find((o) => o.kite === niftyChartInterval)?.label || niftyChartInterval;
 
+  // Keep a render-safe price for side panel even when live callbacks are delayed.
+  const latestSyncedCandleClose =
+    !isBTC && Array.isArray(niftyRowsSyncedForGameLtp) && niftyRowsSyncedForGameLtp.length > 0
+      ? Number(niftyRowsSyncedForGameLtp[niftyRowsSyncedForGameLtp.length - 1]?.close)
+      : NaN;
+  const panelPrice =
+    Number.isFinite(Number(currentPrice)) && Number(currentPrice) > 0
+      ? Number(currentPrice)
+      : Number.isFinite(Number(lastNonZeroPriceRef.current)) && Number(lastNonZeroPriceRef.current) > 0
+        ? Number(lastNonZeroPriceRef.current)
+        : Number.isFinite(latestSyncedCandleClose) && latestSyncedCandleClose > 0
+          ? latestSyncedCandleClose
+          : null;
+
   const formatGameOhlcPx = (v) =>
     v != null && Number.isFinite(Number(v))
       ? Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -4885,9 +4899,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 <div className="text-xs text-gray-400 mb-1 text-center">
                   {isBTC ? 'BTC/USDT' : 'NIFTY 50'} Current Price
                 </div>
-                {currentPrice && currentPrice > 0 ? (
+                {panelPrice && panelPrice > 0 ? (
                   <div className="text-2xl font-bold text-center text-cyan-300 tabular-nums">
-                    {isBTC ? '$' : '₹'}{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {isBTC ? '$' : '₹'}{panelPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 ) : (
                   <div className="text-center py-2">
