@@ -253,8 +253,9 @@ router.get('/game-price/:symbol', async (req, res) => {
     // Authoritative candidates for clients:
     // - ltpPrice: live-ish source chain
     // - clearingPrice: official close-style source chain for non-bracket games post-market
-    const ltpPrice = pickFirstPositive(safeKitePrice, wsLtp, dbLtp, resultClose, dbClose, safeSessionClearing);
-    const clearingPrice = pickFirstPositive(safePrevDayClose, safeSessionClearing, dbClose, resultClose, ltpPrice);
+    const ltpPrice = pickFirstPositive(wsLtp, safeKitePrice, dbLtp, dbClose, resultClose, safeSessionClearing);
+    // Non-bracket games should stick to session clearing first (last 15m close), not stale result rows.
+    const clearingPrice = pickFirstPositive(safeSessionClearing, safePrevDayClose, dbClose, resultClose, ltpPrice);
 
     const selectedPrice =
       isNseOpen
@@ -283,10 +284,10 @@ router.get('/game-price/:symbol', async (req, res) => {
               : resultClose != null
                 ? 'game_result_closed_ltp'
                 : 'unavailable'
-        : safePrevDayClose != null
-          ? 'previous_day_close'
-          : safeSessionClearing != null
-            ? 'session_clearing'
+        : safeSessionClearing != null
+          ? 'session_clearing'
+          : safePrevDayClose != null
+            ? 'previous_day_close'
             : dbClose != null
               ? 'db_close'
               : resultClose != null

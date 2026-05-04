@@ -183,6 +183,11 @@ import {
   rollbackBtcJackpotStakeCredit,
 } from '../utils/btcJackpotPool.js';
 import {
+  resolveNiftyJackpotSpotPrice,
+  sortJackpotBidsByDistanceToReference,
+} from '../utils/niftyJackpotRank.js';
+import { resolveJackpotPrizePercentForRank } from '../utils/niftyJackpotPrize.js';
+import {
   validateBtcUpDownBetPlacement,
   currentTotalSecondsIST,
   btcResultRefSecForUiWindow,
