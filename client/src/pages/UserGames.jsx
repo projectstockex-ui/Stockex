@@ -2491,20 +2491,6 @@ const GameLivePricePanel = ({
     ? BTC_CHART_OPTIONS.find((o) => o.interval === btcChartInterval)?.label || btcChartInterval
     : NIFTY_KITE_CHART_OPTIONS.find((o) => o.kite === niftyChartInterval)?.label || niftyChartInterval;
 
-  // Keep a render-safe price for side panel even when live callbacks are delayed.
-  const latestSyncedCandleClose =
-    !isBTC && Array.isArray(niftyRowsSyncedForGameLtp) && niftyRowsSyncedForGameLtp.length > 0
-      ? Number(niftyRowsSyncedForGameLtp[niftyRowsSyncedForGameLtp.length - 1]?.close)
-      : NaN;
-  const panelPrice =
-    Number.isFinite(Number(currentPrice)) && Number(currentPrice) > 0
-      ? Number(currentPrice)
-      : Number.isFinite(Number(lastNonZeroPriceRef.current)) && Number(lastNonZeroPriceRef.current) > 0
-        ? Number(lastNonZeroPriceRef.current)
-        : Number.isFinite(latestSyncedCandleClose) && latestSyncedCandleClose > 0
-          ? latestSyncedCandleClose
-          : null;
-
   const formatGameOhlcPx = (v) =>
     v != null && Number.isFinite(Number(v))
       ? Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
