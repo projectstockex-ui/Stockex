@@ -73,13 +73,6 @@ function renderInrRedPaise(amount, className) {
       <span className={`font-bold tabular-nums tracking-tight ${className}`}>₹{s}</span>
     );
   }
-  const sidePanelPrice =
-    Number.isFinite(Number(currentPrice)) && Number(currentPrice) > 0
-      ? Number(currentPrice)
-      : Number.isFinite(Number(lastNonZeroPriceRef.current)) && Number(lastNonZeroPriceRef.current) > 0
-        ? Number(lastNonZeroPriceRef.current)
-        : null;
-
   return (
     <span className={`font-bold tabular-nums tracking-tight ${className}`}>
       ₹{s.slice(0, dot)}
@@ -2924,6 +2917,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const [currentPrice, setCurrentPrice] = useState(null); // Current live price for display
   const currentPriceRef = useRef(null);
   const lastNonZeroPriceRef = useRef(null);
+  const sidePanelPrice =
+    Number.isFinite(Number(currentPrice)) && Number(currentPrice) > 0
+      ? Number(currentPrice)
+      : Number.isFinite(Number(lastNonZeroPriceRef.current)) && Number(lastNonZeroPriceRef.current) > 0
+        ? Number(lastNonZeroPriceRef.current)
+        : null;
   const capturedWindowEndPriceRef = useRef(null); // Store price captured at exact window end
   const capturedWindowEndTimeRef = useRef(null); // Store exact window-end clock for diagnostics
   const activeTradesRef = useRef([]);
