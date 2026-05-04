@@ -15,6 +15,7 @@ import { ZerodhaPriceResolver } from '../services/zerodha/ZerodhaPriceResolver.j
 import environmentConfig from '../utils/environmentConfig.js';
 import { ZerodhaProgressService } from '../services/zerodha/ZerodhaProgressService.js';
 import Instrument from '../models/Instrument.js';
+import { getLTP } from '../services/ltpResolutionService.js';
 
 // Logger service
 class Logger {
@@ -703,7 +704,7 @@ class ZerodhaController {
       };
 
       const sourceRow = dbRow || baseFamilyRow;
-      const ltp = pick(
+      let ltp = pick(
         tick?.ltp,
         sourceRow?.ltp,
         sourceRow?.close,
@@ -712,6 +713,38 @@ class ZerodhaController {
         sourceRow?.lastAsk,
         sourceRow?.open
       );
+      let ltpSource = tick
+        ? 'ws_orchestrator'
+        : baseFamilyRow
+          ? 'instrument_base_family_fallback'
+          : baseSymbolRaw
+            ? 'instrument_base_fallback'
+            : 'instrument_db_fallback';
+
+      // Last-resort resolver: Redis/Instrument/OPEN trades path used by RMS & auto-squareoff.
+      if (ltp == null) {
+        const candidates = [
+          { token: tokenKey, symbol: symbolRaw, exchange: 'MCX' },
+          { token: tokenKey, symbol: tradingSymbolRaw, exchange: 'MCX' },
+          { token: sourceRow?.token, symbol: sourceRow?.symbol || sourceRow?.tradingSymbol, exchange: sourceRow?.exchange || 'MCX' },
+          { token: null, symbol: baseSymbolRaw, exchange: 'MCX' },
+        ];
+        for (const c of candidates) {
+          const s = String(c?.symbol || '').trim();
+          const t = String(c?.token || '').trim();
+          if (!s && !t) continue;
+          const viaLtpResolver = await getLTP({
+            token: t || undefined,
+            symbol: s || undefined,
+            exchange: c?.exchange || 'MCX',
+          });
+          if (Number.isFinite(viaLtpResolver) && viaLtpResolver > 0) {
+            ltp = Number(viaLtpResolver);
+            ltpSource = 'ltp_resolution_service_fallback';
+            break;
+          }
+        }
+      }
       if (ltp == null) {
         return res.status(404).json({ message: 'Price unavailable for requested contract' });
       }
@@ -731,13 +764,7 @@ class ZerodhaController {
         low: pick(tick?.low, sourceRow?.low, sourceRow?.open, ltp),
         close: pick(tick?.close, sourceRow?.close, sourceRow?.previousDayClosePrice, ltp),
         prevDayClose: pick(sourceRow?.previousDayClosePrice, sourceRow?.close, ltp),
-        source: tick
-          ? 'ws_orchestrator'
-          : baseFamilyRow
-            ? 'instrument_base_family_fallback'
-            : baseSymbolRaw
-              ? 'instrument_base_fallback'
-              : 'instrument_db_fallback',
+        source: ltpSource,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
