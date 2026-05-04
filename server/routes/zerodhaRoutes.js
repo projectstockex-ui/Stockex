@@ -27,6 +27,9 @@ import environmentConfig from '../utils/environmentConfig.js';
 
 const router = express.Router();
 
+/** Express passes handlers without `this` — bind ZerodhaController instance */
+const zc = (fn) => fn.bind(zerodhaController);
+
 /**
  * Set Socket.IO instance for controller
  */
@@ -46,7 +49,7 @@ router.use(handleZerodhaErrors);
 
 // Get Zerodha login URL (public endpoint)
 router.get('/login-url', 
-  zerodhaController.getLoginUrl
+  zc(zerodhaController.getLoginUrl)
 );
 
 // Connect to Zerodha
@@ -54,26 +57,33 @@ router.post('/connect',
   protectAdmin, 
   superAdminOnly, 
   rateLimitZerodha(5, 60000), // 5 attempts per minute
-  zerodhaController.connect
+  zc(zerodhaController.connect)
 );
 
 // Disconnect from Zerodha
 router.post('/disconnect', 
   protectAdmin, 
   superAdminOnly, 
-  zerodhaController.disconnect
+  zc(zerodhaController.disconnect)
+);
+
+// Alias used by admin UI
+router.post('/logout',
+  protectAdmin,
+  superAdminOnly,
+  zc(zerodhaController.disconnect)
 );
 
 // Get connection status (optional auth - works with or without token)
 router.get('/status', 
   optionalAuth,  // ✅ Works with or without authentication
-  zerodhaController.getStatus
+  zc(zerodhaController.getStatus)
 );
 
 // Get session info
 router.get('/session', 
   protectAdmin, 
-  zerodhaController.getSession
+  zc(zerodhaController.getSession)
 );
 
 /**
@@ -87,7 +97,7 @@ router.post('/reset-and-sync',
   requireZerodhaSession,
   validateSyncOperation,
   rateLimitZerodha(2, 300000), // 2 attempts per 5 minutes
-  zerodhaController.resetAndSync
+  zc(zerodhaController.resetAndSync)
 );
 
 // Get sync job status
@@ -95,14 +105,14 @@ router.get('/sync/status/:jobId',
   protectAdmin, 
   superAdminOnly,
   validateJobId,
-  zerodhaController.getSyncStatus
+  zc(zerodhaController.getSyncStatus)
 );
 
 // Get all sync jobs
 router.get('/sync/jobs', 
   protectAdmin, 
   superAdminOnly,
-  zerodhaController.getSyncJobs
+  zc(zerodhaController.getSyncJobs)
 );
 
 // Cancel sync job
@@ -110,7 +120,7 @@ router.post('/sync/cancel/:jobId',
   protectAdmin, 
   superAdminOnly,
   validateJobId,
-  zerodhaController.cancelSyncJob
+  zc(zerodhaController.cancelSyncJob)
 );
 
 /**
@@ -123,7 +133,7 @@ router.post('/subscribe',
   requireZerodhaConnection,
   validateTokensArray,
   rateLimitZerodha(10, 60000), // 10 attempts per minute
-  zerodhaController.subscribeTokens
+  zc(zerodhaController.subscribeTokens)
 );
 
 // Unsubscribe from tokens
@@ -132,14 +142,14 @@ router.post('/unsubscribe',
   requireZerodhaConnection,
   validateTokensArray,
   rateLimitZerodha(10, 60000), // 10 attempts per minute
-  zerodhaController.unsubscribeTokens
+  zc(zerodhaController.unsubscribeTokens)
 );
 
 // Get subscription statistics
 router.get('/subscriptions', 
   protectAdmin, 
   requireZerodhaConnection,
-  zerodhaController.getSubscriptions
+  zc(zerodhaController.getSubscriptions)
 );
 
 /**
@@ -151,7 +161,7 @@ router.get('/market-data',
   protectUser, 
   requireZerodhaConnection,
   rateLimitZerodha(100, 60000), // 100 requests per minute for users
-  zerodhaController.getMarketData
+  zc(zerodhaController.getMarketData)
 );
 
 /**
@@ -161,7 +171,7 @@ router.get('/market-data',
 // Health check endpoint
 router.get('/health', 
   protectAdmin, 
-  zerodhaController.healthCheck
+  zc(zerodhaController.healthCheck)
 );
 
 // Cleanup old jobs
@@ -169,7 +179,7 @@ router.post('/cleanup',
   protectAdmin, 
   superAdminOnly,
   rateLimitZerodha(5, 300000), // 5 attempts per 5 minutes
-  zerodhaController.cleanupJobs
+  zc(zerodhaController.cleanupJobs)
 );
 
 /**
@@ -177,78 +187,23 @@ router.post('/cleanup',
  * This is the callback URL that Zerodha redirects to after authentication
  */
 router.get('/callback', async (req, res) => {
+  const { success, error } = environmentConfig.getDashboardUrls();
+  const redirectError = (msg) =>
+    res.redirect(`${error}&message=${encodeURIComponent(msg || 'OAuth failed')}`);
+
   try {
     const { request_token } = req.query;
-    
+
     if (!request_token) {
-      console.error('Missing request_token in callback');
-      return res.status(400).json({
-        message: 'Request token is required',
-        error: 'Missing request_token parameter'
-      });
+      console.error('Missing request_token in Zerodha callback');
+      return redirectError('Missing request_token');
     }
-    
-    console.log('Zerodha callback received with request token:', request_token);
-    
-    // FORCE LOCALHOST - NO ENVIRONMENT DETECTION
-    const successUrl = 'http://localhost:3000/superadmin/dashboard?zerodha=connected';
-    const errorUrl = 'http://localhost:3000/superadmin/dashboard?zerodha=error';
-    
-    console.log('FORCED LOCALHOST REDIRECT:');
-    console.log('Success URL:', successUrl);
-    console.log('Error URL:', errorUrl);
-    
-    // Validate URLs to prevent chrome errors
-    const baseUrl = 'http://localhost:3000';
-    if (!baseUrl.startsWith('http')) {
-      console.error('Invalid frontend URL:', baseUrl);
-      return res.status(500).json({
-        message: 'Invalid frontend URL configuration',
-        error: 'Frontend URL must start with http/https'
-      });
-    }
-    
-    // Ultra-fast callback processing - NO DELAYS
-    try {
-      console.log('Processing Zerodha callback with request_token:', request_token);
-      
-      // Minimal validation - no blocking operations
-      const apiKey = process.env.ZERODHA_API_KEY || 'uenync1h2njo4g5i';
-      
-      // Create session synchronously - no async operations
-      try {
-        zerodhaController.session = {
-          apiKey,
-          accessToken: request_token,
-          userId: 'default',
-          loginTime: new Date(),
-          connected: true
-        };
-        console.log('Session created synchronously');
-      } catch (sessionError) {
-        console.warn('Session creation failed, but continuing redirect:', sessionError.message);
-      }
-      
-      // IMMEDIATE redirect - no delays, no async processing
-      console.log('Immediate redirect to dashboard:', successUrl);
-      return res.redirect(successUrl);
-      
-    } catch (connectionError) {
-      console.error('Callback processing error:', connectionError);
-      console.log('Redirecting to error URL:', errorUrl);
-      
-      // Always redirect, never fail
-      return res.redirect(errorUrl);
-    }
-    
-  } catch (error) {
-    console.error('Zerodha callback error:', error);
-    
-    // Always redirect to prevent chrome errors - FORCE LOCALHOST
-    const fallbackErrorUrl = 'http://localhost:3000/superadmin/dashboard?zerodha=error';
-    console.log('Final fallback redirect to:', fallbackErrorUrl);
-    
-    return res.redirect(fallbackErrorUrl);
+
+    await zerodhaController.exchangeAndPersistSession(request_token);
+    return res.redirect(success);
+  } catch (err) {
+    console.error('Zerodha callback error:', err?.message || err);
+    return redirectError(err?.message || 'Zerodha OAuth failed');
   }
 });
 

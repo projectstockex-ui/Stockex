@@ -1438,7 +1438,7 @@ const SuperAdminDashboard = () => {
 
     const zerodhaResult = params.get('zerodha');
 
-    if (zerodhaResult === 'success') {
+    if (zerodhaResult === 'success' || zerodhaResult === 'connected') {
 
       window.history.replaceState({}, '', window.location.pathname);
 
@@ -1589,6 +1589,13 @@ const SuperAdminDashboard = () => {
     } catch (error) {
 
       console.error('Zerodha connection error:', error);
+
+      const msg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Could not start Zerodha login';
+      alert(msg);
 
       setConnecting(false);
 
@@ -21372,7 +21379,7 @@ const MarketControl = () => {
 
     const zerodhaResult = params.get('zerodha');
 
-    if (zerodhaResult === 'success') {
+    if (zerodhaResult === 'success' || zerodhaResult === 'connected') {
 
       window.history.replaceState({}, '', window.location.pathname);
 

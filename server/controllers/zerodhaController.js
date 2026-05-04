@@ -5,6 +5,8 @@
  * Follows SOLID principles and clean architecture.
  */
 
+import crypto from 'crypto';
+import axios from 'axios';
 import { ZerodhaOrchestrator } from '../services/zerodha/ZerodhaOrchestrator.js';
 import { ZerodhaConnectionManager } from '../services/zerodha/ZerodhaConnectionManager.js';
 import { ZerodhaSubscriptionManager } from '../services/zerodha/ZerodhaSubscriptionManager.js';
@@ -135,39 +137,65 @@ class ZerodhaController {
   }
 
   /**
+   * Exchange Kite Connect request_token for access_token and persist session.
+   */
+  async exchangeAndPersistSession(requestToken) {
+    const apiKey = process.env.ZERODHA_API_KEY;
+    const apiSecret = process.env.ZERODHA_API_SECRET;
+    if (!apiKey || !apiSecret) {
+      throw new Error('ZERODHA_API_KEY and ZERODHA_API_SECRET must be set in server .env');
+    }
+
+    const checksum = crypto
+      .createHash('sha256')
+      .update(apiKey + requestToken + apiSecret)
+      .digest('hex');
+
+    const form = new URLSearchParams({
+      api_key: apiKey,
+      request_token: requestToken,
+      checksum,
+    });
+
+    let kiteRes;
+    try {
+      const res = await axios.post('https://api.kite.trade/session/token', form.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 20000,
+        validateStatus: () => true,
+      });
+      kiteRes = res.data;
+    } catch (e) {
+      const msg = e.response?.data?.message || e.message || 'Network error calling Kite';
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+
+    if (kiteRes?.status !== 'success' || !kiteRes?.data?.access_token) {
+      const errMsg = kiteRes?.message || kiteRes?.error_type || 'Token exchange failed';
+      throw new Error(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg));
+    }
+
+    const d = kiteRes.data;
+    this.session = {
+      apiKey,
+      accessToken: d.access_token,
+      userId: d.user_id != null ? String(d.user_id) : 'unknown',
+      loginTime: new Date(),
+      connected: true,
+    };
+    await this.saveSession();
+  }
+
+  /**
    * Handle Zerodha OAuth callback
    */
   async handleCallback(requestToken) {
     try {
-      // Use environment variables with fallback
-      const apiKey = process.env.ZERODHA_API_KEY || 'uenync1h2njo4g5i';
-      const apiSecret = process.env.ZERODHA_API_SECRET || 'gu5y7zf18j32lqdssacj6jdxmno72fcj';
-
-      console.log('Handling Zerodha callback with request token:', request_token);
-      console.log('Using API key:', apiKey);
-      
-      // Create proper session
-      this.session = {
-        apiKey,
-        accessToken: requestToken,
-        userId: 'default',
-        loginTime: new Date(),
-        connected: true
-      };
-
-      // Save session properly
-      try {
-        await this.saveSession();
-        console.log('Session saved successfully');
-      } catch (saveError) {
-        console.warn('Failed to save session:', saveError.message);
-      }
-      
-      console.log('Zerodha connected successfully');
-      return { connected: true, accessToken: requestToken };
-      
+      await this.exchangeAndPersistSession(requestToken);
+      this.logger.info('Zerodha session established', { userId: this.session.userId });
+      return { connected: true, accessToken: this.session.accessToken };
     } catch (error) {
-      console.error('Error handling Zerodha callback:', error);
+      this.logger.error('Error handling Zerodha callback:', error);
       throw error;
     }
   }
@@ -235,7 +263,9 @@ class ZerodhaController {
    */
   async disconnect(req, res) {
     try {
-      await this.orchestrator.disconnect();
+      if (this.orchestrator) {
+        await this.orchestrator.disconnect();
+      }
       await this.clearSession();
 
       res.json({ message: 'Disconnected from Zerodha successfully' });
@@ -254,18 +284,33 @@ class ZerodhaController {
    */
   async getStatus(req, res) {
     try {
-      // Return simple status to prevent crashes
+      let orchState = null;
+      try {
+        orchState = this.orchestrator?.getConnectionStatus?.() ?? null;
+      } catch {
+        orchState = null;
+      }
+
+      const wsConnected = !!orchState?.connected;
+      const hasSession = !!(this.session?.accessToken && this.session?.apiKey);
+      const connected = hasSession || wsConnected;
+
       const connectionStatus = {
-        connected: false,
-        initialized: false,
+        connected,
+        wsConnected,
+        hasSession,
+        userId: this.session?.userId || null,
+        initialized: !!orchState?.initialized,
         authenticated: !!req.user,
         userType: req.userType || null,
         timestamp: new Date(),
-        session: null,
+        session: hasSession
+          ? { userId: this.session.userId, loginTime: this.session.loginTime }
+          : null,
         instruments: [],
-        subscriptions: []
+        subscriptions: [],
       };
-      
+
       res.json(connectionStatus);
     } catch (error) {
       console.error('Zerodha status error:', error);
