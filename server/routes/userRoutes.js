@@ -160,6 +160,7 @@ import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import GamesWalletLedger from '../models/GamesWalletLedger.js';
+import UpDownWindowSettlement from '../models/UpDownWindowSettlement.js';
 import WalletLedger from '../models/WalletLedger.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';

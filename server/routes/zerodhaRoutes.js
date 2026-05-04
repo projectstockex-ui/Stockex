@@ -207,18 +207,28 @@ router.get('/game-price/:symbol', async (req, res) => {
       Number.isFinite(sessionClearing) && sessionClearing > 0 ? sessionClearing : null;
     const isNseOpen = isNseCashSessionOpenNowIST();
 
+    // Prefer previous-day official close (if available) for closed-market stick display.
+    const closeRefInst = await Instrument.findOne({
+      $or: [{ token: '256265' }, { symbol: { $in: ['NIFTY', 'NIFTY 50'] } }],
+    })
+      .select('previousDayClosePrice close')
+      .lean();
+    const prevDayClose = Number(closeRefInst?.previousDayClosePrice || 0);
+    const safePrevDayClose = Number.isFinite(prevDayClose) && prevDayClose > 0 ? prevDayClose : null;
+    const stickyClose = safePrevDayClose ?? safeSessionClearing;
+
     // After market close, stick to the official session close so UI matches Zerodha close.
-    if (!isNseOpen && safeSessionClearing != null) {
+    if (!isNseOpen && stickyClose != null) {
       return res.json({
         symbol: 'NIFTY',
-        price: safeSessionClearing,
-        open: safeSessionClearing,
-        high: safeSessionClearing,
-        low: safeSessionClearing,
-        close: safeSessionClearing,
-        prevDayClose: safeSessionClearing,
-        sessionClearing: safeSessionClearing,
-        source: 'session_clearing',
+        price: stickyClose,
+        open: stickyClose,
+        high: stickyClose,
+        low: stickyClose,
+        close: stickyClose,
+        prevDayClose: safePrevDayClose ?? stickyClose,
+        sessionClearing: safeSessionClearing ?? stickyClose,
+        source: safePrevDayClose != null ? 'previous_day_close' : 'session_clearing',
         timestamp: new Date().toISOString(),
       });
     }
