@@ -11,8 +11,12 @@ export function loadZerodhaSessionFromFile() {
   try {
     if (fs.existsSync(SESSION_FILE)) {
       const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-      if (data?.accessToken && data?.expiresAt && new Date(data.expiresAt) > new Date()) {
-        return data;
+      // Accept both old + new session shapes:
+      // - current controller persists { accessToken, apiKey, userId, loginTime }
+      // - older flows may persist expiresAt
+      if (data?.accessToken) {
+        if (!data.expiresAt) return data;
+        if (new Date(data.expiresAt) > new Date()) return data;
       }
     }
   } catch (e) {

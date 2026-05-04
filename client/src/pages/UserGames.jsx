@@ -2462,7 +2462,7 @@ const GameLivePricePanel = ({
       }
     };
     syncAuthoritative();
-    const id = setInterval(syncAuthoritative, 2000);
+    const id = setInterval(syncAuthoritative, 1200);
     return () => {
       cancelled = true;
       clearInterval(id);
