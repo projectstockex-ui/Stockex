@@ -177,6 +177,13 @@ router.get('/contract-price',
   zc(zerodhaController.getContractPrice)
 );
 
+// Read-only MCX diagnostic for verifying live data path
+router.get('/mcx-debug',
+  protectUser,
+  rateLimitZerodha(30, 60000),
+  zc(zerodhaController.getMcxDebug)
+);
+
 // Public game price endpoint used by client live game panel fallback polling
 router.get('/game-price/:symbol', zc(zerodhaController.getGamePrice));
 

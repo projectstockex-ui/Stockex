@@ -745,8 +745,70 @@ class ZerodhaController {
           }
         }
       }
+
+      // Zerodha REST quote fallback (live) when ws/db snapshots don't have contract price.
+      if (ltp == null && this.session?.apiKey && this.session?.accessToken) {
+        const quoteSymbols = [
+          String(tradingSymbolRaw || '').trim().toUpperCase(),
+          String(symbolRaw || '').trim().toUpperCase(),
+          String(sourceRow?.tradingSymbol || '').trim().toUpperCase(),
+          String(sourceRow?.symbol || '').trim().toUpperCase(),
+        ].filter(Boolean);
+        const seen = new Set();
+        for (const ts of quoteSymbols) {
+          if (seen.has(ts)) continue;
+          seen.add(ts);
+          try {
+            const url = `https://api.kite.trade/quote?i=${encodeURIComponent(`MCX:${ts}`)}`;
+            const qr = await axios.get(url, {
+              headers: {
+                'X-Kite-Version': '3',
+                Authorization: `token ${this.session.apiKey}:${this.session.accessToken}`,
+              },
+              timeout: 6000,
+              validateStatus: () => true,
+            });
+            const q = qr?.data?.data?.[`MCX:${ts}`];
+            const restLtp = pick(q?.last_price, q?.ohlc?.close, q?.depth?.buy?.[0]?.price, q?.depth?.sell?.[0]?.price);
+            if (restLtp != null) {
+              ltp = restLtp;
+              ltpSource = 'kite_rest_quote_fallback';
+              break;
+            }
+          } catch {
+            // Continue next candidate symbol.
+          }
+        }
+      }
+      // Auto-subscribe requested token so subsequent ticks flow even if watchlist subscribe lagged.
+      try {
+        const subToken = Number.parseInt(tokenKey, 10);
+        if (
+          Number.isFinite(subToken) &&
+          subToken > 0 &&
+          this.orchestrator?.getConnectionStatus?.().connected
+        ) {
+          void this.orchestrator.subscribeTokens([subToken]).catch(() => {});
+        }
+      } catch {
+        // Best-effort subscribe; never block the response.
+      }
+
+      const connection = this.orchestrator?.getConnectionStatus?.() || {};
       if (ltp == null) {
-        return res.status(404).json({ message: 'Price unavailable for requested contract' });
+        return res.status(404).json({
+          message: 'Price unavailable for requested contract',
+          debug: {
+            requested: { tokenRaw, symbolRaw, tradingSymbolRaw, baseSymbolFromReq, baseSymbolRaw },
+            checks: {
+              wsConnected: !!connection.connected,
+              tickFound: !!tick,
+              instrumentRowFound: !!dbRow,
+              baseFamilyRowFound: !!baseFamilyRow,
+              hasKiteSession: !!(this.session?.apiKey && this.session?.accessToken),
+            },
+          },
+        });
       }
       const bid = pick(tick?.rawBid, tick?.bid, sourceRow?.lastBid, sourceRow?.open, ltp);
       const ask = pick(tick?.rawAsk, tick?.ask, sourceRow?.lastAsk, sourceRow?.open, ltp);
@@ -765,6 +827,7 @@ class ZerodhaController {
         close: pick(tick?.close, sourceRow?.close, sourceRow?.previousDayClosePrice, ltp),
         prevDayClose: pick(sourceRow?.previousDayClosePrice, sourceRow?.close, ltp),
         source: ltpSource,
+        wsConnected: !!connection.connected,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -773,6 +836,49 @@ class ZerodhaController {
         message: 'Failed to resolve contract price',
         error: error.message,
       });
+    }
+  }
+
+  /**
+   * Read-only diagnostic for MCX live data path.
+   * GET /api/zerodha/mcx-debug
+   */
+  async getMcxDebug(req, res) {
+    try {
+      const md = this.orchestrator?.getMarketData?.() || {};
+      const connection = this.orchestrator?.getConnectionStatus?.() || {};
+      const rows = Object.values(md).filter((r) => {
+        const ex = String(r?.exchange || '').toUpperCase();
+        const sym = String(r?.symbol || r?.tradingSymbol || '').toUpperCase();
+        if (ex === 'MCX') return true;
+        return /^(CRUDEOIL|GOLD|SILVER|NATURALGAS|COPPER|ZINC|ALUMINIUM|LEAD|NICKEL)/.test(sym);
+      });
+      const sample = rows.slice(0, 25).map((r) => ({
+        token: r?.token,
+        symbol: r?.symbol,
+        tradingSymbol: r?.tradingSymbol,
+        exchange: r?.exchange,
+        ltp: r?.ltp,
+        bid: r?.bid,
+        ask: r?.ask,
+        lastTradeTime: r?.lastTradeTime,
+        lastUpdated: r?.lastUpdated,
+      }));
+      return res.json({
+        wsConnected: !!connection.connected,
+        connectionState: connection.state || null,
+        subscriptions: connection.subscriptions || null,
+        marketDataKeys: Object.keys(md).length,
+        mcxLikeRowCount: rows.length,
+        mcxSample: sample,
+        hasKiteSession: !!(this.session?.apiKey && this.session?.accessToken),
+        userId: this.session?.userId || null,
+        loginTime: this.session?.loginTime || null,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.logger.error('Error building MCX debug payload:', error);
+      return res.status(500).json({ message: 'Failed to build MCX debug', error: error.message });
     }
   }
 
