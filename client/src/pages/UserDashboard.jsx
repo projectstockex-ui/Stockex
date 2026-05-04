@@ -401,7 +401,7 @@ function getUsdSpotBidAsk(marketData, item, options) {
   }
   const liveData = marketDataRowForInstrumentToken(marketData, item?.token) || {};
   const { bid, ask } = alignIndianBookBidAskWithLtp(liveData, item, options);
-  return { bidPrice: bid, ask: ask };
+  return { bidPrice: bid, askPrice: ask };
 }
 
 /** Segment `cryptoSpreadInr` = total ₹ width per coin on quote; half widens bid/ask in USDT before FX display. */
@@ -1607,13 +1607,19 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     mcxTickSubscribeTimerRef.current = setTimeout(async () => {
       mcxTickSubscribeTimerRef.current = null;
       const ids = new Set();
+      const symbols = new Set();
       const pushTok = (inst) => {
         if (!inst || inst.isCrypto || inst.isForex) return;
         if (isUsdSpotInstrument(inst)) return;
         const t = inst.token;
         if (t == null || t === '') return;
         const n = parseInt(String(t), 10);
-        if (!Number.isNaN(n) && n > 0) ids.add(n);
+        if (!Number.isNaN(n) && n > 0) {
+          ids.add(n);
+          return;
+        }
+        const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
+        if (sym) symbols.add(sym);
       };
       ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
         (watchlistBySegment[seg] || []).forEach(pushTok);
@@ -1623,9 +1629,10 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
         if (!Number.isNaN(n) && n > 0) ids.add(n);
       }
       const tokens = [...ids];
-      if (tokens.length === 0) return;
+      const symbolList = [...symbols];
+      if (tokens.length === 0 && symbolList.length === 0) return;
       try {
-        await axios.post('/api/zerodha/tick-subscribe', { tokens }, {
+        await axios.post('/api/zerodha/tick-subscribe', { tokens, symbols: symbolList }, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
       } catch {
@@ -5238,13 +5245,19 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
     mcxTickSubscribeTimerRef.current = setTimeout(async () => {
       mcxTickSubscribeTimerRef.current = null;
       const ids = new Set();
+      const symbols = new Set();
       const pushTok = (inst) => {
         if (!inst || inst.isCrypto || inst.isForex) return;
         if (isUsdSpotInstrument(inst)) return;
         const t = inst.token;
         if (t == null || t === '') return;
         const n = parseInt(String(t), 10);
-        if (!Number.isNaN(n) && n > 0) ids.add(n);
+        if (!Number.isNaN(n) && n > 0) {
+          ids.add(n);
+          return;
+        }
+        const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
+        if (sym) symbols.add(sym);
       };
       ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
         (watchlistBySegment[seg] || []).forEach(pushTok);
@@ -5254,9 +5267,10 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
         if (!Number.isNaN(n) && n > 0) ids.add(n);
       }
       const tokens = [...ids];
-      if (tokens.length === 0) return;
+      const symbolList = [...symbols];
+      if (tokens.length === 0 && symbolList.length === 0) return;
       try {
-        await axios.post('/api/zerodha/tick-subscribe', { tokens }, {
+        await axios.post('/api/zerodha/tick-subscribe', { tokens, symbols: symbolList }, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
       } catch {

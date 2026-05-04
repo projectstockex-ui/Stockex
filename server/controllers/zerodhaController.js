@@ -14,6 +14,7 @@ import { ZerodhaSyncService } from '../services/zerodha/ZerodhaSyncService.js';
 import { ZerodhaPriceResolver } from '../services/zerodha/ZerodhaPriceResolver.js';
 import environmentConfig from '../utils/environmentConfig.js';
 import { ZerodhaProgressService } from '../services/zerodha/ZerodhaProgressService.js';
+import Instrument from '../models/Instrument.js';
 
 // Logger service
 class Logger {
@@ -484,20 +485,37 @@ class ZerodhaController {
    */
   async tickSubscribe(req, res) {
     try {
-      const { tokens } = req.body;
-      if (!Array.isArray(tokens) || tokens.length === 0) {
-        return res.status(202).json({
-          message: 'No tokens provided; skipped',
-          accepted: 0,
-        });
+      const { tokens, symbols } = req.body || {};
+      const normalized = (Array.isArray(tokens) ? tokens : [])
+        .map((t) => Number.parseInt(String(t).trim(), 10))
+        .filter((n) => Number.isFinite(n) && n > 0);
+
+      // Fallback path for contracts whose token was not present in watchlist payload.
+      if (Array.isArray(symbols) && symbols.length > 0) {
+        const cleanSymbols = symbols
+          .map((s) => String(s || '').trim().toUpperCase())
+          .filter((s) => s.length > 0)
+          .slice(0, 100);
+        if (cleanSymbols.length > 0) {
+          const rows = await Instrument.find({
+            $or: [
+              { symbol: { $in: cleanSymbols } },
+              { tradingSymbol: { $in: cleanSymbols } },
+            ],
+          })
+            .select('token symbol tradingSymbol exchange displaySegment segment')
+            .lean();
+          for (const row of rows || []) {
+            const n = Number.parseInt(String(row?.token || '').trim(), 10);
+            if (Number.isFinite(n) && n > 0) normalized.push(n);
+          }
+        }
       }
 
-      const normalized = tokens
-        .map((t) => Number.parseInt(String(t), 10))
-        .filter((n) => Number.isFinite(n) && n > 0);
-      if (normalized.length === 0) {
+      const deduped = [...new Set(normalized)];
+      if (deduped.length === 0) {
         return res.status(202).json({
-          message: 'No valid numeric token ids; skipped',
+          message: 'No valid token ids resolved; skipped',
           accepted: 0,
         });
       }
@@ -507,11 +525,11 @@ class ZerodhaController {
         void this.ensureWebSocketConnected('user_tick_subscribe');
         return res.status(202).json({
           message: 'Zerodha reconnect in progress; subscription queued',
-          accepted: normalized.length,
+          accepted: deduped.length,
         });
       }
 
-      const result = await this.orchestrator.subscribeTokens(normalized, {
+      const result = await this.orchestrator.subscribeTokens(deduped, {
         timeout: 30000,
       });
       return res.json({
