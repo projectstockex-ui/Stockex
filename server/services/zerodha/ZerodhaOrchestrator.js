@@ -103,9 +103,11 @@ export class ZerodhaOrchestrator {
       const jobId = this.syncService.generateJobId();
       
       // Start sync in background with timeout
-      const syncPromise = this.syncService.performFullSync(apiKey, accessToken, {
+      void this.syncService.performFullSync(apiKey, accessToken, {
         ...options,
         jobId
+      }).catch((error) => {
+        this.loggerService.error('Background sync execution failed:', error);
       });
 
       // Return job ID for status polling

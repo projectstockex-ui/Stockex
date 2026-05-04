@@ -24,7 +24,7 @@ export class ZerodhaSyncService {
    * Perform full instrument sync with timeout and progress tracking
    */
   async performFullSync(apiKey, accessToken, options = {}) {
-    const jobId = this.generateJobId();
+    const jobId = options.jobId || this.generateJobId();
     const config = { ...this.syncConfig, ...options };
     
     try {
@@ -47,7 +47,7 @@ export class ZerodhaSyncService {
       this.progressService.updateJob(jobId, { step: 3, message: 'Existing data backed up' });
 
       // Step 4: Clear and insert new data
-      const result = await this.clearAndInsert(parsedInstruments, config);
+      const result = await this.clearAndInsert(parsedInstruments, config, jobId);
       this.progressService.updateJob(jobId, { step: 4, message: 'Database updated' });
 
       // Step 5: Verify sync
@@ -188,7 +188,7 @@ export class ZerodhaSyncService {
   /**
    * Clear existing data and insert new instruments in chunks
    */
-  async clearAndInsert(instruments, config) {
+  async clearAndInsert(instruments, config, jobId) {
     const Instrument = (await import('../../models/Instrument.js')).default;
     const chunkSize = config.chunkSize || 2000;
     
@@ -209,7 +209,7 @@ export class ZerodhaSyncService {
           await Instrument.insertMany(processedChunk, { ordered: false });
           insertedCount += processedChunk.length;
           
-          this.progressService.updateProgress({
+          this.progressService.updateProgress(jobId, {
             message: `Inserted ${insertedCount}/${instruments.length} instruments`,
             progress: (insertedCount / instruments.length) * 100
           });
@@ -246,24 +246,34 @@ export class ZerodhaSyncService {
    * Process instrument chunk with data transformation
    */
   async processInstrumentChunk(chunk) {
-    return chunk.map(instrument => ({
-      token: parseInt(instrument.instrument_token),
-      symbol: instrument.tradingsymbol,
-      name: instrument.name || instrument.tradingsymbol,
-      exchange: instrument.exchange,
-      segment: this.mapSegment(instrument),
-      displaySegment: this.getDisplaySegment(instrument),
-      instrumentType: this.getInstrumentType(instrument),
-      category: this.getCategory(instrument),
-      tradingSymbol: instrument.tradingsymbol,
-      lotSize: parseInt(instrument.lot_size) || 1,
-      tickSize: parseFloat(instrument.tick_size) || 0.05,
-      expiry: instrument.expiry || null,
-      strike: parseFloat(instrument.strike) || null,
-      optionType: instrument.instrument_type?.includes('CE') ? 'CE' : 
-                 instrument.instrument_type?.includes('PE') ? 'PE' : null,
-      lastUpdated: new Date()
-    }));
+    return chunk.map((instrument) => {
+      const tokenNum = parseInt(instrument.instrument_token, 10);
+      const token = Number.isFinite(tokenNum) ? String(tokenNum) : String(instrument.instrument_token || '');
+      const symbol = String(instrument.tradingsymbol || '').trim();
+      const exchange = String(instrument.exchange || '').trim().toUpperCase();
+      const instrumentTypeRaw = String(instrument.instrument_type || '').trim().toUpperCase();
+      const underlying = this.getUnderlyingFromSymbol(symbol);
+      const expiry = this.parseExpiryDate(instrument.expiry);
+
+      return {
+        token,
+        symbol,
+        name: String(instrument.name || symbol).trim() || symbol,
+        exchange,
+        segment: this.mapSegment(instrument),
+        displaySegment: this.getDisplaySegment(instrument),
+        instrumentType: this.getInstrumentType(instrument),
+        category: this.getCategory(instrument, underlying),
+        tradingSymbol: symbol,
+        lotSize: parseInt(instrument.lot_size, 10) || 1,
+        tickSize: parseFloat(instrument.tick_size) || 0.05,
+        expiry,
+        strike: parseFloat(instrument.strike) || null,
+        optionType: instrumentTypeRaw === 'CE' ? 'CE' : instrumentTypeRaw === 'PE' ? 'PE' : null,
+        isEnabled: true,
+        lastUpdated: new Date()
+      };
+    });
   }
 
   /**
@@ -293,50 +303,74 @@ export class ZerodhaSyncService {
    * Helper methods for data mapping
    */
   mapSegment(instrument) {
-    const exchange = instrument.exchange;
-    const segment = instrument.segment;
-    
-    if (exchange === 'NSE' && segment === 'NSE') return 'EQUITY';
-    if (exchange === 'NFO') return 'DERIVATIVES';
-    if (exchange === 'MCX') return 'COMMODITIES';
-    if (exchange === 'BSE') return 'EQUITY';
-    
-    return segment || 'UNKNOWN';
+    const exchange = String(instrument.exchange || '').toUpperCase();
+
+    if (exchange === 'NSE' || exchange === 'BSE') return 'EQUITY';
+    if (exchange === 'NFO' || exchange === 'BFO') return 'FNO';
+    if (exchange === 'MCX') return 'MCX';
+    if (exchange === 'CDS' || exchange === 'FOREX') return 'CURRENCY';
+    if (exchange === 'BINANCE' || exchange === 'CRYPTO') return 'CRYPTO';
+
+    return 'EQUITY';
   }
 
   getDisplaySegment(instrument) {
-    const exchange = instrument.exchange;
-    const segment = instrument.segment;
-    const type = instrument.instrument_type;
-    
-    if (exchange === 'NSE' && segment === 'NSE') return 'NSE-EQ';
-    if (exchange === 'NFO' && type === 'FUT') return 'NSEFUT';
-    if (exchange === 'NFO' && type?.includes('OPT')) return 'NSEOPT';
-    if (exchange === 'MCX' && type === 'FUT') return 'MCXFUT';
-    if (exchange === 'MCX' && type?.includes('OPT')) return 'MCXOPT';
-    
-    return `${exchange}-${segment}`;
+    const exchange = String(instrument.exchange || '').toUpperCase();
+    const type = String(instrument.instrument_type || '').toUpperCase();
+    const isOption = type === 'CE' || type === 'PE' || type.includes('OPT');
+    const isFuture = type === 'FUT' || type.includes('FUT');
+
+    if (exchange === 'NSE' || exchange === 'BSE') return 'NSE-EQ';
+    if (exchange === 'NFO') return isOption ? 'NSEOPT' : 'NSEFUT';
+    if (exchange === 'BFO') return isOption ? 'BSE-OPT' : 'BSE-FUT';
+    if (exchange === 'MCX') return isOption ? 'MCXOPT' : 'MCXFUT';
+    if (exchange === 'CDS') return isOption ? 'FOREXOPT' : 'FOREXFUT';
+    if (exchange === 'FOREX') return isOption ? 'FOREXOPT' : 'FOREXFUT';
+    if (exchange === 'BINANCE' || exchange === 'CRYPTO') return isFuture ? 'CRYPTOFUT' : 'CRYPTO';
+
+    return 'NSE-EQ';
   }
 
   getInstrumentType(instrument) {
-    const type = instrument.instrument_type;
-    
+    const type = String(instrument.instrument_type || '').toUpperCase();
+
     if (type === 'EQ') return 'STOCK';
-    if (type === 'FUT') return 'FUTURE';
-    if (type?.includes('OPT')) return 'OPTION';
-    
-    return type || 'UNKNOWN';
+    if (type === 'FUT' || type.includes('FUT')) return 'FUTURES';
+    if (type === 'CE' || type === 'PE' || type.includes('OPT')) return 'OPTIONS';
+
+    return 'STOCK';
   }
 
-  getCategory(instrument) {
-    const exchange = instrument.exchange;
-    const type = instrument.instrument_type;
-    
-    if (type === 'EQ') return 'STOCKS';
-    if (type === 'FUT') return 'FUTURES';
-    if (type?.includes('OPT')) return 'OPTIONS';
-    
-    return 'OTHERS';
+  getCategory(instrument, underlying = '') {
+    const exchange = String(instrument.exchange || '').toUpperCase();
+    const type = String(instrument.instrument_type || '').toUpperCase();
+    const u = String(underlying || '').toUpperCase();
+
+    if (exchange === 'MCX') return 'MCX';
+    if (exchange === 'CDS' || exchange === 'FOREX') return 'CURRENCY';
+    if (exchange === 'BINANCE' || exchange === 'CRYPTO') return 'CRYPTO';
+    if (type === 'EQ') return u.includes('NIFTY') ? 'INDICES' : 'STOCKS';
+    if (u.includes('BANKNIFTY')) return 'BANKNIFTY';
+    if (u.includes('FINNIFTY')) return 'FINNIFTY';
+    if (u.includes('MIDCPNIFTY')) return 'MIDCPNIFTY';
+    if (u.includes('NIFTY')) return 'NIFTY';
+    return 'OTHER';
+  }
+
+  getUnderlyingFromSymbol(symbol = '') {
+    const s = String(symbol).toUpperCase();
+    if (!s) return '';
+    if (s.startsWith('BANKNIFTY')) return 'BANKNIFTY';
+    if (s.startsWith('FINNIFTY')) return 'FINNIFTY';
+    if (s.startsWith('MIDCPNIFTY')) return 'MIDCPNIFTY';
+    if (s.startsWith('NIFTY')) return 'NIFTY';
+    return s.replace(/\d.*$/, '');
+  }
+
+  parseExpiryDate(raw) {
+    if (!raw) return null;
+    const dt = new Date(raw);
+    return Number.isNaN(dt.getTime()) ? null : dt;
   }
 
   /**

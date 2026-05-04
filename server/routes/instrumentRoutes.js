@@ -585,7 +585,48 @@ router.get('/admin', protectAdmin, async (req, res) => {
           query.$or = forexOr;
         }
       } else {
-        query.displaySegment = displaySegment;
+        // Backward-compatible segment filter:
+        // prefer explicit displaySegment, but include legacy rows inferred by exchange/type.
+        if (displaySegment === 'NSEFUT') {
+          query.$or = [
+            { displaySegment: 'NSEFUT' },
+            { exchange: 'NFO', instrumentType: 'FUTURES' },
+            { exchange: 'NFO', instrumentType: 'FUT' }
+          ];
+        } else if (displaySegment === 'NSEOPT') {
+          query.$or = [
+            { displaySegment: 'NSEOPT' },
+            { exchange: 'NFO', instrumentType: 'OPTIONS' },
+            { exchange: 'NFO', instrumentType: 'OPTION' }
+          ];
+        } else if (displaySegment === 'MCXFUT') {
+          query.$or = [
+            { displaySegment: 'MCXFUT' },
+            { exchange: 'MCX', instrumentType: 'FUTURES' },
+            { exchange: 'MCX', instrumentType: 'COMMODITY' },
+            { exchange: 'MCX', instrumentType: 'FUT' }
+          ];
+        } else if (displaySegment === 'MCXOPT') {
+          query.$or = [
+            { displaySegment: 'MCXOPT' },
+            { exchange: 'MCX', instrumentType: 'OPTIONS' },
+            { exchange: 'MCX', instrumentType: 'OPTION' }
+          ];
+        } else if (displaySegment === 'BSE-FUT') {
+          query.$or = [
+            { displaySegment: 'BSE-FUT' },
+            { exchange: 'BFO', instrumentType: 'FUTURES' },
+            { exchange: 'BFO', instrumentType: 'FUT' }
+          ];
+        } else if (displaySegment === 'BSE-OPT') {
+          query.$or = [
+            { displaySegment: 'BSE-OPT' },
+            { exchange: 'BFO', instrumentType: 'OPTIONS' },
+            { exchange: 'BFO', instrumentType: 'OPTION' }
+          ];
+        } else {
+          query.displaySegment = displaySegment;
+        }
       }
     }
     if (category) query.category = category;
@@ -598,10 +639,16 @@ router.get('/admin', protectAdmin, async (req, res) => {
       }
     }
     if (search && !(displaySegment === 'FOREXFUT' || displaySegment === 'FOREXOPT')) {
-      query.$or = [
+      const searchOr = [
         { symbol: { $regex: search, $options: 'i' } },
         { name: { $regex: search, $options: 'i' } }
       ];
+      if (query.$or) {
+        if (!query.$and) query.$and = [];
+        query.$and.push({ $or: searchOr });
+      } else {
+        query.$or = searchOr;
+      }
     }
     
     // Filter by expiry date - show instruments expiring up to the selected date
