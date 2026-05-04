@@ -24,51 +24,11 @@ import {
 } from '../middleware/zerodhaMiddleware.js';
 import zerodhaController from '../controllers/zerodhaController.js';
 import environmentConfig from '../utils/environmentConfig.js';
-import Instrument from '../models/Instrument.js';
-import GameResult from '../models/GameResult.js';
-import {
-  fetchNifty50LastPriceFromKite,
-  fetchNifty50SessionClearing15mCached,
-} from '../utils/kiteNiftyQuote.js';
-import { getMarketData } from '../services/zerodhaWebSocket.js';
 
 const router = express.Router();
 
 /** Express passes handlers without `this` — bind ZerodhaController instance */
 const zc = (fn) => fn.bind(zerodhaController);
-
-const toPositiveNumber = (v) => {
-  const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? n : null;
-};
-
-const pickFirstPositive = (...vals) => {
-  for (const v of vals) {
-    const n = toPositiveNumber(v);
-    if (n != null) return n;
-  }
-  return null;
-};
-
-function isNseCashSessionOpenNowIST() {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date());
-  const get = (type) => parts.find((p) => p.type === type)?.value;
-  const weekday = String(get('weekday') || '');
-  const h = Number(get('hour') || 0);
-  const m = Number(get('minute') || 0);
-  const s = Number(get('second') || 0);
-  const sec = h * 3600 + m * 60 + s;
-  const isWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday);
-  // NSE cash session: 09:15:00 to 15:30:00 IST.
-  return isWeekday && sec >= 33300 && sec < 55800;
-}
 
 /**
  * Set Socket.IO instance for controller
@@ -205,119 +165,7 @@ router.get('/market-data',
 );
 
 // Public game price endpoint used by client live game panel fallback polling
-router.get('/game-price/:symbol', async (req, res) => {
-  try {
-    const raw = String(req.params.symbol || '').toUpperCase();
-    const symbol = raw === 'NIFTY50' ? 'NIFTY' : raw;
-    if (symbol !== 'NIFTY') {
-      return res.status(400).json({ message: 'Only NIFTY is supported for game-price endpoint' });
-    }
-
-    const requestedClosedMode = String(req.query.closedMode || 'clearing').toLowerCase();
-    const closedMode = requestedClosedMode === 'ltp' ? 'ltp' : 'clearing';
-
-    // Best-effort day-clearing close (used by UI when market is closed).
-    const clearing = await fetchNifty50SessionClearing15mCached();
-    const sessionClearing = Number(clearing?.close);
-    const safeSessionClearing =
-      Number.isFinite(sessionClearing) && sessionClearing > 0 ? sessionClearing : null;
-    const isNseOpen = isNseCashSessionOpenNowIST();
-
-    // Keep one DB snapshot for all fallback calculations.
-    const closeRefInst = await Instrument.findOne({
-      $or: [{ token: '256265' }, { symbol: { $in: ['NIFTY', 'NIFTY 50'] } }],
-    })
-      .select('ltp open high low close previousDayClosePrice')
-      .lean();
-    const safePrevDayClose = toPositiveNumber(closeRefInst?.previousDayClosePrice);
-    const dbLtp = toPositiveNumber(closeRefInst?.ltp);
-    const dbClose = toPositiveNumber(closeRefInst?.close);
-
-    // Prefer authoritative Kite quote from persisted Zerodha session.
-    const kitePrice = await fetchNifty50LastPriceFromKite();
-    const safeKitePrice = toPositiveNumber(kitePrice);
-
-    // Fast fallback: in-memory websocket tick cache (if stream is active).
-    const liveMap = getMarketData();
-    const liveTick = liveMap?.['256265'] || liveMap?.[256265];
-    const wsLtp = toPositiveNumber(liveTick?.ltp);
-    const wsClose = toPositiveNumber(liveTick?.close);
-
-    // Final fallback: most recent persisted NIFTY up/down game result close.
-    const latestResult = await GameResult.findOne({ gameId: 'updown' })
-      .sort({ windowDate: -1, windowNumber: -1 })
-      .select('closePrice openPrice')
-      .lean();
-    const resultClose = toPositiveNumber(latestResult?.closePrice);
-
-    // Authoritative candidates for clients:
-    // - ltpPrice: live-ish source chain
-    // - clearingPrice: official close-style source chain for non-bracket games post-market
-    const ltpPrice = pickFirstPositive(wsLtp, safeKitePrice, dbLtp, dbClose, resultClose, safeSessionClearing);
-    // Non-bracket games should stick to session clearing first (last 15m close), not stale result rows.
-    const clearingPrice = pickFirstPositive(safeSessionClearing, safePrevDayClose, dbClose, resultClose, ltpPrice);
-
-    const selectedPrice =
-      isNseOpen
-        ? ltpPrice
-        : closedMode === 'ltp'
-          ? ltpPrice
-          : clearingPrice;
-
-    const source = isNseOpen
-      ? safeKitePrice != null
-        ? 'kite'
-        : wsLtp != null
-          ? 'ws_cache'
-          : dbLtp != null || dbClose != null
-            ? 'db_fallback'
-            : resultClose != null
-              ? 'game_result_fallback'
-              : 'unavailable'
-      : closedMode === 'ltp'
-        ? safeKitePrice != null
-          ? 'kite_closed_ltp'
-          : wsLtp != null
-            ? 'ws_closed_ltp'
-            : dbLtp != null
-              ? 'db_closed_ltp'
-              : resultClose != null
-                ? 'game_result_closed_ltp'
-                : 'unavailable'
-        : safeSessionClearing != null
-          ? 'session_clearing'
-          : safePrevDayClose != null
-            ? 'previous_day_close'
-            : dbClose != null
-              ? 'db_close'
-              : resultClose != null
-                ? 'game_result_clearing'
-                : 'unavailable';
-
-    // Never return 404 here; keep polling endpoint stable to avoid console spam.
-    return res.json({
-      symbol: 'NIFTY',
-      price: selectedPrice,
-      ltpPrice,
-      clearingPrice,
-      open: pickFirstPositive(liveTick?.open, closeRefInst?.open, selectedPrice),
-      high: pickFirstPositive(liveTick?.high, closeRefInst?.high, selectedPrice),
-      low: pickFirstPositive(liveTick?.low, closeRefInst?.low, selectedPrice),
-      close: pickFirstPositive(wsClose, dbClose, selectedPrice),
-      prevDayClose: pickFirstPositive(safePrevDayClose, dbClose, selectedPrice),
-      sessionClearing: pickFirstPositive(safeSessionClearing, clearingPrice),
-      marketOpen: isNseOpen,
-      closedMode,
-      source,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    return res.status(500).json({
-      message: 'Failed to fetch game price',
-      error: error.message,
-    });
-  }
-});
+router.get('/game-price/:symbol', zc(zerodhaController.getGamePrice));
 
 /**
  * Health and Maintenance Routes
