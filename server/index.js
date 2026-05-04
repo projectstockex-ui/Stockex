@@ -46,13 +46,14 @@ import cron from 'node-cron';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment file deterministically from server directory.
-// In production prefer `.env.production`; otherwise use `.env`.
-const envFile =
-  process.env.NODE_ENV === 'production'
-    ? path.join(__dirname, '.env.production')
-    : path.join(__dirname, '.env');
-dotenv.config({ path: envFile });
+// Load base env from server/.env first (most deployments keep production values here).
+// Then optionally load .env.production as additive overrides, without clobbering existing keys.
+const baseEnvFile = path.join(__dirname, '.env');
+dotenv.config({ path: baseEnvFile });
+if (process.env.NODE_ENV === 'production') {
+  const prodEnvFile = path.join(__dirname, '.env.production');
+  dotenv.config({ path: prodEnvFile, override: false });
+}
 
 /** CORS + Socket.IO: merge CLIENT_URL, comma-separated CORS_ORIGIN, and local dev defaults */
 function buildAllowedOrigins() {
