@@ -747,11 +747,109 @@ const UserDashboard = () => {
     }
   };
 
+  /**
+   * MCX fallback snapshot: when live ticks are unavailable (closed segment / reconnect),
+   * hydrate selected contract from instrument DB so UI doesn't stay at 0.00.
+   */
+  const hydrateSelectedInstrumentSnapshot = useCallback(async () => {
+    if (!mcxOnly || !user?.token || !selectedInstrument) return;
+    const searchKey = String(
+      selectedInstrument.tradingSymbol || selectedInstrument.symbol || ''
+    ).trim();
+    if (!searchKey) return;
+
+    try {
+      const { data } = await axios.get('/api/instruments/user', {
+        params: { search: searchKey, segment: 'MCXFUT' },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      if (!Array.isArray(data) || data.length === 0) return;
+
+      const matched =
+        data.find(
+          (row) =>
+            selectedInstrument.token != null &&
+            String(row?.token ?? '') === String(selectedInstrument.token)
+        ) ||
+        data.find(
+          (row) =>
+            String(row?.tradingSymbol || '').toUpperCase() ===
+            String(selectedInstrument.tradingSymbol || '').toUpperCase()
+        ) ||
+        data.find(
+          (row) =>
+            String(row?.symbol || '').toUpperCase() ===
+            String(selectedInstrument.symbol || '').toUpperCase()
+        );
+      if (!matched) return;
+
+      const ltp = Number(matched.ltp);
+      const close = Number(matched.close);
+      const px =
+        Number.isFinite(ltp) && ltp > 0
+          ? ltp
+          : Number.isFinite(close) && close > 0
+            ? close
+            : null;
+      if (px == null) return;
+
+      const tokenKey =
+        matched.token != null && String(matched.token).trim() !== ''
+          ? String(matched.token).trim()
+          : selectedInstrument.token != null
+            ? String(selectedInstrument.token).trim()
+            : '';
+
+      if (tokenKey) {
+        setMarketData((prev) => ({
+          ...prev,
+          [tokenKey]: {
+            ...(prev[tokenKey] || {}),
+            token: tokenKey,
+            symbol: matched.symbol || selectedInstrument.symbol,
+            tradingSymbol: matched.tradingSymbol || selectedInstrument.tradingSymbol,
+            exchange: matched.exchange || selectedInstrument.exchange || 'MCX',
+            ltp: px,
+            close: Number.isFinite(close) && close > 0 ? close : px,
+            open: Number(matched.open) || px,
+            high: Number(matched.high) || px,
+            low: Number(matched.low) || px,
+            bid: Number(matched.lastBid) || px,
+            ask: Number(matched.lastAsk) || px,
+            change: Number(matched.change) || 0,
+            changePercent: Number(matched.changePercent) || 0,
+            lastUpdated: new Date().toISOString(),
+            source: 'instrument_snapshot_fallback',
+          },
+        }));
+      }
+
+      setSelectedInstrument((prev) => ({
+        ...prev,
+        ...matched,
+        ltp: px,
+        lastPrice: px,
+        close: Number.isFinite(close) && close > 0 ? close : px,
+      }));
+    } catch {
+      // keep existing live/socket values
+    }
+  }, [mcxOnly, user?.token, selectedInstrument]);
+
   /** Merge targeted quote rows (e.g. MCX /instruments-quote) into shared marketData */
   const mergeMarketDataPatch = useCallback((patch) => {
     if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) return;
     setMarketData((prev) => ({ ...prev, ...patch }));
   }, []);
+
+  useEffect(() => {
+    if (!mcxOnly || !selectedInstrument) return;
+    void hydrateSelectedInstrumentSnapshot();
+    const id = setInterval(() => {
+      void hydrateSelectedInstrumentSnapshot();
+    }, 8000);
+    return () => clearInterval(id);
+  }, [mcxOnly, selectedInstrument?.token, selectedInstrument?.symbol, hydrateSelectedInstrumentSnapshot]);
 
   useEffect(() => {
     const onSoftRefresh = () => {
