@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { flushSync } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import axios from '../config/axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
@@ -2052,6 +2051,8 @@ const GameLivePricePanel = ({
   niftyLtpTape = false,
   /** Callback for bid/ask price updates (for Nifty Bracket) */
   onBidAskUpdate,
+  /** Nifty when market closed: 'spot' for close stick, 'ltp' for last live LTP stick */
+  closedNiftyStickMode = 'spot',
 }) => {
   const socketRef = useRef(null);
   const isLiveRef = useRef(false);
@@ -2423,8 +2424,16 @@ const GameLivePricePanel = ({
       try {
         const { data } = await axios.get('/api/zerodha/game-price/NIFTY?authoritative=1');
         if (cancelled || data?.price == null) return;
-        const price = Number(data.price);
-        console.log('[GameLivePricePanel] API returned - LTP:', price, 'Clearing:', data.sessionClearing);
+        const ltpPrice = Number(data.price);
+        const spotRefRaw = Number(data?.prevDayClose ?? data?.sessionClearing ?? data?.close);
+        const spotRef =
+          Number.isFinite(spotRefRaw) && spotRefRaw > 0 ? Number(spotRefRaw) : null;
+        const nseOpenNow = isNseCashMarketOpen();
+        const price =
+          !nseOpenNow && closedNiftyStickMode !== 'ltp' && spotRef != null
+            ? spotRef
+            : ltpPrice;
+        console.log('[GameLivePricePanel] API returned - LTP:', ltpPrice, 'Spot:', spotRef, 'Using:', price);
         if (!Number.isFinite(price) || price <= 0) return;
         if (!isLiveRef.current) {
           isLiveRef.current = true;
@@ -2470,7 +2479,7 @@ const GameLivePricePanel = ({
       cancelled = true;
       clearInterval(id);
     };
-  }, [isBTC, pushLive]);
+  }, [isBTC, pushLive, closedNiftyStickMode]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -6626,11 +6635,13 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               gameId="updown"
               fullHeight
               niftyLtpTape={false}
+              closedNiftyStickMode="ltp"
               onPriceUpdate={(p) => {
-                // IMPORTANT: For Nifty Bracket, we need to use sessionClearing as LTP
-                // because Kite's "last_price" is actually the clearing price
-                // We'll swap in onSessionClearingUpdate callback
-                console.log('[NiftyBracket] onPriceUpdate received (this is clearing):', p);
+                if (p != null && Number.isFinite(Number(p)) && Number(p) > 0) {
+                  const v = Number(p);
+                  setCurrentPrice(v);
+                  updateLtpTape(v);
+                }
               }}
               onFallbackPrice={(p) => {
                 if (p != null && Number.isFinite(p) && p > 0) {
@@ -6640,20 +6651,9 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               }}
               onDemoPriceActive={setDemoPriceActive}
               onSessionClearingUpdate={(clearing) => {
-                // SWAP FOR NIFTY BRACKET: sessionClearing is actually the real LTP
-                // Kite's last_price (which comes via onPriceUpdate) is the clearing price
-                console.log('[NiftyBracket] ✅ onSessionClearingUpdate received REAL LTP:', clearing);
                 if (clearing != null && Number.isFinite(Number(clearing))) {
-                  // Use sessionClearing as the current price (LTP) for Nifty Bracket
-                  flushSync(() => {
-                    setCurrentPrice(Number(clearing)); // This is the REAL LTP
-                    setSessionClearing(Number(clearing)); // Store it
-                    setPriceUpdateTick(t => t + 1);
-                  });
-                  console.log('[NiftyBracket] ✅ currentPrice set to REAL LTP:', clearing);
-                  
-                  // Also update the LTP tape with the real LTP
-                  updateLtpTape(Number(clearing));
+                  setSessionClearing(Number(clearing));
+                  setPriceUpdateTick(t => t + 1);
                 } else {
                   setSessionClearing(null);
                 }
