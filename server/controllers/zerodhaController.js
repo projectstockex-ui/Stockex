@@ -598,8 +598,10 @@ class ZerodhaController {
       const symbolRaw = req.query.symbol != null ? String(req.query.symbol).trim() : '';
       const tradingSymbolRaw =
         req.query.tradingSymbol != null ? String(req.query.tradingSymbol).trim() : '';
-      if (!tokenRaw && !symbolRaw && !tradingSymbolRaw) {
-        return res.status(400).json({ message: 'token or symbol or tradingSymbol is required' });
+      const baseSymbolRaw =
+        req.query.baseSymbol != null ? String(req.query.baseSymbol).trim().toUpperCase() : '';
+      if (!tokenRaw && !symbolRaw && !tradingSymbolRaw && !baseSymbolRaw) {
+        return res.status(400).json({ message: 'token or symbol or tradingSymbol or baseSymbol is required' });
       }
 
       const md = this.orchestrator?.getMarketData?.() || {};
@@ -613,20 +615,33 @@ class ZerodhaController {
       if (!tick) {
         const symU = symbolRaw.toUpperCase();
         const tsU = tradingSymbolRaw.toUpperCase();
+        const baseU = baseSymbolRaw;
         tick =
           Object.values(md).find(
             (r) =>
               (tsU && String(r?.tradingSymbol || '').toUpperCase() === tsU) ||
-              (symU && String(r?.symbol || '').toUpperCase() === symU)
+              (symU && String(r?.symbol || '').toUpperCase() === symU) ||
+              (baseU &&
+                (String(r?.symbol || '').toUpperCase() === baseU ||
+                  String(r?.tradingSymbol || '').toUpperCase().startsWith(baseU)))
           ) || null;
       }
 
+      const dbOr = [
+        ...(tokenKey ? [{ token: tokenKey }] : []),
+        ...(symbolRaw ? [{ symbol: symbolRaw }] : []),
+        ...(tradingSymbolRaw ? [{ tradingSymbol: tradingSymbolRaw }] : []),
+        ...(baseSymbolRaw
+          ? [
+              { symbol: baseSymbolRaw },
+              { symbol: { $regex: `^${baseSymbolRaw}`, $options: 'i' } },
+              { tradingSymbol: { $regex: `^${baseSymbolRaw}`, $options: 'i' } },
+            ]
+          : []),
+      ];
+
       const dbRow = await Instrument.findOne({
-        $or: [
-          ...(tokenKey ? [{ token: tokenKey }] : []),
-          ...(symbolRaw ? [{ symbol: symbolRaw }] : []),
-          ...(tradingSymbolRaw ? [{ tradingSymbol: tradingSymbolRaw }] : []),
-        ],
+        $or: dbOr,
       })
         .select('token symbol tradingSymbol exchange ltp open high low close previousDayClosePrice lastBid lastAsk')
         .lean();
@@ -663,7 +678,7 @@ class ZerodhaController {
         low: pick(tick?.low, dbRow?.low, ltp),
         close: pick(tick?.close, dbRow?.close, ltp),
         prevDayClose: pick(dbRow?.previousDayClosePrice, dbRow?.close, ltp),
-        source: tick ? 'ws_orchestrator' : 'instrument_db_fallback',
+        source: tick ? 'ws_orchestrator' : baseSymbolRaw ? 'instrument_base_fallback' : 'instrument_db_fallback',
         timestamp: new Date().toISOString(),
       });
     } catch (error) {

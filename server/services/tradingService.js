@@ -238,6 +238,13 @@ class TradingService {
       }
       
       const result = await MarketState.isTradingAllowed(segment);
+      // MCX should follow actual session clock even if admin forgot to toggle segment switch.
+      if (exchange === 'MCX' && !result.allowed) {
+        const fallback = this.isMarketOpenFallback('MCX');
+        if (fallback.open) {
+          return { open: true, reason: 'MCX session open (time-window fallback)' };
+        }
+      }
       return { open: result.allowed, reason: result.reason };
     } catch (error) {
       console.error('Error checking market state:', error);

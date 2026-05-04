@@ -165,13 +165,33 @@ function marketDataRowForInstrumentToken(marketData, token, instrument = null) {
   // MCX safety net: when local token is stale, match live tick by symbol/tradingSymbol.
   const sym = String(instrument?.symbol || '').trim().toUpperCase();
   const tsym = String(instrument?.tradingSymbol || '').trim().toUpperCase();
+  const mcxBase = deriveMcxBaseSymbol(tsym || sym);
   if (!sym && !tsym) return null;
   const rows = Object.values(marketData);
   return (
     rows.find((r) => String(r?.tradingSymbol || '').trim().toUpperCase() === tsym && tsym) ||
     rows.find((r) => String(r?.symbol || '').trim().toUpperCase() === sym && sym) ||
+    (mcxBase
+      ? rows.find((r) => {
+          const rs = String(r?.symbol || '').trim().toUpperCase();
+          const rt = String(r?.tradingSymbol || '').trim().toUpperCase();
+          return rs === mcxBase || rt.startsWith(mcxBase);
+        })
+      : null) ||
     null
   );
+}
+
+/** Convert CRUDEOIL26AUGFUT / GOLD05JUNFUT -> CRUDEOIL / GOLD */
+function deriveMcxBaseSymbol(raw) {
+  const s = String(raw || '').trim().toUpperCase();
+  if (!s) return '';
+  const noSuffix = s.replace(/(?:FUT|CE|PE)$/i, '');
+  const noContractDate = noSuffix.replace(/[A-Z]?\d{1,2}[A-Z]{3}.*$/i, '');
+  const alphaPrefix = noContractDate.match(/^[A-Z]+/);
+  if (alphaPrefix?.[0]) return alphaPrefix[0];
+  const fallback = s.match(/^[A-Z]+/);
+  return fallback?.[0] || '';
 }
 
 /** Binance base (e.g. BTC) for {BASE}INR/{BASE}USDT implied multiplier. */
@@ -517,6 +537,7 @@ const UserDashboard = () => {
   const [watchlistRefreshKey, setWatchlistRefreshKey] = useState(0); // Key to trigger watchlist refresh
   /** Bumps on each Socket.IO connect so MCX can re-post /tick-subscribe after server is ready */
   const [socketConnectEpoch, setSocketConnectEpoch] = useState(0);
+  const contractPriceEndpointMissingRef = useRef(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   /** Last bar close from ChartPanel / mobile chart — bid/ask align to this (fixes MCX feed vs Kite chart mismatch). */
   const [chartLtpAnchor, setChartLtpAnchor] = useState({ token: null, ltp: null });
@@ -769,11 +790,13 @@ const UserDashboard = () => {
     const searchKey = String(
       selectedInstrument.tradingSymbol || selectedInstrument.symbol || ''
     ).trim();
+    const baseKey = deriveMcxBaseSymbol(searchKey);
     if (!searchKey) return;
 
     try {
       const { data } = await axios.get('/api/instruments/user', {
-        params: { search: searchKey, segment: 'MCXFUT' },
+        // Do not hard-pin segment; some contracts are stored under different display segments.
+        params: { search: searchKey },
         headers: { Authorization: `Bearer ${user.token}` },
       });
       if (!Array.isArray(data) || data.length === 0) return;
@@ -793,16 +816,28 @@ const UserDashboard = () => {
           (row) =>
             String(row?.symbol || '').toUpperCase() ===
             String(selectedInstrument.symbol || '').toUpperCase()
-        );
+        ) ||
+        (baseKey
+          ? data.find((row) => String(row?.symbol || '').toUpperCase() === baseKey)
+          : null);
       if (!matched) return;
 
       const ltp = Number(matched.ltp);
       const close = Number(matched.close);
+      const prevClose = Number(matched.previousDayClosePrice);
+      const lastBid = Number(matched.lastBid);
+      const lastAsk = Number(matched.lastAsk);
       const px =
         Number.isFinite(ltp) && ltp > 0
           ? ltp
           : Number.isFinite(close) && close > 0
             ? close
+            : Number.isFinite(prevClose) && prevClose > 0
+              ? prevClose
+              : Number.isFinite(lastBid) && lastBid > 0
+                ? lastBid
+                : Number.isFinite(lastAsk) && lastAsk > 0
+                  ? lastAsk
             : null;
       if (px == null) return;
 
@@ -851,12 +886,16 @@ const UserDashboard = () => {
 
   const hydrateSelectedInstrumentContractPrice = useCallback(async () => {
     if (!mcxOnly || !user?.token || !selectedInstrument) return;
+    if (contractPriceEndpointMissingRef.current) return;
     try {
       const { data } = await axios.get('/api/zerodha/contract-price', {
         params: {
           token: selectedInstrument.token || '',
           symbol: selectedInstrument.symbol || '',
           tradingSymbol: selectedInstrument.tradingSymbol || '',
+          baseSymbol: deriveMcxBaseSymbol(
+            selectedInstrument.tradingSymbol || selectedInstrument.symbol || ''
+          ),
         },
         headers: { Authorization: `Bearer ${user.token}` },
       });
@@ -898,8 +937,11 @@ const UserDashboard = () => {
         lastPrice: px,
         close: Number(data?.close) || px,
       }));
-    } catch {
-      // keep socket/snapshot values
+    } catch (error) {
+      // Production rollback safety: if backend doesn't have this route yet, disable further calls.
+      if (error?.response?.status === 404) {
+        contractPriceEndpointMissingRef.current = true;
+      }
     }
   }, [mcxOnly, user?.token, selectedInstrument]);
 
@@ -5673,12 +5715,19 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
   
   // Get price
   const getPrice = (token) => {
-    if (token == null || token === '') return { ltp: 0, change: 0, changePercent: 0 };
-    const s = String(token);
-    const md = marketData[s] || marketData[Number.parseInt(s, 10)];
-    if (md) return md;
+    if (token != null && token !== '') {
+      const s = String(token);
+      const md = marketData[s] || marketData[Number.parseInt(s, 10)];
+      if (md) return md;
+    }
     const list = getWatchlist();
-    const inst = list.find((x) => String(x?.token ?? '') === s);
+    const inst =
+      list.find((x) => token != null && String(x?.token ?? '') === String(token)) ||
+      null;
+    if (inst) {
+      const mdByIdentity = marketDataRowForInstrumentToken(marketData, inst.token, inst);
+      if (mdByIdentity) return mdByIdentity;
+    }
     const fallbackLtp = Number(inst?.ltp ?? inst?.lastPrice ?? inst?.close ?? inst?.previousClose ?? 0);
     if (Number.isFinite(fallbackLtp) && fallbackLtp > 0) {
       return { ltp: fallbackLtp, close: fallbackLtp, change: 0, changePercent: 0 };
