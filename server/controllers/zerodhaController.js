@@ -479,6 +479,49 @@ class ZerodhaController {
   }
 
   /**
+   * User-facing token subscription endpoint.
+   * Best-effort only: never hard-fail dashboards when Zerodha is reconnecting.
+   */
+  async tickSubscribe(req, res) {
+    try {
+      const { tokens } = req.body;
+      if (!Array.isArray(tokens) || tokens.length === 0) {
+        return res.status(400).json({ message: 'Tokens array is required' });
+      }
+
+      const normalized = tokens
+        .map((t) => Number.parseInt(String(t), 10))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (normalized.length === 0) {
+        return res.status(400).json({ message: 'No valid token ids provided' });
+      }
+
+      // If WS is reconnecting, keep UI stable instead of throwing 400 loops.
+      if (!this.orchestrator?.getConnectionStatus?.().connected) {
+        void this.ensureWebSocketConnected('user_tick_subscribe');
+        return res.status(202).json({
+          message: 'Zerodha reconnect in progress; subscription queued',
+          accepted: normalized.length,
+        });
+      }
+
+      const result = await this.orchestrator.subscribeTokens(normalized, {
+        timeout: 30000,
+      });
+      return res.json({
+        message: 'Subscription request processed',
+        result,
+      });
+    } catch (error) {
+      this.logger.error('Error in user tick subscription:', error);
+      return res.status(500).json({
+        message: 'Failed to subscribe to tokens',
+        error: error.message,
+      });
+    }
+  }
+
+  /**
    * Unsubscribe from tokens
    */
   async unsubscribeTokens(req, res) {
@@ -511,7 +554,8 @@ class ZerodhaController {
   async getMarketData(req, res) {
     try {
       const marketData = this.orchestrator.getMarketData();
-      res.json({ marketData });
+      // Keep payload shape flat so dashboards can merge token->tick map directly.
+      res.json(marketData && typeof marketData === 'object' ? marketData : {});
     } catch (error) {
       this.logger.error('Error getting market data:', error);
       res.status(500).json({

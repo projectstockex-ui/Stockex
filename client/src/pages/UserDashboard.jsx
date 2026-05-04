@@ -1776,7 +1776,10 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     try {
       const { data } = await axios.get('/api/binance/prices');
       if (data && typeof data === 'object') {
-        setMarketData((prev) => ({ ...prev, ...data }));
+        setCryptoData(data);
+        if (typeof mergeMarketDataPatch === 'function') {
+          mergeMarketDataPatch(data);
+        }
       }
     } catch (error) {
       console.warn(
