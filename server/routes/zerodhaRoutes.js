@@ -170,6 +170,13 @@ router.get('/market-data',
   zc(zerodhaController.getMarketData)
 );
 
+// Resolve one contract price (token/symbol/tradingSymbol) for UI hydration
+router.get('/contract-price',
+  protectUser,
+  rateLimitZerodha(120, 60000),
+  zc(zerodhaController.getContractPrice)
+);
+
 // Public game price endpoint used by client live game panel fallback polling
 router.get('/game-price/:symbol', zc(zerodhaController.getGamePrice));
 

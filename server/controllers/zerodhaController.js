@@ -590,6 +590,92 @@ class ZerodhaController {
   }
 
   /**
+   * Resolve one contract price by token/symbol for robust client hydration.
+   */
+  async getContractPrice(req, res) {
+    try {
+      const tokenRaw = req.query.token != null ? String(req.query.token).trim() : '';
+      const symbolRaw = req.query.symbol != null ? String(req.query.symbol).trim() : '';
+      const tradingSymbolRaw =
+        req.query.tradingSymbol != null ? String(req.query.tradingSymbol).trim() : '';
+      if (!tokenRaw && !symbolRaw && !tradingSymbolRaw) {
+        return res.status(400).json({ message: 'token or symbol or tradingSymbol is required' });
+      }
+
+      const md = this.orchestrator?.getMarketData?.() || {};
+      const tokenNum = Number.parseInt(tokenRaw, 10);
+      const tokenKey = Number.isFinite(tokenNum) && tokenNum > 0 ? String(tokenNum) : tokenRaw;
+
+      let tick = null;
+      if (tokenKey) {
+        tick = md[tokenKey] || (Number.isFinite(tokenNum) ? md[tokenNum] : null) || null;
+      }
+      if (!tick) {
+        const symU = symbolRaw.toUpperCase();
+        const tsU = tradingSymbolRaw.toUpperCase();
+        tick =
+          Object.values(md).find(
+            (r) =>
+              (tsU && String(r?.tradingSymbol || '').toUpperCase() === tsU) ||
+              (symU && String(r?.symbol || '').toUpperCase() === symU)
+          ) || null;
+      }
+
+      const dbRow = await Instrument.findOne({
+        $or: [
+          ...(tokenKey ? [{ token: tokenKey }] : []),
+          ...(symbolRaw ? [{ symbol: symbolRaw }] : []),
+          ...(tradingSymbolRaw ? [{ tradingSymbol: tradingSymbolRaw }] : []),
+        ],
+      })
+        .select('token symbol tradingSymbol exchange ltp open high low close previousDayClosePrice lastBid lastAsk')
+        .lean();
+
+      const toNum = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      };
+      const pick = (...vals) => {
+        for (const v of vals) {
+          const n = toNum(v);
+          if (n != null) return n;
+        }
+        return null;
+      };
+
+      const ltp = pick(tick?.ltp, dbRow?.ltp, dbRow?.close, dbRow?.previousDayClosePrice);
+      if (ltp == null) {
+        return res.status(404).json({ message: 'Price unavailable for requested contract' });
+      }
+      const bid = pick(tick?.rawBid, tick?.bid, dbRow?.lastBid, ltp);
+      const ask = pick(tick?.rawAsk, tick?.ask, dbRow?.lastAsk, ltp);
+
+      return res.json({
+        token: tick?.token || dbRow?.token || tokenKey || null,
+        symbol: tick?.symbol || dbRow?.symbol || symbolRaw || null,
+        tradingSymbol: tick?.tradingSymbol || dbRow?.tradingSymbol || tradingSymbolRaw || null,
+        exchange: tick?.exchange || dbRow?.exchange || 'MCX',
+        ltp,
+        bid,
+        ask,
+        open: pick(tick?.open, dbRow?.open, ltp),
+        high: pick(tick?.high, dbRow?.high, ltp),
+        low: pick(tick?.low, dbRow?.low, ltp),
+        close: pick(tick?.close, dbRow?.close, ltp),
+        prevDayClose: pick(dbRow?.previousDayClosePrice, dbRow?.close, ltp),
+        source: tick ? 'ws_orchestrator' : 'instrument_db_fallback',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.logger.error('Error resolving contract price:', error);
+      return res.status(500).json({
+        message: 'Failed to resolve contract price',
+        error: error.message,
+      });
+    }
+  }
+
+  /**
    * Public game price endpoint for NIFTY, with closed-mode selection.
    */
   async getGamePrice(req, res) {

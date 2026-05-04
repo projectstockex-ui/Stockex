@@ -849,6 +849,60 @@ const UserDashboard = () => {
     }
   }, [mcxOnly, user?.token, selectedInstrument]);
 
+  const hydrateSelectedInstrumentContractPrice = useCallback(async () => {
+    if (!mcxOnly || !user?.token || !selectedInstrument) return;
+    try {
+      const { data } = await axios.get('/api/zerodha/contract-price', {
+        params: {
+          token: selectedInstrument.token || '',
+          symbol: selectedInstrument.symbol || '',
+          tradingSymbol: selectedInstrument.tradingSymbol || '',
+        },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      const px = Number(data?.ltp);
+      if (!Number.isFinite(px) || px <= 0) return;
+      const tokenKey =
+        data?.token != null && String(data.token).trim() !== ''
+          ? String(data.token).trim()
+          : selectedInstrument.token != null
+            ? String(selectedInstrument.token).trim()
+            : '';
+      if (tokenKey) {
+        setMarketData((prev) => ({
+          ...prev,
+          [tokenKey]: {
+            ...(prev[tokenKey] || {}),
+            token: tokenKey,
+            symbol: data?.symbol || selectedInstrument.symbol,
+            tradingSymbol: data?.tradingSymbol || selectedInstrument.tradingSymbol,
+            exchange: data?.exchange || selectedInstrument.exchange || 'MCX',
+            ltp: px,
+            close: Number(data?.close) || px,
+            open: Number(data?.open) || px,
+            high: Number(data?.high) || px,
+            low: Number(data?.low) || px,
+            bid: Number(data?.bid) || px,
+            ask: Number(data?.ask) || px,
+            lastUpdated: data?.timestamp || new Date().toISOString(),
+            source: data?.source || 'contract_price',
+          },
+        }));
+      }
+      setSelectedInstrument((prev) => ({
+        ...prev,
+        token: data?.token || prev?.token,
+        symbol: data?.symbol || prev?.symbol,
+        tradingSymbol: data?.tradingSymbol || prev?.tradingSymbol,
+        ltp: px,
+        lastPrice: px,
+        close: Number(data?.close) || px,
+      }));
+    } catch {
+      // keep socket/snapshot values
+    }
+  }, [mcxOnly, user?.token, selectedInstrument]);
+
   /** Merge targeted quote rows (e.g. MCX /instruments-quote) into shared marketData */
   const mergeMarketDataPatch = useCallback((patch) => {
     if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) return;
@@ -858,11 +912,20 @@ const UserDashboard = () => {
   useEffect(() => {
     if (!mcxOnly || !selectedInstrument) return;
     void hydrateSelectedInstrumentSnapshot();
+    void hydrateSelectedInstrumentContractPrice();
     const id = setInterval(() => {
       void hydrateSelectedInstrumentSnapshot();
-    }, 8000);
+      void hydrateSelectedInstrumentContractPrice();
+    }, 4000);
     return () => clearInterval(id);
-  }, [mcxOnly, selectedInstrument?.token, selectedInstrument?.symbol, hydrateSelectedInstrumentSnapshot]);
+  }, [
+    mcxOnly,
+    selectedInstrument?.token,
+    selectedInstrument?.symbol,
+    selectedInstrument?.tradingSymbol,
+    hydrateSelectedInstrumentSnapshot,
+    hydrateSelectedInstrumentContractPrice,
+  ]);
 
   useEffect(() => {
     const onSoftRefresh = () => {
