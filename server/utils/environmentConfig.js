@@ -6,39 +6,32 @@
  */
 
 class EnvironmentConfig {
-  constructor() {
-    this.isProduction = this.detectProduction();
-    this.baseUrl = this.getBaseUrl();
-    this.callbackUrl = this.getCallbackUrl();
-  }
-
-  /**
-   * Detect if we're in production environment
-   */
   detectProduction() {
-    // Debug environment variables
-    console.log('Environment Debug:');
-    console.log('NODE_ENV:', process.env.NODE_ENV);
-    console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-    
-    // Check multiple indicators for production
-    const isProduction = (
+    return (
       process.env.NODE_ENV === 'production' ||
       process.env.FRONTEND_URL?.includes('stockex.in') ||
-      process.env.FRONTEND_URL?.includes('https://stockex.com')
+      process.env.FRONTEND_URL?.includes('stockex.com') ||
+      process.env.CLIENT_URL?.includes('stockex.in') ||
+      process.env.CLIENT_URL?.includes('stockex.com') ||
+      process.env.SERVER_URL?.includes('stockex.in') ||
+      process.env.SERVER_URL?.includes('stockex.com')
     );
-    
-    console.log('Production detected:', isProduction);
-    return isProduction;
   }
 
   /**
    * Get base URL based on environment
    */
   getBaseUrl() {
-    if (this.isProduction) {
-      return process.env.FRONTEND_URL || 'https://stockex.in';
+    const frontend = process.env.FRONTEND_URL || process.env.CLIENT_URL;
+    if (frontend) {
+      return String(frontend).replace(/\/$/, '');
     }
+
+    if (this.detectProduction()) {
+      // Avoid localhost fallback in production.
+      return (process.env.SERVER_URL || 'https://stockex.in').replace(/\/$/, '');
+    }
+
     return 'http://localhost:3000';
   }
 
@@ -46,7 +39,12 @@ class EnvironmentConfig {
    * Get callback URL for Zerodha OAuth
    */
   getCallbackUrl() {
-    if (this.isProduction) {
+    const serverBase = (process.env.SERVER_URL || '').replace(/\/$/, '');
+    if (serverBase) {
+      return `${serverBase}/api/zerodha/callback`;
+    }
+
+    if (this.detectProduction()) {
       return 'https://stockex.in/api/zerodha/callback';
     }
     return 'http://localhost:5001/api/zerodha/callback';
@@ -56,7 +54,7 @@ class EnvironmentConfig {
    * Get dashboard redirect URLs
    */
   getDashboardUrls() {
-    const baseUrl = this.baseUrl;
+    const baseUrl = this.getBaseUrl();
     return {
       success: `${baseUrl}/superadmin/dashboard?zerodha=connected`,
       error: `${baseUrl}/superadmin/dashboard?zerodha=error`
@@ -68,9 +66,9 @@ class EnvironmentConfig {
    */
   getEnvironmentInfo() {
     return {
-      isProduction: this.isProduction,
-      baseUrl: this.baseUrl,
-      callbackUrl: this.callbackUrl,
+      isProduction: this.detectProduction(),
+      baseUrl: this.getBaseUrl(),
+      callbackUrl: this.getCallbackUrl(),
       dashboardUrls: this.getDashboardUrls()
     };
   }
