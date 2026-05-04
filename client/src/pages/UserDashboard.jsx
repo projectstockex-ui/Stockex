@@ -614,15 +614,6 @@ const UserDashboard = () => {
         delete pending[k];
       }
       setMarketData((prev) => ({ ...prev, ...batch }));
-      const cryptoSlice = {};
-      for (const row of Object.values(batch)) {
-        if (row?.exchange === 'BINANCE' && row.pair) {
-          cryptoSlice[row.pair] = row;
-        }
-      }
-      if (Object.keys(cryptoSlice).length > 0) {
-        setCryptoData((prev) => ({ ...prev, ...cryptoSlice }));
-      }
       const vals = Object.values(batch);
       const clientReceiveTime = Date.now();
       const nifty = vals.find((d) => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY');
@@ -732,8 +723,11 @@ const UserDashboard = () => {
   }, [fetchWallet, fetchUsdSpotClientSpreads]);
 
   const fetchMarketData = async () => {
+    if (!user?.token) return;
     try {
-      const { data } = await axios.get('/api/zerodha/market-data');
+      const { data } = await axios.get('/api/zerodha/market-data', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
       if (data && typeof data === 'object' && Object.keys(data).length > 0) {
         console.log(`Received ${Object.keys(data).length} market data entries`);
         // Merge with existing market data
@@ -1533,11 +1527,9 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       const tokens = [...ids];
       if (tokens.length === 0) return;
       try {
-        await axios.post(
-          '/api/zerodha/tick-subscribe',
-          { tokens },
-          { headers: { Authorization: `Bearer ${user.token}` } }
-        );
+        await axios.post('/api/zerodha/subscribe', { tokens }, {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
       } catch {
         // Server may queue when ticker is down; retry on next watchlist/selection change
       }
@@ -1547,69 +1539,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     };
   }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token, socketConnectEpoch]);
 
-  // MCX: targeted Kite quote every 1s for this screen's contracts (avoids missing MCX in bulk /market-data)
-  useEffect(() => {
-    if (!mcxOnly || !user?.token || typeof mergeMarketDataPatch !== 'function') return;
-    const isMcx = (inst) => {
-      if (!inst) return false;
-      const ex = String(inst.exchange || '').toUpperCase();
-      const seg = String(inst.segment || '').toUpperCase();
-      const ds = String(inst.displaySegment || '').toUpperCase();
-      return (
-        ex === 'MCX' ||
-        seg === 'MCX' ||
-        seg === 'MCXFUT' ||
-        seg === 'MCXOPT' ||
-        ds === 'MCXFUT' ||
-        ds === 'MCXOPT'
-      );
-    };
-    const collectMcxItems = () => {
-      const out = [];
-      const seen = new Set();
-      const add = (inst) => {
-        if (!isMcx(inst)) return;
-        const ex = (inst.exchange || 'MCX').toUpperCase();
-        const sym = String(inst.tradingSymbol || inst.symbol || '')
-          .replace(/"/g, '')
-          .trim();
-        if (!sym) return;
-        const uTok = inst.token != null && String(inst.token).trim() !== '' ? String(inst.token).trim() : null;
-        const dedup = `${ex}:${sym}|${uTok || ''}`;
-        if (seen.has(dedup)) return;
-        seen.add(dedup);
-        out.push(
-          uTok
-            ? { exchange: ex, tradingSymbol: sym, token: uTok }
-            : { exchange: ex, tradingSymbol: sym }
-        );
-      };
-      ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
-        (watchlistBySegment[seg] || []).forEach(add);
-      });
-      if (selectedInstrument) add(selectedInstrument);
-      return out;
-    };
-    const run = async () => {
-      const items = collectMcxItems();
-      if (items.length === 0) return;
-      try {
-        const { data } = await axios.post(
-          '/api/zerodha/instruments-quote',
-          { items },
-          { headers: { Authorization: `Bearer ${user.token}` } }
-        );
-        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-          mergeMarketDataPatch(data);
-        }
-      } catch {
-        // Session / Kite
-      }
-    };
-    run();
-    const id = setInterval(run, 1000);
-    return () => clearInterval(id);
-  }, [mcxOnly, user?.token, watchlistBySegment, selectedInstrument, mergeMarketDataPatch]);
+  // MCX quotes now use socket-first flow via /api/zerodha/subscribe + market_tick.
 
   // Persist watchlist locally as fallback (including favorites)
   useEffect(() => {
@@ -1846,7 +1776,6 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     try {
       const { data } = await axios.get('/api/binance/prices');
       if (data && typeof data === 'object') {
-        setCryptoData(data);
         setMarketData((prev) => ({ ...prev, ...data }));
       }
     } catch (error) {
@@ -2816,18 +2745,8 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         return Array.isArray(data) && data.length > 0 ? { candles: data, nativeInr: false } : null;
       }
 
-      if (instrument.token) {
-        try {
-          const { data } = await axios.get(`/api/zerodha/historical/${instrument.token}`, {
-            params: { interval: interval },
-          });
-          if (data && data.length > 0) {
-            return { candles: data, nativeInr: false };
-          }
-        } catch (err) {
-          console.log('Zerodha historical not available');
-        }
-      }
+      // Historical endpoint for arbitrary Zerodha/MCX token is not available in this app.
+      // Keep chart stable without 404 spam; live socket ticks continue updating price panels.
 
       return null;
     } catch (error) {
@@ -5226,11 +5145,9 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
       const tokens = [...ids];
       if (tokens.length === 0) return;
       try {
-        await axios.post(
-          '/api/zerodha/tick-subscribe',
-          { tokens },
-          { headers: { Authorization: `Bearer ${user.token}` } }
-        );
+        await axios.post('/api/zerodha/subscribe', { tokens }, {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
       } catch {
         /* tick-subscribe may fail until Kite is connected; server queues tokens */
       }
