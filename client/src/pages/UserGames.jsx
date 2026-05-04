@@ -73,6 +73,13 @@ function renderInrRedPaise(amount, className) {
       <span className={`font-bold tabular-nums tracking-tight ${className}`}>₹{s}</span>
     );
   }
+  const sidePanelPrice =
+    Number.isFinite(Number(currentPrice)) && Number(currentPrice) > 0
+      ? Number(currentPrice)
+      : Number.isFinite(Number(lastNonZeroPriceRef.current)) && Number(lastNonZeroPriceRef.current) > 0
+        ? Number(lastNonZeroPriceRef.current)
+        : null;
+
   return (
     <span className={`font-bold tabular-nums tracking-tight ${className}`}>
       ₹{s.slice(0, dot)}
@@ -4899,9 +4906,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 <div className="text-xs text-gray-400 mb-1 text-center">
                   {isBTC ? 'BTC/USDT' : 'NIFTY 50'} Current Price
                 </div>
-                {panelPrice && panelPrice > 0 ? (
+                {sidePanelPrice && sidePanelPrice > 0 ? (
                   <div className="text-2xl font-bold text-center text-cyan-300 tabular-nums">
-                    {isBTC ? '$' : '₹'}{panelPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {isBTC ? '$' : '₹'}{sidePanelPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 ) : (
                   <div className="text-center py-2">
