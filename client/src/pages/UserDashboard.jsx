@@ -155,10 +155,23 @@ function getCryptoMarketQuote(marketData, instrument) {
 }
 
 /** Zerodha tick keys are string token ids; instruments may use number or string */
-function marketDataRowForInstrumentToken(marketData, token) {
-  if (token == null || token === '' || !marketData || typeof marketData !== 'object') return null;
-  const s = String(token);
-  return marketData[s] ?? marketData[Number.parseInt(s, 10)] ?? null;
+function marketDataRowForInstrumentToken(marketData, token, instrument = null) {
+  if (!marketData || typeof marketData !== 'object') return null;
+  if (token != null && token !== '') {
+    const s = String(token);
+    const byToken = marketData[s] ?? marketData[Number.parseInt(s, 10)] ?? null;
+    if (byToken) return byToken;
+  }
+  // MCX safety net: when local token is stale, match live tick by symbol/tradingSymbol.
+  const sym = String(instrument?.symbol || '').trim().toUpperCase();
+  const tsym = String(instrument?.tradingSymbol || '').trim().toUpperCase();
+  if (!sym && !tsym) return null;
+  const rows = Object.values(marketData);
+  return (
+    rows.find((r) => String(r?.tradingSymbol || '').trim().toUpperCase() === tsym && tsym) ||
+    rows.find((r) => String(r?.symbol || '').trim().toUpperCase() === sym && sym) ||
+    null
+  );
 }
 
 /** Binance base (e.g. BTC) for {BASE}INR/{BASE}USDT implied multiplier. */
@@ -399,7 +412,7 @@ function getUsdSpotBidAsk(marketData, item, options) {
     if (!(ask > 0)) ask = ltp;
     return { bidPrice: bid, askPrice: ask };
   }
-  const liveData = marketDataRowForInstrumentToken(marketData, item?.token) || {};
+  const liveData = marketDataRowForInstrumentToken(marketData, item?.token, item) || {};
   const { bid, ask } = alignIndianBookBidAskWithLtp(liveData, item, options);
   return { bidPrice: bid, askPrice: ask };
 }
@@ -1611,6 +1624,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       const pushTok = (inst) => {
         if (!inst || inst.isCrypto || inst.isForex) return;
         if (isUsdSpotInstrument(inst)) return;
+        const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
+        if (sym) symbols.add(sym);
         const t = inst.token;
         if (t == null || t === '') return;
         const n = parseInt(String(t), 10);
@@ -1618,8 +1633,6 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
           ids.add(n);
           return;
         }
-        const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
-        if (sym) symbols.add(sym);
       };
       ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
         (watchlistBySegment[seg] || []).forEach(pushTok);
@@ -3451,7 +3464,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       const isUsdSpot = isUsdSpotInstrument(selectedInstrument);
       const liveData = isUsdSpot
         ? (getCryptoMarketQuote(marketData, selectedInstrument) || {})
-        : (marketDataRowForInstrumentToken(marketData, selectedInstrument.token) || {});
+        : (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument) || {});
       const ltp = liveData.ltp || liveData.close || selectedInstrument.ltp || 0;
       const bidPrice = liveData.bid || ltp;
       const askPrice = liveData.ask || ltp;
@@ -3619,7 +3632,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               {selectedInstrument?.symbol || 'No Symbol'}
             </span>
             <span className="text-xs text-gray-400">
-              ₹{(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
+              ₹{(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
             </span>
             <button 
               onClick={() => executeQuickTrade('sell')}
@@ -3935,7 +3948,7 @@ const TradingPanel = ({
   const isUsdSpot = isCryptoOnly || isForex;
   
   const cryptoQuote = isUsdSpot ? getCryptoMarketQuote(marketData, instrument) : null;
-  const liveData = isUsdSpot ? (cryptoQuote || {}) : (marketDataRowForInstrumentToken(marketData, instrument?.token) || {});
+  const liveData = isUsdSpot ? (cryptoQuote || {}) : (marketDataRowForInstrumentToken(marketData, instrument?.token, instrument) || {});
   const livePrice = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
     : (liveData.ltp || instrument?.ltp || 0);
@@ -5249,6 +5262,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
       const pushTok = (inst) => {
         if (!inst || inst.isCrypto || inst.isForex) return;
         if (isUsdSpotInstrument(inst)) return;
+        const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
+        if (sym) symbols.add(sym);
         const t = inst.token;
         if (t == null || t === '') return;
         const n = parseInt(String(t), 10);
@@ -5256,8 +5271,6 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
           ids.add(n);
           return;
         }
-        const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
-        if (sym) symbols.add(sym);
       };
       ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
         (watchlistBySegment[seg] || []).forEach(pushTok);
@@ -8404,7 +8417,7 @@ const BuySellModal = ({
   const effectiveInstrument = freshInstrument || instrument;
 
   const cryptoQuoteModal = isUsdSpot ? getCryptoMarketQuote(marketData, effectiveInstrument) : null;
-  const liveData = isUsdSpot ? (cryptoQuoteModal || {}) : (marketDataRowForInstrumentToken(marketData, effectiveInstrument?.token) || {});
+  const liveData = isUsdSpot ? (cryptoQuoteModal || {}) : (marketDataRowForInstrumentToken(marketData, effectiveInstrument?.token, effectiveInstrument) || {});
   const ltp = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
     : (liveData.ltp || effectiveInstrument?.ltp || 0);
@@ -8419,7 +8432,7 @@ const BuySellModal = ({
     : indianBookModal.ask;
 
   const feedRow = effectiveInstrument?.token
-    ? marketDataRowForInstrumentToken(marketData, effectiveInstrument.token)
+    ? marketDataRowForInstrumentToken(marketData, effectiveInstrument.token, effectiveInstrument)
     : null;
   const ltpFromLiveFeed = !!(
     feedRow &&
