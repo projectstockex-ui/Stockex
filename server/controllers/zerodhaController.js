@@ -635,6 +635,11 @@ class ZerodhaController {
         return res.status(400).json({ message: 'token or symbol or tradingSymbol or baseSymbol is required' });
       }
 
+      // If WS is down but session exists, kick reconnect immediately so subsequent calls get live ticks.
+      if (!this.orchestrator?.getConnectionStatus?.().connected) {
+        void this.ensureWebSocketConnected('contract_price_demand');
+      }
+
       const md = this.orchestrator?.getMarketData?.() || {};
       const tokenNum = Number.parseInt(tokenRaw, 10);
       const tokenKey = Number.isFinite(tokenNum) && tokenNum > 0 ? String(tokenNum) : tokenRaw;
@@ -747,6 +752,7 @@ class ZerodhaController {
       }
 
       // Zerodha REST quote fallback (live) when ws/db snapshots don't have contract price.
+      const restAttempts = [];
       if (ltp == null && this.session?.apiKey && this.session?.accessToken) {
         const quoteSymbols = [
           String(tradingSymbolRaw || '').trim().toUpperCase(),
@@ -758,8 +764,8 @@ class ZerodhaController {
         for (const ts of quoteSymbols) {
           if (seen.has(ts)) continue;
           seen.add(ts);
+          const url = `https://api.kite.trade/quote?i=${encodeURIComponent(`MCX:${ts}`)}`;
           try {
-            const url = `https://api.kite.trade/quote?i=${encodeURIComponent(`MCX:${ts}`)}`;
             const qr = await axios.get(url, {
               headers: {
                 'X-Kite-Version': '3',
@@ -770,13 +776,24 @@ class ZerodhaController {
             });
             const q = qr?.data?.data?.[`MCX:${ts}`];
             const restLtp = pick(q?.last_price, q?.ohlc?.close, q?.depth?.buy?.[0]?.price, q?.depth?.sell?.[0]?.price);
+            restAttempts.push({
+              symbol: `MCX:${ts}`,
+              status: qr?.status,
+              kiteStatus: qr?.data?.status || null,
+              kiteMessage: qr?.data?.message || null,
+              hasData: !!q,
+              picked: restLtp,
+            });
             if (restLtp != null) {
               ltp = restLtp;
               ltpSource = 'kite_rest_quote_fallback';
               break;
             }
-          } catch {
-            // Continue next candidate symbol.
+          } catch (e) {
+            restAttempts.push({
+              symbol: `MCX:${ts}`,
+              error: e?.message || String(e),
+            });
           }
         }
       }
@@ -806,7 +823,19 @@ class ZerodhaController {
               instrumentRowFound: !!dbRow,
               baseFamilyRowFound: !!baseFamilyRow,
               hasKiteSession: !!(this.session?.apiKey && this.session?.accessToken),
+              autoReconnectScheduled: !connection.connected,
             },
+            instrumentRowSnapshot: dbRow
+              ? {
+                  ltp: dbRow.ltp,
+                  close: dbRow.close,
+                  open: dbRow.open,
+                  prevDayClose: dbRow.previousDayClosePrice,
+                  lastBid: dbRow.lastBid,
+                  lastAsk: dbRow.lastAsk,
+                }
+              : null,
+            restAttempts,
           },
         });
       }
