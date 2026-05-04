@@ -63,6 +63,7 @@ class ZerodhaController {
       loginTime: null
     };
     this.sessionFile = null;
+    this._autoConnectInFlight = null;
   }
 
   /**
@@ -95,6 +96,8 @@ class ZerodhaController {
       
       // Load existing session
       await this.loadSession();
+      // Reattach live ticker on boot when persisted session exists.
+      await this.ensureWebSocketConnected('initialize');
       
       this.logger.info('Zerodha controller initialized successfully');
       
@@ -184,6 +187,7 @@ class ZerodhaController {
       connected: true,
     };
     await this.saveSession();
+    await this.ensureWebSocketConnected('oauth_callback');
   }
 
   /**
@@ -284,6 +288,8 @@ class ZerodhaController {
    */
   async getStatus(req, res) {
     try {
+      // Best-effort self-heal: if session is present but socket is down, reconnect in background.
+      void this.ensureWebSocketConnected('status_probe');
       let orchState = null;
       try {
         orchState = this.orchestrator?.getConnectionStatus?.() ?? null;
@@ -637,6 +643,39 @@ class ZerodhaController {
     } catch (error) {
       this.logger.error('Error clearing session:', error);
     }
+  }
+
+  async ensureWebSocketConnected(reason = 'unknown') {
+    if (!this.orchestrator) return;
+    const hasSession = !!(this.session?.apiKey && this.session?.accessToken);
+    if (!hasSession) return;
+
+    const state = this.orchestrator.getConnectionStatus?.() || {};
+    if (state.connected) return;
+
+    if (this._autoConnectInFlight) {
+      await this._autoConnectInFlight;
+      return;
+    }
+
+    this._autoConnectInFlight = (async () => {
+      try {
+        this.logger.info('Attempting Zerodha WS auto-connect', { reason, userId: this.session.userId });
+        await this.orchestrator.connect(this.session.apiKey, this.session.accessToken, {
+          timeout: this.config?.getConnectionTimeout?.() || 30000,
+        });
+        this.logger.info('Zerodha WS auto-connect successful', { reason });
+      } catch (error) {
+        this.logger.warn('Zerodha WS auto-connect failed', {
+          reason,
+          message: error?.message || String(error),
+        });
+      } finally {
+        this._autoConnectInFlight = null;
+      }
+    })();
+
+    await this._autoConnectInFlight;
   }
 
   /**

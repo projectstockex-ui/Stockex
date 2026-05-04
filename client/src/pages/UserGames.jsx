@@ -2422,10 +2422,13 @@ const GameLivePricePanel = ({
     let cancelled = false;
     const syncAuthoritative = async () => {
       try {
-        const { data } = await axios.get('/api/zerodha/game-price/NIFTY?authoritative=1');
+        const closedMode = closedNiftyStickMode === 'ltp' ? 'ltp' : 'clearing';
+        const { data } = await axios.get('/api/zerodha/game-price/NIFTY', {
+          params: { authoritative: 1, closedMode },
+        });
         if (cancelled || data?.price == null) return;
         const ltpPrice = Number(data.price);
-        const spotRefRaw = Number(data?.prevDayClose ?? data?.sessionClearing ?? data?.close);
+        const spotRefRaw = Number(data?.clearingPrice ?? data?.prevDayClose ?? data?.sessionClearing ?? data?.close);
         const spotRef =
           Number.isFinite(spotRefRaw) && spotRefRaw > 0 ? Number(spotRefRaw) : null;
         const nseOpenNow = isNseCashMarketOpen();
