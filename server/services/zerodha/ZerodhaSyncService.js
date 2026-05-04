@@ -54,15 +54,30 @@ export class ZerodhaSyncService {
       const verification = await this.verifySync(parsedInstruments.length);
       this.progressService.updateJob(jobId, { step: 5, message: 'Sync verified' });
 
-      this.progressService.completeJob(jobId, {
-        result: {
-          ...result,
-          verification,
-          totalInstruments: parsedInstruments.length
-        }
-      });
+      // Build a per-exchange breakdown so the UI can show a meaningful counts dialog.
+      const counts = await this.buildExchangeCounts();
 
-      return result;
+      // Stable, UI-friendly completion payload. The frontend consumes:
+      //   { message, deleted, added, counts, totalInDatabase, subscribedTokens }
+      // so we expose those canonical aliases without losing the raw fields.
+      const completionPayload = {
+        message: 'Reset & sync completed',
+        deleted: result.deleted,
+        added: result.inserted,
+        inserted: result.inserted,
+        total: result.total,
+        errors: result.errors,
+        success: result.success,
+        counts,
+        totalInDatabase: verification?.actual ?? null,
+        subscribedTokens: 0, // Enriched in the controller from the live subscription manager.
+        verification,
+        totalInstruments: parsedInstruments.length,
+      };
+
+      this.progressService.completeJob(jobId, { result: completionPayload });
+
+      return completionPayload;
 
     } catch (error) {
       this.progressService.failJob(jobId, { error: error.message });
@@ -274,6 +289,27 @@ export class ZerodhaSyncService {
         lastUpdated: new Date()
       };
     });
+  }
+
+  /**
+   * Build a per-exchange instrument count breakdown for the UI.
+   * Returns e.g. { NSE: 1234, MCX: 56, NFO: 78 }. Failures degrade to {}.
+   */
+  async buildExchangeCounts() {
+    try {
+      const Instrument = (await import('../../models/Instrument.js')).default;
+      const rows = await Instrument.aggregate([
+        { $group: { _id: '$exchange', count: { $sum: 1 } } },
+      ]);
+      return rows.reduce((acc, row) => {
+        const key = String(row?._id || 'UNKNOWN').toUpperCase();
+        acc[key] = row?.count ?? 0;
+        return acc;
+      }, {});
+    } catch (error) {
+      this.loggerService.error('Failed to build exchange counts:', error?.message || error);
+      return {};
+    }
   }
 
   /**

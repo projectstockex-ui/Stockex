@@ -42,6 +42,10 @@ import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryServ
 import { autoSquareIntradayOnlyTrades } from './services/eodAutoSquareOffService.js';
 import { runDailyPlatformCharges } from './services/platformChargeService.js';
 import cron from 'node-cron';
+// Side-effect import: registers process-level uncaughtException / unhandledRejection
+// handlers so a single bad request (e.g. ERR_HTTP_HEADERS_SENT in a controller)
+// can never tear the whole Node process down.
+import './middleware/productionErrorHandler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

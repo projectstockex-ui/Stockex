@@ -16,6 +16,7 @@ import environmentConfig from '../utils/environmentConfig.js';
 import { ZerodhaProgressService } from '../services/zerodha/ZerodhaProgressService.js';
 import Instrument from '../models/Instrument.js';
 import { getLTP } from '../services/ltpResolutionService.js';
+import { sendJson, sendError } from '../utils/safeResponse.js';
 
 // Logger service
 class Logger {
@@ -124,22 +125,17 @@ class ZerodhaController {
       console.log('Using callback URL:', callbackUrl);
       
       const loginUrl = `https://kite.zerodha.com/connect/login?v=3&api_key=${apiKey}`;
-      
-      res.json({
+
+      return sendJson(res, {
         loginUrl,
         callbackUrl,
         apiKey,
         message: 'Use this URL to connect to Zerodha',
-        environment: environmentConfig.getEnvironmentInfo()
+        environment: environmentConfig.getEnvironmentInfo(),
       });
-      
     } catch (error) {
       console.error('Zerodha login URL error:', error);
-      
-      res.status(500).json({
-        message: 'Failed to generate login URL',
-        error: error.message
-      });
+      return sendError(res, 500, 'Failed to generate login URL', error);
     }
   }
 
@@ -321,15 +317,10 @@ class ZerodhaController {
         subscriptions: [],
       };
 
-      res.json(connectionStatus);
+      return sendJson(res, connectionStatus);
     } catch (error) {
       console.error('Zerodha status error:', error);
-      
-      res.status(500).json({
-        message: 'Failed to get connection status',
-        error: error.message,
-        connected: false
-      });
+      return sendError(res, 500, 'Failed to get connection status', error, { connected: false });
     }
   }
 
@@ -389,19 +380,43 @@ class ZerodhaController {
     try {
       const { jobId } = req.params;
       const job = this.orchestrator.progressService.getJob(jobId);
-      
+
       if (!job) {
-        return res.status(404).json({ message: 'Job not found' });
+        return sendError(res, 404, 'Job not found');
       }
 
-      res.json(job);
-
+      // Enrich the completion payload with the live subscribed-tokens count so
+      // the UI can show an accurate "Subscribed: N" line without coupling the
+      // sync service to the WebSocket subscription manager.
+      const enriched = this._withLiveSubscriptionStats(job);
+      return sendJson(res, enriched);
     } catch (error) {
       this.logger.error('Error getting sync status:', error);
-      res.status(500).json({
-        message: 'Failed to get sync status',
-        error: error.message
-      });
+      return sendError(res, 500, 'Failed to get sync status', error);
+    }
+  }
+
+  /**
+   * Returns a shallow clone of `job` with `result.subscribedTokens` filled
+   * from the live subscription manager (when the job has completed).
+   * Pure / safe — does not mutate the original job object.
+   * @private
+   */
+  _withLiveSubscriptionStats(job) {
+    if (!job || job.status !== 'completed' || !job.result) return job;
+    try {
+      const stats = this.orchestrator?.subscriptionManager?.getSubscriptionStats?.();
+      const subscribedTokens =
+        Number.isFinite(stats?.totalSubscribed) ? stats.totalSubscribed
+        : Number.isFinite(stats?.total) ? stats.total
+        : Number.isFinite(stats?.subscribedTokens) ? stats.subscribedTokens
+        : (job.result.subscribedTokens ?? 0);
+      return {
+        ...job,
+        result: { ...job.result, subscribedTokens },
+      };
+    } catch {
+      return job;
     }
   }
 
@@ -410,14 +425,12 @@ class ZerodhaController {
    */
   async getSyncJobs(req, res) {
     try {
-      const jobs = this.orchestrator.progressService.getJobsByType('full_sync');
-      res.json({ jobs });
+      const jobs = (this.orchestrator.progressService.getJobsByType('full_sync') || [])
+        .map((j) => this._withLiveSubscriptionStats(j));
+      return sendJson(res, { jobs });
     } catch (error) {
       this.logger.error('Error getting sync jobs:', error);
-      res.status(500).json({
-        message: 'Failed to get sync jobs',
-        error: error.message
-      });
+      return sendError(res, 500, 'Failed to get sync jobs', error);
     }
   }
 
@@ -596,15 +609,12 @@ class ZerodhaController {
    */
   async getMarketData(req, res) {
     try {
-      const marketData = this.orchestrator.getMarketData();
-      // Keep payload shape flat so dashboards can merge token->tick map directly.
-      res.json(marketData && typeof marketData === 'object' ? marketData : {});
+      const marketData = this.orchestrator?.getMarketData?.();
+      const payload = marketData && typeof marketData === 'object' ? marketData : {};
+      return sendJson(res, payload);
     } catch (error) {
       this.logger.error('Error getting market data:', error);
-      res.status(500).json({
-        message: 'Failed to get market data',
-        error: error.message
-      });
+      return sendError(res, 500, 'Failed to get market data', error);
     }
   }
 
