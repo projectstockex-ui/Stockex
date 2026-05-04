@@ -1527,7 +1527,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       const tokens = [...ids];
       if (tokens.length === 0) return;
       try {
-        await axios.post('/api/zerodha/subscribe', { tokens }, {
+        await axios.post('/api/zerodha/tick-subscribe', { tokens }, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
       } catch {
@@ -5145,7 +5145,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
       const tokens = [...ids];
       if (tokens.length === 0) return;
       try {
-        await axios.post('/api/zerodha/subscribe', { tokens }, {
+        await axios.post('/api/zerodha/tick-subscribe', { tokens }, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
       } catch {

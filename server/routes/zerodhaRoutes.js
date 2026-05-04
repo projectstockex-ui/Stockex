@@ -136,6 +136,15 @@ router.post('/subscribe',
   zc(zerodhaController.subscribeTokens)
 );
 
+// User-facing tick subscribe (MCX/User dashboard socket flow)
+router.post('/tick-subscribe',
+  protectUser,
+  requireZerodhaConnection,
+  validateTokensArray,
+  rateLimitZerodha(30, 60000), // user-side retries can be bursty on watchlist changes
+  zc(zerodhaController.subscribeTokens)
+);
+
 // Unsubscribe from tokens
 router.post('/unsubscribe', 
   protectAdmin, 
@@ -159,7 +168,6 @@ router.get('/subscriptions',
 // Get market data
 router.get('/market-data', 
   protectUser, 
-  requireZerodhaConnection,
   rateLimitZerodha(100, 60000), // 100 requests per minute for users
   zc(zerodhaController.getMarketData)
 );
