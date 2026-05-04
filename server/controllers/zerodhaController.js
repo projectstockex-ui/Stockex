@@ -486,14 +486,20 @@ class ZerodhaController {
     try {
       const { tokens } = req.body;
       if (!Array.isArray(tokens) || tokens.length === 0) {
-        return res.status(400).json({ message: 'Tokens array is required' });
+        return res.status(202).json({
+          message: 'No tokens provided; skipped',
+          accepted: 0,
+        });
       }
 
       const normalized = tokens
         .map((t) => Number.parseInt(String(t), 10))
         .filter((n) => Number.isFinite(n) && n > 0);
       if (normalized.length === 0) {
-        return res.status(400).json({ message: 'No valid token ids provided' });
+        return res.status(202).json({
+          message: 'No valid numeric token ids; skipped',
+          accepted: 0,
+        });
       }
 
       // If WS is reconnecting, keep UI stable instead of throwing 400 loops.

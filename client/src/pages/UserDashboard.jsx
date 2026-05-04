@@ -1800,6 +1800,16 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       const n = parseInt(s, 10);
       if (!Number.isNaN(n) && marketData[n]) return marketData[n];
     }
+    const fallbackLtp = Number(
+      instrument?.ltp ??
+      instrument?.lastPrice ??
+      instrument?.close ??
+      instrument?.previousClose ??
+      0
+    );
+    if (Number.isFinite(fallbackLtp) && fallbackLtp > 0) {
+      return { ltp: fallbackLtp, close: fallbackLtp, change: 0, changePercent: 0 };
+    }
     return { ltp: 0, change: 0, changePercent: 0 };
   };
 
@@ -5477,7 +5487,15 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
   const getPrice = (token) => {
     if (token == null || token === '') return { ltp: 0, change: 0, changePercent: 0 };
     const s = String(token);
-    return marketData[s] || marketData[Number.parseInt(s, 10)] || { ltp: 0, change: 0, changePercent: 0 };
+    const md = marketData[s] || marketData[Number.parseInt(s, 10)];
+    if (md) return md;
+    const list = getWatchlist();
+    const inst = list.find((x) => String(x?.token ?? '') === s);
+    const fallbackLtp = Number(inst?.ltp ?? inst?.lastPrice ?? inst?.close ?? inst?.previousClose ?? 0);
+    if (Number.isFinite(fallbackLtp) && fallbackLtp > 0) {
+      return { ltp: fallbackLtp, close: fallbackLtp, change: 0, changePercent: 0 };
+    }
+    return { ltp: 0, change: 0, changePercent: 0 };
   };
   
   // Fetch crypto data from Binance

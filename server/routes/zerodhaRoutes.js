@@ -139,7 +139,6 @@ router.post('/subscribe',
 // User-facing tick subscribe (MCX/User dashboard socket flow)
 router.post('/tick-subscribe',
   protectUser,
-  validateTokensArray,
   rateLimitZerodha(30, 60000), // user-side retries can be bursty on watchlist changes
   zc(zerodhaController.tickSubscribe)
 );
