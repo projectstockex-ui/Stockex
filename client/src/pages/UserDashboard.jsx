@@ -187,8 +187,9 @@ function deriveMcxBaseSymbol(raw) {
   const s = String(raw || '').trim().toUpperCase();
   if (!s) return '';
   const noSuffix = s.replace(/(?:FUT|CE|PE)$/i, '');
-  const noContractDate = noSuffix.replace(/[A-Z]?\d{1,2}[A-Z]{3}.*$/i, '');
-  const alphaPrefix = noContractDate.match(/^[A-Z]+/);
+  const dated = noSuffix.match(/^([A-Z]+?)(?:[FGHJKMNQUVXZ])?\d{1,2}[A-Z]{3}/i);
+  if (dated?.[1]) return dated[1];
+  const alphaPrefix = noSuffix.match(/^[A-Z]+/);
   if (alphaPrefix?.[0]) return alphaPrefix[0];
   const fallback = s.match(/^[A-Z]+/);
   return fallback?.[0] || '';
@@ -1730,7 +1731,11 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
         if (!inst || inst.isCrypto || inst.isForex) return;
         if (isUsdSpotInstrument(inst)) return;
         const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
-        if (sym) symbols.add(sym);
+        if (sym) {
+          symbols.add(sym);
+          const base = deriveMcxBaseSymbol(sym);
+          if (base) symbols.add(base);
+        }
         const t = inst.token;
         if (t == null || t === '') return;
         const n = parseInt(String(t), 10);
@@ -5368,7 +5373,11 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
         if (!inst || inst.isCrypto || inst.isForex) return;
         if (isUsdSpotInstrument(inst)) return;
         const sym = String(inst.tradingSymbol || inst.symbol || '').trim();
-        if (sym) symbols.add(sym);
+        if (sym) {
+          symbols.add(sym);
+          const base = deriveMcxBaseSymbol(sym);
+          if (base) symbols.add(base);
+        }
         const t = inst.token;
         if (t == null || t === '') return;
         const n = parseInt(String(t), 10);

@@ -486,6 +486,16 @@ class ZerodhaController {
   async tickSubscribe(req, res) {
     try {
       const { tokens, symbols } = req.body || {};
+      const escapeRegex = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const deriveBase = (raw) => {
+        const s = String(raw || '').trim().toUpperCase();
+        if (!s) return '';
+        const noSuffix = s.replace(/(?:FUT|CE|PE)$/i, '');
+        const dated = noSuffix.match(/^([A-Z]+?)(?:[FGHJKMNQUVXZ])?\d{1,2}[A-Z]{3}/i);
+        if (dated?.[1]) return dated[1];
+        const m = noSuffix.match(/^[A-Z]+/);
+        return m?.[0] || '';
+      };
       const normalized = (Array.isArray(tokens) ? tokens : [])
         .map((t) => Number.parseInt(String(t).trim(), 10))
         .filter((n) => Number.isFinite(n) && n > 0);
@@ -497,10 +507,18 @@ class ZerodhaController {
           .filter((s) => s.length > 0)
           .slice(0, 100);
         if (cleanSymbols.length > 0) {
+          const bases = [...new Set(cleanSymbols.map(deriveBase).filter(Boolean))];
+          const prefixRegexes = bases.map((b) => new RegExp(`^${escapeRegex(b)}`, 'i'));
           const rows = await Instrument.find({
             $or: [
               { symbol: { $in: cleanSymbols } },
               { tradingSymbol: { $in: cleanSymbols } },
+              ...(prefixRegexes.length > 0
+                ? [
+                    { symbol: { $in: prefixRegexes } },
+                    { tradingSymbol: { $in: prefixRegexes } },
+                  ]
+                : []),
             ],
           })
             .select('token symbol tradingSymbol exchange displaySegment segment')
@@ -594,12 +612,24 @@ class ZerodhaController {
    */
   async getContractPrice(req, res) {
     try {
+      const deriveBase = (raw) => {
+        const s = String(raw || '').trim().toUpperCase();
+        if (!s) return '';
+        const noSuffix = s.replace(/(?:FUT|CE|PE)$/i, '');
+        const dated = noSuffix.match(/^([A-Z]+?)(?:[FGHJKMNQUVXZ])?\d{1,2}[A-Z]{3}/i);
+        if (dated?.[1]) return dated[1];
+        const m = noSuffix.match(/^[A-Z]+/);
+        return m?.[0] || '';
+      };
+      const escapeRegex = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const tokenRaw = req.query.token != null ? String(req.query.token).trim() : '';
       const symbolRaw = req.query.symbol != null ? String(req.query.symbol).trim() : '';
       const tradingSymbolRaw =
         req.query.tradingSymbol != null ? String(req.query.tradingSymbol).trim() : '';
-      const baseSymbolRaw =
+      const baseSymbolFromReq =
         req.query.baseSymbol != null ? String(req.query.baseSymbol).trim().toUpperCase() : '';
+      const baseSymbolRaw =
+        deriveBase(baseSymbolFromReq) || deriveBase(tradingSymbolRaw) || deriveBase(symbolRaw);
       if (!tokenRaw && !symbolRaw && !tradingSymbolRaw && !baseSymbolRaw) {
         return res.status(400).json({ message: 'token or symbol or tradingSymbol or baseSymbol is required' });
       }
@@ -634,8 +664,8 @@ class ZerodhaController {
         ...(baseSymbolRaw
           ? [
               { symbol: baseSymbolRaw },
-              { symbol: { $regex: `^${baseSymbolRaw}`, $options: 'i' } },
-              { tradingSymbol: { $regex: `^${baseSymbolRaw}`, $options: 'i' } },
+              { symbol: { $regex: `^${escapeRegex(baseSymbolRaw)}`, $options: 'i' } },
+              { tradingSymbol: { $regex: `^${escapeRegex(baseSymbolRaw)}`, $options: 'i' } },
             ]
           : []),
       ];
