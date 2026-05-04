@@ -25,7 +25,11 @@ import {
 import zerodhaController from '../controllers/zerodhaController.js';
 import environmentConfig from '../utils/environmentConfig.js';
 import Instrument from '../models/Instrument.js';
-import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
+import GameResult from '../models/GameResult.js';
+import {
+  fetchNifty50LastPriceFromKite,
+  fetchNifty50SessionClearing15mCached,
+} from '../utils/kiteNiftyQuote.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 
 const router = express.Router();
@@ -176,6 +180,12 @@ router.get('/game-price/:symbol', async (req, res) => {
       return res.status(400).json({ message: 'Only NIFTY is supported for game-price endpoint' });
     }
 
+    // Best-effort day-clearing close (used by UI when market is closed).
+    const clearing = await fetchNifty50SessionClearing15mCached();
+    const sessionClearing = Number(clearing?.close);
+    const safeSessionClearing =
+      Number.isFinite(sessionClearing) && sessionClearing > 0 ? sessionClearing : null;
+
     // Prefer authoritative Kite quote from persisted Zerodha session.
     const kitePrice = await fetchNifty50LastPriceFromKite();
     if (Number.isFinite(Number(kitePrice)) && Number(kitePrice) > 0) {
@@ -184,6 +194,7 @@ router.get('/game-price/:symbol', async (req, res) => {
         price: Number(kitePrice),
         close: Number(kitePrice),
         prevDayClose: null,
+        sessionClearing: safeSessionClearing,
         source: 'kite',
         timestamp: new Date().toISOString(),
       });
@@ -202,6 +213,7 @@ router.get('/game-price/:symbol', async (req, res) => {
         low: Number(liveTick?.low) || livePrice,
         close: Number(liveTick?.close) || livePrice,
         prevDayClose: Number(liveTick?.close) || livePrice,
+        sessionClearing: safeSessionClearing,
         source: 'ws_cache',
         timestamp: new Date().toISOString(),
       });
@@ -211,23 +223,57 @@ router.get('/game-price/:symbol', async (req, res) => {
     const inst = await Instrument.findOne({
       $or: [{ token: '256265' }, { symbol: { $in: ['NIFTY', 'NIFTY 50'] } }],
     })
-      .select('ltp open high low close')
+      .select('ltp open high low close previousDayClosePrice')
       .lean();
 
     const fallback = Number(inst?.ltp || inst?.close || 0);
-    if (!Number.isFinite(fallback) || fallback <= 0) {
-      return res.status(404).json({ message: 'NIFTY price unavailable' });
+    if (Number.isFinite(fallback) && fallback > 0) {
+      return res.json({
+        symbol: 'NIFTY',
+        price: fallback,
+        open: Number(inst?.open) || fallback,
+        high: Number(inst?.high) || fallback,
+        low: Number(inst?.low) || fallback,
+        close: Number(inst?.close) || fallback,
+        prevDayClose: Number(inst?.previousDayClosePrice) || Number(inst?.close) || fallback,
+        sessionClearing: safeSessionClearing,
+        source: 'db_fallback',
+        timestamp: new Date().toISOString(),
+      });
     }
 
+    // Final fallback: most recent persisted NIFTY up/down game result close.
+    const latestResult = await GameResult.findOne({ gameId: 'updown' })
+      .sort({ windowDate: -1, windowNumber: -1 })
+      .select('closePrice openPrice')
+      .lean();
+    const resultClose = Number(latestResult?.closePrice || 0);
+    if (Number.isFinite(resultClose) && resultClose > 0) {
+      return res.json({
+        symbol: 'NIFTY',
+        price: resultClose,
+        open: Number(latestResult?.openPrice) || resultClose,
+        high: resultClose,
+        low: resultClose,
+        close: resultClose,
+        prevDayClose: resultClose,
+        sessionClearing: safeSessionClearing ?? resultClose,
+        source: 'game_result_fallback',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Never return 404 here; keep polling endpoint stable to avoid console spam.
     return res.json({
       symbol: 'NIFTY',
-      price: fallback,
-      open: Number(inst?.open) || fallback,
-      high: Number(inst?.high) || fallback,
-      low: Number(inst?.low) || fallback,
-      close: Number(inst?.close) || fallback,
-      prevDayClose: Number(inst?.close) || fallback,
-      source: 'db_fallback',
+      price: safeSessionClearing,
+      open: safeSessionClearing,
+      high: safeSessionClearing,
+      low: safeSessionClearing,
+      close: safeSessionClearing,
+      prevDayClose: safeSessionClearing,
+      sessionClearing: safeSessionClearing,
+      source: 'unavailable',
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

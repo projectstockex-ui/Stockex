@@ -33,6 +33,9 @@ import GameSettings from '../models/GameSettings.js';
 export const getUserWallet = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('wallet cryptoWallet forexWallet mcxWallet gamesWallet marginSettings rmsSettings');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
     let gamesTicketValue = 300;
     
     // Get games ticket value from settings
@@ -45,19 +48,72 @@ export const getUserWallet = async (req, res) => {
       console.warn('[FinancialController] Could not fetch game settings for ticket value:', settingsError);
     }
 
-    // Calculate games wallet ticket count
-    const gamesTicketCount = user.gamesWallet ? Math.floor(user.gamesWallet / gamesTicketValue) : 0;
+    // Normalize wallet for both legacy and current data shapes
+    const walletObj =
+      user.wallet && typeof user.wallet === 'object' && !Array.isArray(user.wallet)
+        ? user.wallet
+        : {};
+    const legacyWalletNum = Number(user.wallet);
+    const legacyBalance = Number.isFinite(legacyWalletNum) ? legacyWalletNum : 0;
+
+    let mainWalletBalance = Number(walletObj.cashBalance || 0);
+    if (mainWalletBalance <= 0 && Number(walletObj.balance || 0) > 0) {
+      mainWalletBalance = Number(walletObj.balance);
+    }
+    if (mainWalletBalance <= 0 && legacyBalance > 0) {
+      mainWalletBalance = legacyBalance;
+    }
+
+    const tradingBalance = Number(walletObj.tradingBalance || 0);
+    const usedMargin = Number(walletObj.usedMargin || walletObj.blocked || 0);
+    const unrealizedPnL = Number(walletObj.unrealizedPnL || 0);
+    const availableMargin =
+      tradingBalance
+      + Number(walletObj.collateralValue || 0)
+      + Math.max(0, unrealizedPnL)
+      - Math.abs(Math.min(0, unrealizedPnL))
+      - usedMargin;
+
+    const gamesBalance = Number(user.gamesWallet?.balance || 0);
+    const gamesTicketCount =
+      gamesTicketValue > 0 ? Math.floor(gamesBalance / gamesTicketValue) : 0;
 
     res.json({
-      wallet: user.wallet || 0,
-      cryptoWallet: user.cryptoWallet || 0,
-      forexWallet: user.forexWallet || 0,
-      mcxWallet: user.mcxWallet || 0,
-      gamesWallet: user.gamesWallet || 0,
+      // Top-level fields expected by current client
+      cashBalance: mainWalletBalance,
+      tradingBalance,
+      usedMargin,
+      collateralValue: Number(walletObj.collateralValue || 0),
+      realizedPnL: Number(walletObj.realizedPnL || 0),
+      unrealizedPnL,
+      todayRealizedPnL: Number(walletObj.todayRealizedPnL || 0),
+      todayUnrealizedPnL: Number(walletObj.todayUnrealizedPnL || 0),
+      availableMargin,
+      totalBalance: mainWalletBalance + tradingBalance,
+
+      // Wallets
+      wallet: {
+        ...walletObj,
+        balance: Number(walletObj.balance || mainWalletBalance),
+        cashBalance: mainWalletBalance,
+        tradingBalance,
+        usedMargin,
+        blocked: usedMargin,
+      },
+      cryptoWallet: user.cryptoWallet || {},
+      forexWallet: user.forexWallet || {},
+      mcxWallet: user.mcxWallet || {},
+      gamesWallet: user.gamesWallet || {},
+
+      // Games helpers
       gamesTicketValue,
       gamesTicketCount,
+
+      // Settings
       marginSettings: user.marginSettings || {},
-      rmsSettings: user.rmsSettings || {}
+      rmsSettings: user.rmsSettings || {},
+      rmsStatus: user.rmsSettings?.tradingBlocked ? 'BLOCKED' : 'ACTIVE',
+      rmsBlockReason: user.rmsSettings?.blockReason || null,
     });
   } catch (error) {
     console.error('[FinancialController] Error getting user wallet:', error);
