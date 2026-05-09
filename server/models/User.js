@@ -630,6 +630,8 @@ const userSchema = new mongoose.Schema({
       },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      intradayLeverage: { type: Number, default: 1 },
+      carryForwardLeverage: { type: Number, default: 1 },
       allowClientIntradayOnly: { type: Boolean, default: true },
       defaultIntradayOnly: { type: Boolean, default: false },
       allowLimitPendingOrders: { type: Boolean, default: true },
@@ -727,7 +729,7 @@ const userSchema = new mongoose.Schema({
   // Allowed Segments (simplified list)
   allowedSegments: [{
     type: String,
-    enum: ['NSE', 'MCX', 'BFO', 'EQ', 'CRYPTO', 'COMEX', 'FOREX', 'GLOBALINDEX']
+    enum: ['NSE', 'MCX', 'BFO', 'EQ', 'COMEX', 'FOREX', 'GLOBALINDEX']
   }],
   
   createdBy: {

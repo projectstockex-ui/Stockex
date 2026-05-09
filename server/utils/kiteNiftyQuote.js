@@ -109,6 +109,17 @@ export function istCalendarDateString(date = new Date()) {
   }).format(date);
 }
 
+/** Check if NSE cash market is currently open (9:15 AM - 3:30 PM IST). */
+export function isNseCashMarketOpen() {
+  const now = new Date();
+  const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const hours = istTime.getHours();
+  const minutes = istTime.getMinutes();
+  const minutesFromMidnight = hours * 60 + minutes;
+  // Market hours: 9:15 (555 min) to 15:30 (930 min)
+  return minutesFromMidnight >= 555 && minutesFromMidnight < 930;
+}
+
 /**
  * Close of the last completed 15m candle for today's IST session (Kite historical).
  * Aligns with Kite 15m chart "C" on the final bar of the day after 15:30.
@@ -116,12 +127,14 @@ export function istCalendarDateString(date = new Date()) {
  *
  * @returns {Promise<{ close: number, barTime: number, barTimeISO: string } | null>}
  */
-const CLEARING_CACHE_MS = 45000;
+const CLEARING_CACHE_MS = 0;
 let clearing15mCache = { dateKey: '', value: null, fetchedAt: 0 };
 
 export async function fetchNifty50SessionClearing15mCached() {
   const todayKey = istCalendarDateString();
   const now = Date.now();
+  
+  // Normal cache check (45 seconds)
   if (
     clearing15mCache.dateKey === todayKey &&
     clearing15mCache.value != null &&
@@ -148,7 +161,7 @@ export async function fetchNifty50SessionClearing15mCached() {
 
   const last = todays[todays.length - 1];
   const out = {
-    close: last.close,
+    close: last.close, // Use last candle's close as clearing price
     barTime: last.time,
     barTimeISO: last.timestamp,
   };

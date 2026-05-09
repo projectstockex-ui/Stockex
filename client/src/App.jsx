@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import UserAutoRefresh from './components/UserAutoRefresh';
@@ -75,9 +75,29 @@ class ErrorBoundary extends React.Component {
 }
 
 const ProtectedAdminRoute = ({ children }) => {
-  const { admin, loading } = useAuth();
+  const { admin, loading, setAdmin } = useAuth();
+  
+  // Allow access to dashboard after Zerodha OAuth callback even if admin state is not loaded yet
+  const urlParams = new URLSearchParams(window.location.search);
+  const zerodhaConnected = urlParams.get('zerodha') === 'connected';
+  
+  // Load admin from localStorage if zerodha connected and admin state is null
+  useEffect(() => {
+    if (zerodhaConnected && !admin && !loading) {
+      const storedAdmin = localStorage.getItem('admin');
+      if (storedAdmin) {
+        try {
+          setAdmin(JSON.parse(storedAdmin));
+        } catch (e) {
+          console.error('Failed to parse admin from localStorage:', e);
+        }
+      }
+    }
+  }, [zerodhaConnected, admin, loading, setAdmin]);
+  
   if (loading) return <div className="flex items-center justify-center h-screen bg-dark-900">Loading...</div>;
-  if (!admin) {
+  
+  if (!admin && !zerodhaConnected) {
     // Redirect to appropriate login based on current path
     const path = window.location.pathname;
     if (path.startsWith('/superadmin')) return <Navigate to="/superadmin/login" />;

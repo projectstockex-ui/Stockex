@@ -428,7 +428,7 @@ class StopOutService {
       } else {
         segmentQuery = {
           exchange: { $in: ['NSE', 'BSE', 'NFO'] },
-          segment: { $nin: ['CRYPTO', 'MCX', 'MCXFUT', 'MCXOPT'] }
+          segment: { $nin: ['MCX', 'MCXFUT', 'MCXOPT'] }
         };
       }
 

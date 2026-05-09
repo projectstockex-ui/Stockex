@@ -125,7 +125,7 @@ const UserOrders = () => {
           const exchange = item.exchange?.toUpperCase() || '';
           const segment = item.segment?.toUpperCase() || '';
           const isMCXItem = exchange === 'MCX' || segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT';
-          const isCryptoItem = segment === 'CRYPTO' || exchange === 'BINANCE' || item.isCrypto;
+          const isCryptoItem = exchange === 'BINANCE' || item.isCrypto;
           const isForexItem = segment === 'FOREX' || exchange === 'FOREX' || item.isForex;
           
           if (mcxOnly) {

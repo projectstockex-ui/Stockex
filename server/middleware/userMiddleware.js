@@ -19,26 +19,25 @@ import {
 // ==================== GAME VALIDATION MIDDLEWARE ====================
 
 /**
- * Middleware to check if game is denied for user hierarchy
- * @param {Object} req - Express request object
+ * Helper function to check if game is denied for user hierarchy
  * @param {Object} res - Express response object
- * @param {Function} next - Express next function
- * @returns {Promise<void>}
+ * @param {string} userId - User ID to check
+ * @param {string} gameKey - Game key to check
+ * @returns {Promise<boolean>} - Returns true if game is denied, false otherwise
  */
-export const rejectIfHierarchyGameDenied = async (req, res, next) => {
+export const rejectIfHierarchyGameDenied = async (res, userId, gameKey) => {
   try {
-    const { userId } = req.params;
-    const { gameKey } = req.body || req.query;
-    
     if (!userId || !gameKey) {
-      return res.status(400).json({ message: 'User ID and game key are required' });
+      res.status(400).json({ message: 'User ID and game key are required' });
+      return true;
     }
 
     await assertHierarchyGameNotDeniedForUserId(userId, gameKey);
-    next();
+    return false;
   } catch (error) {
     console.error('[UserMiddleware] Game restriction check failed:', error);
     res.status(403).json({ message: error.message });
+    return true;
   }
 };
 

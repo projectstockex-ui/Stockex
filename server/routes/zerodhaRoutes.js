@@ -24,6 +24,7 @@ import {
 } from '../middleware/zerodhaMiddleware.js';
 import zerodhaController from '../controllers/zerodhaController.js';
 import environmentConfig from '../utils/environmentConfig.js';
+import zerodhaErrorHandler from '../services/zerodha/error/ZerodhaErrorHandler.js';
 
 const router = express.Router();
 
@@ -51,6 +52,8 @@ router.use(handleZerodhaErrors);
 router.get('/login-url', 
   zc(zerodhaController.getLoginUrl)
 );
+
+router.get('/redirect-to-login', zc(zerodhaController.redirectToLogin));
 
 // Connect to Zerodha
 router.post('/connect', 
@@ -108,6 +111,13 @@ router.get('/sync/status/:jobId',
   zc(zerodhaController.getSyncStatus)
 );
 
+// Refresh session (handle expired tokens)
+router.post('/refresh-session', 
+  protectAdmin, 
+  superAdminOnly,
+  zc(zerodhaController.refreshSession)
+);
+
 // Get all sync jobs
 router.get('/sync/jobs', 
   protectAdmin, 
@@ -134,6 +144,14 @@ router.post('/subscribe',
   validateTokensArray,
   rateLimitZerodha(10, 60000), // 10 attempts per minute
   zc(zerodhaController.subscribeTokens)
+);
+
+// Subscribe to all tokens (superadmin only)
+router.post('/subscribe-all', 
+  protectAdmin, 
+  superAdminOnly,
+  rateLimitZerodha(5, 300000), // 5 attempts per 5 minutes
+  zc(zerodhaController.subscribeAllTokens)
 );
 
 // User-facing tick subscribe (MCX/User dashboard socket flow)
@@ -191,6 +209,13 @@ router.get('/game-price/:symbol', zc(zerodhaController.getGamePrice));
  * Health and Maintenance Routes
  */
 
+// Auto-renewal endpoint
+router.get('/auto-renewal', 
+  protectAdmin, 
+  superAdminOnly,
+  zc(zerodhaController.getAutoRenewalUrl)
+);
+
 // Health check endpoint
 router.get('/health', 
   protectAdmin, 
@@ -205,29 +230,14 @@ router.post('/cleanup',
   zc(zerodhaController.cleanupJobs)
 );
 
+// Token renewal routes
+import tokenRenewalRoutes from './zerodha/tokenRenewalRoutes.js';
+router.use('/token-renewal', tokenRenewalRoutes);
+
 /**
  * Zerodha OAuth Callback
  * This is the callback URL that Zerodha redirects to after authentication
  */
-router.get('/callback', async (req, res) => {
-  const { success, error } = environmentConfig.getDashboardUrls();
-  const redirectError = (msg) =>
-    res.redirect(`${error}&message=${encodeURIComponent(msg || 'OAuth failed')}`);
-
-  try {
-    const { request_token } = req.query;
-
-    if (!request_token) {
-      console.error('Missing request_token in Zerodha callback');
-      return redirectError('Missing request_token');
-    }
-
-    await zerodhaController.exchangeAndPersistSession(request_token);
-    return res.redirect(success);
-  } catch (err) {
-    console.error('Zerodha callback error:', err?.message || err);
-    return redirectError(err?.message || 'Zerodha OAuth failed');
-  }
-});
+router.get('/callback', zc(zerodhaController.handleCallback));
 
 export default router;

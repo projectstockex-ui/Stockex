@@ -5,7 +5,7 @@
 
 export function orderIsCrypto(o) {
   if (!o) return false;
-  return o.segment === 'CRYPTO' || o.exchange === 'BINANCE' || o.isCrypto === true;
+  return o.exchange === 'BINANCE' || o.isCrypto === true;
 }
 
 export function orderIsForex(o) {

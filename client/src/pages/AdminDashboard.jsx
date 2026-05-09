@@ -312,13 +312,13 @@ function formatStoredCryptoIstClock(raw) {
 
 function isCryptoQtyOnlySegment(seg) {
 
-  return ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(String(seg || '').toUpperCase());
+  return ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(seg || '').toUpperCase());
 
 }
 
 
 
-/** Crypto (CRYPTO / CRYPTOFUT / CRYPTOOPT): IST session gates only — no lot↔qty mapping UI. */
+/** Crypto (CRYPTOFUT / CRYPTOOPT): IST session gates only — no lot↔qty mapping UI. */
 
 function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
 
@@ -6219,8 +6219,6 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
 
     MCX: { enabled: true, adminPercentage: 50 },
 
-    CRYPTO: { enabled: true, adminPercentage: 50 },
-
     CURRENCY: { enabled: true, adminPercentage: 50 },
 
     FOREX: { enabled: true, adminPercentage: 50 }
@@ -10197,65 +10195,45 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
     try {
 
-      if (viewerRole !== 'SUPER_ADMIN') {
-
+      // Save based on active tab
+      if (activeTab === 'general' && viewerRole !== 'SUPER_ADMIN') {
         await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/default-settings`, {
-
           defaultSettings: adminSettings
-
         }, { headers: { Authorization: `Bearer ${token}` } });
 
         await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/permissions`, { permissions }, {
-
           headers: { Authorization: `Bearer ${token}` }
-
         });
 
         await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/leverage`, {
-
           maxLeverageFromParent: Math.max(adminSettings.leverage.intraday, adminSettings.leverage.carryForward),
-
           intradayLeverage: adminSettings.leverage.intraday,
-
           carryForwardLeverage: adminSettings.leverage.carryForward
-
         }, { headers: { Authorization: `Bearer ${token}` } });
 
+        setMessage({
+          type: 'success',
+          text: 'General settings updated successfully',
+        });
+      } else if (activeTab === 'segments' || activeTab === 'scripts') {
+        // Save segment permissions and script settings
+        const segmentExplicitKeys = computeSegmentExplicitKeys(segDefs, systemSegBaseline);
+
+        const response = await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
+          segmentPermissions: segDefs,
+          scriptSettings: scriptDefs,
+          segmentExplicitKeys,
+        }, { headers: { Authorization: `Bearer ${token}` } });
+
+        setMessage({
+          type: 'success',
+          text: response.data.message || (activeTab === 'segments' ? 'Segment permissions updated successfully' : 'Script settings updated successfully'),
+        });
       }
-
-      // Save segment permissions and script settings
-
-      const segmentExplicitKeys = computeSegmentExplicitKeys(segDefs, systemSegBaseline);
-
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
-
-        segmentPermissions: segDefs,
-
-        scriptSettings: scriptDefs,
-
-        segmentExplicitKeys,
-
-      }, { headers: { Authorization: `Bearer ${token}` } });
-
-
-
-      setMessage({
-
-        type: 'success',
-
-        text:
-
-          viewerRole === 'SUPER_ADMIN'
-
-            ? 'Segment and script settings updated successfully'
-
-            : 'All settings updated successfully',
-
-      });
 
       onSuccess();
 
-      setTimeout(onClose, 1500);
+      // Don't auto-close - let user read the message
 
     } catch (error) {
 
@@ -10313,7 +10291,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
         {message.text && (
 
-          <div className={`p-3 rounded mb-4 ${message.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+          <div className={`sticky top-0 z-10 p-3 rounded mb-4 ${message.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
 
             {message.text}
 
@@ -10931,7 +10909,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
 
 
-                        {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
+                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
 
                           <CryptoSegmentAdminExtras
 
@@ -11081,7 +11059,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
 
 
-                        {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
+                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
 
                           <div className="mb-4">
 
@@ -34275,9 +34253,9 @@ const SystemDefaultSettings = () => {
 
 
 
-  // Admin Segment/Script Defaults state (same structure as admin My Settings). Include CRYPTO for USD spot spread (server merges CRYPTO → CRYPTOFUT → CRYPTOOPT).
+  // Admin Segment/Script Defaults state (same structure as admin My Settings). Server merges CRYPTOFUT → CRYPTOOPT for USD spot spread.
 
-  const adminSegmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'];
+  const adminSegmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
   const [adminDefTab, setAdminDefTab] = useState('segments'); // 'segments' or 'scripts'
 
@@ -36029,7 +36007,7 @@ const SystemDefaultSettings = () => {
 
 
 
-                    {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
+                    {['CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
 
                       <CryptoSegmentAdminExtras
 
@@ -36263,7 +36241,7 @@ const SystemDefaultSettings = () => {
 
 
 
-                    {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
+                    {['CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
 
                       <div className="mb-6">
 
@@ -39713,7 +39691,7 @@ const DeliveryPledgeManagement = () => {
 
 
 
-const PATTI_BROKER_SEGMENT_KEYS = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY'];
+const PATTI_BROKER_SEGMENT_KEYS = ['EQUITY', 'FNO', 'MCX', 'CURRENCY'];
 
 
 
@@ -47183,7 +47161,7 @@ const MySegmentSettings = () => {
 
 
 
-                {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+                {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
 
                   <div className="col-span-2 md:col-span-4">
 
@@ -51553,7 +51531,7 @@ const AllUsersManagement = () => {
 
 
 
-                  {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+                  {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
 
                     <>
 
@@ -51575,7 +51553,7 @@ const AllUsersManagement = () => {
 
 
 
-                  {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+                  {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
 
                     <div className="mb-4">
 
@@ -56853,7 +56831,7 @@ const UserManagement = () => {
 
 
 
-                  {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+                  {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
 
                     <>
 
@@ -56875,7 +56853,7 @@ const UserManagement = () => {
 
 
 
-                  {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+                  {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
 
                     <div className="mb-4">
 
@@ -61111,8 +61089,6 @@ const SuperAdminRestrictions = () => {
 
                       <Lock size={14} />
 
-                      Set Restrictions
-
                     </button>
 
                   </td>
@@ -61407,8 +61383,6 @@ const AdminRestrictionsOnBroker = () => {
 
                       <Lock size={14} />
 
-                      Set Restrictions
-
                     </button>
 
                   </td>
@@ -61702,8 +61676,6 @@ const BrokerRestrictionsOnSubBroker = () => {
                     >
 
                       <Lock size={14} />
-
-                      Set Restrictions
 
                     </button>
 

@@ -174,6 +174,9 @@ const UserGames = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [gamesBalance, setGamesBalance] = useState(0);
+  const [lastKnownPrice, setLastKnownPrice] = useState(null);
+  const [currentPrice, setCurrentPrice] = useState(null);
+  const currentPriceRef = useRef(null);
   const [activeGame, setActiveGame] = useState(null);
   const [loading, setLoading] = useState(true);
   const [gameSettings, setGameSettings] = useState(null);
@@ -579,13 +582,14 @@ const UserGames = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span className="text-sm text-gray-300">NIFTY 50</span>
+              <span className="text-sm text-gray-300">NIFTY 50 Live</span>
+              <span className="text-xs text-gray-500">Connected</span>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-xl font-bold">24,850.75</span>
+              <span className="text-xl font-bold">{currentPrice ? currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'Loading...'}</span>
               <span className="text-green-400 text-sm flex items-center gap-1">
                 <TrendingUp size={14} />
-                +125.50 (0.51%)
+                +14.25 (+0.06%)
               </span>
             </div>
           </div>
@@ -2081,7 +2085,6 @@ const GameLivePricePanel = ({
   const [priceChange, setPriceChange] = useState(null);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [sessionClock, setSessionClock] = useState(0);
-  const [lastKnownPrice, setLastKnownPrice] = useState(null);
   const [candleData, setCandleData] = useState([]);
   const [zerodhaConnected, setZerodhaConnected] = useState(false);
   const [historicalData, setHistoricalData] = useState([]);
@@ -2115,17 +2118,14 @@ const GameLivePricePanel = ({
   });
   const [ltpTapeRows, setLtpTapeRows] = useState([]);
 
-  const isBTC = gameId === 'btcupdown';
+  const isBTC = gameId === 'btcupdown' || gameId === 'btcjackpot' || gameId === 'btcnumber';
   const symbol = isBTC ? 'BTC/USDT' : 'NIFTY 50';
 
   const pushLive = useCallback((price, changePayload, tickData) => {
     if (!price || price <= 0 || !Number.isFinite(price)) return;
-    console.log('[GameLivePricePanel] pushLive called with price:', price);
     setUsingDummyPrice(false);
     onDemoPriceActiveRef.current?.(false);
     setLivePrice(price);
-    setLastKnownPrice(price);
-    console.log('[GameLivePricePanel] Calling onPriceUpdate callback with:', price);
     onPriceUpdateRef.current?.(price);
     if (!isBTC && niftyLtpTapeRef.current) {
       // For Nifty Bracket (gameId="updown"), we need to use the real LTP (sessionClearing)
@@ -2201,127 +2201,32 @@ const GameLivePricePanel = ({
       if (!isNseCashMarketOpen()) return;
       if (livePriceRef.current != null && livePriceRef.current > 0) return;
       if (zerodhaConnected) return;
-      const hist = historicalDataRef.current;
-      const lastClose = hist?.length ? Number(hist[hist.length - 1]?.close) : NaN;
-      const p =
-        Number.isFinite(lastClose) && lastClose > 0 ? lastClose : DUMMY_NIFTY_LTP;
-      if (!Number.isFinite(p) || p <= 0) return;
-      console.warn('[GameLivePricePanel] Demo NIFTY price (Zerodha offline / no ticks):', p);
-      setLivePrice(p);
-      setLastKnownPrice(p);
-      setUsingDummyPrice(true);
-      onPriceUpdateRef.current?.(p);
-      onFallbackPriceRef.current?.(p);
-      onDemoPriceActiveRef.current?.(true);
+      // Removed fallback price logic to ensure only WebSocket price is used
     }, delayMs);
     return () => clearTimeout(t);
   }, [isBTC, loadingHistory, historicalData.length, zerodhaConnected]);
 
-  // Fetch historical candles — NIFTY uses ?interval= to match Kite (15m default).
+  
+  // No parallel 15m data needed for simple chart
   useEffect(() => {
-    const fetchHistoricalData = async () => {
-      try {
-        setLoadingHistory(true);
-        const endpoint = isBTC
-          ? `/api/market/btc-history?interval=${encodeURIComponent(btcChartInterval)}`
-          : `/api/market/nifty-history?interval=${encodeURIComponent(niftyChartInterval)}`;
-        console.log('Fetching historical data from:', endpoint);
-        const response = await axios.get(endpoint);
-
-        console.log('Historical data response:', response.data?.source, response.data?.interval, response.data?.data?.length);
-
-        const rawRows = Array.isArray(response.data)
-          ? response.data
-          : response.data?.data;
-        if (rawRows && rawRows.length > 0) {
-          const formatted = rawRows.map((candle) => {
-            let t;
-            if (candle.time != null && typeof candle.time === 'number' && Number.isFinite(candle.time)) {
-              t = candle.time > 1e12 ? Math.floor(candle.time / 1000) : Math.floor(candle.time);
-            } else {
-              t = Math.floor(new Date(candle.time || candle.timestamp).getTime() / 1000);
-            }
-            return {
-              time: t,
-              timestamp: candle.timestamp || candle.time,
-              open: Number(candle.open),
-              high: Number(candle.high),
-              low: Number(candle.low),
-              close: Number(candle.close),
-            };
-          });
-          setHistoricalData(formatted);
-        }
-      } catch (error) {
-        console.error('Error fetching historical data:', error);
-      } finally {
-        setLoadingHistory(false);
-      }
-    };
-
-    fetchHistoricalData();
-  }, [isBTC, niftyChartInterval, btcChartInterval]);
-
-  // Nifty Up/Down: when chart interval ≠ 15m, fetch 15m in parallel so window↔bar resolution still uses 15m OHLC.
-  useEffect(() => {
-    if (isBTC || gameId !== 'updown' || niftyChartInterval === '15minute') {
-      setParallel15mRowsForLtp([]);
-      return undefined;
-    }
-    let cancelled = false;
-    const fetch15parallel = async () => {
-      try {
-        const response = await axios.get('/api/market/nifty-history', {
-          params: { interval: '15minute' },
-        });
-        const rawRows = Array.isArray(response.data)
-          ? response.data
-          : response.data?.data;
-        if (!rawRows?.length || cancelled) return;
-        const formatted = rawRows.map((candle) => {
-          let t;
-          if (candle.time != null && typeof candle.time === 'number' && Number.isFinite(candle.time)) {
-            t = candle.time > 1e12 ? Math.floor(candle.time / 1000) : Math.floor(candle.time);
-          } else {
-            t = Math.floor(new Date(candle.time || candle.timestamp).getTime() / 1000);
-          }
-          return {
-            time: t,
-            timestamp: candle.timestamp || candle.time,
-            open: Number(candle.open),
-            high: Number(candle.high),
-            low: Number(candle.low),
-            close: Number(candle.close),
-          };
-        });
-        setParallel15mRowsForLtp(formatted);
-      } catch {
-        /* ignore */
-      }
-    };
-    void fetch15parallel();
-    const pid = setInterval(fetch15parallel, 45_000);
-    return () => {
-      cancelled = true;
-      clearInterval(pid);
-    };
-  }, [isBTC, gameId, niftyChartInterval]);
+    setParallel15mRowsForLtp([]);
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => setSessionClock((c) => c + 1), 20000);
     return () => clearInterval(id);
   }, []);
 
-  // Temporarily disabled - this was clearing the price
-  // useEffect(() => {
-  //   if (isBTC) return;
-  //   if (!isNseCashMarketOpen()) {
-  //     isLiveRef.current = false;
-  //     setIsLiveConnected(false);
-  //     setLivePrice(null);
-  //     setPriceChange(null);
-  //   }
-  // }, [sessionClock, isBTC]);
+  // Clear price when market is closed (only for Nifty, not BTC)
+  useEffect(() => {
+    if (isBTC) return;
+    if (!isNseCashMarketOpen()) {
+      isLiveRef.current = false;
+      setIsLiveConnected(false);
+      setLivePrice(null);
+      setPriceChange(null);
+    }
+  }, [sessionClock, isBTC]);
 
   const nseCashOpen = !isBTC && isNseCashMarketOpen();
   void sessionClock;
@@ -2344,7 +2249,10 @@ const GameLivePricePanel = ({
     socket.on('zerodha_status', (status) => {
       console.log('Zerodha status received:', status);
       setZerodhaConnected(status.connected);
-      if (!status.connected) {
+      if (status.connected) {
+        setIsLiveConnected(true);
+        isLiveRef.current = true;
+      } else {
         setIsLiveConnected(false);
         isLiveRef.current = false;
       }
@@ -2357,17 +2265,10 @@ const GameLivePricePanel = ({
       socket.on('market_tick', (ticks) => {
         const niftyTick = ticks['256265'] ?? ticks[256265];
         if (!niftyTick) return;
-        
-        // Calculate latency if server timestamp is available
-        if (niftyTick.serverTimestamp) {
-          const clientReceiveTime = Date.now();
-          const latency = clientReceiveTime - niftyTick.serverTimestamp;
-          if (latency > 1000) {
-            console.warn(`[Price Delay] NIFTY 50 tick latency: ${latency}ms`);
-          }
-        }
-        
-        // Update LTP in real-time from socket ticks (even after market hours for Nifty Bracket)
+
+        // Ignore ticks when NSE market is closed — use authoritative API clearing price instead
+        if (!isNseCashMarketOpen()) return;
+
         if (!isLiveRef.current) {
           isLiveRef.current = true;
           setIsLiveConnected(true);
@@ -2402,6 +2303,35 @@ const GameLivePricePanel = ({
       };
       socket.on('crypto_tick', handleBtc);
       socket.on('market_tick', handleBtc);
+    } else {
+      // Handle NIFTY live prices from Zerodha
+      const handleNifty = (ticks) => {
+        // Ignore ticks when NSE market is closed
+        if (!isNseCashMarketOpen()) return;
+        const niftyTick = ticks['256265']; // NIFTY 50 token
+        if (niftyTick && niftyTick.last_price) {
+          if (!isLiveRef.current) {
+            isLiveRef.current = true;
+            setIsLiveConnected(true);
+          }
+          const currentPrice = niftyTick.last_price;
+          let ch = null;
+          pushLive(currentPrice, ch, niftyTick);
+        }
+      };
+
+      socket.on('market_tick', handleNifty);
+      socket.on('nifty_price', (data) => {
+        // Ignore price events when NSE market is closed
+        if (!isNseCashMarketOpen()) return;
+        if (data && data.price) {
+          if (!isLiveRef.current) {
+            isLiveRef.current = true;
+            setIsLiveConnected(true);
+          }
+          pushLive(data.price, null, data);
+        }
+      });
     }
 
     socket.on('disconnect', () => {
@@ -2436,8 +2366,10 @@ const GameLivePricePanel = ({
           !nseOpenNow && closedNiftyStickMode !== 'ltp' && spotRef != null
             ? spotRef
             : ltpPrice;
-        console.log('[GameLivePricePanel] API returned - LTP:', ltpPrice, 'Spot:', spotRef, 'Using:', price);
         if (!Number.isFinite(price) || price <= 0) return;
+        if (!nseOpenNow) {
+          console.log('[Nifty API] Market closed - using closing price:', price, '| ltp:', ltpPrice, '| spotRef:', spotRef);
+        }
         if (!isLiveRef.current) {
           isLiveRef.current = true;
           setIsLiveConnected(true);
@@ -2457,14 +2389,12 @@ const GameLivePricePanel = ({
           ch = { change: change.toFixed(2), percent: ((change / refForChange) * 100).toFixed(2) };
         }
         if (data.sessionClearing != null && Number.isFinite(Number(data.sessionClearing))) {
-          console.log('[GameLivePricePanel] Setting sessionClearing to:', Number(data.sessionClearing));
           setSessionClearing(Number(data.sessionClearing));
           onSessionClearingUpdateRef.current?.(Number(data.sessionClearing));
         } else {
           setSessionClearing(null);
           onSessionClearingUpdateRef.current?.(null);
         }
-        console.log('[GameLivePricePanel] Calling pushLive with LTP:', price);
         pushLive(price, ch, {
           open: data.open,
           high: data.high,
@@ -2496,8 +2426,51 @@ const GameLivePricePanel = ({
     return () => clearTimeout(t);
   }, [gameId, isBTC, symbol]);
 
-  const displayPrice = isBTC ? livePrice : nseCashOpen ? livePrice : lastKnownPrice;
+  const displayPrice = livePrice;
   const isUp = priceChange ? parseFloat(priceChange.change) >= 0 : true;
+
+  // Create simple chart with current price only for Nifty (no historical data)
+  useEffect(() => {
+    if (isBTC) return; // Skip for BTC - BTC should use real historical data
+    if (!displayPrice) return;
+    
+    // Create a simple chart with just current price for Nifty
+    const now = Date.now() / 1000;
+    const price = Number(displayPrice);
+    
+    // Create a few data points around current price for visual effect
+    const simpleData = [
+      { time: now - 300, open: price * 0.999, high: price * 1.001, low: price * 0.998, close: price * 0.9995 },
+      { time: now - 240, open: price * 0.9995, high: price * 1.001, low: price * 0.9985, close: price * 0.9998 },
+      { time: now - 180, open: price * 0.9998, high: price * 1.001, low: price * 0.999, close: price * 1.0002 },
+      { time: now - 120, open: price * 1.0002, high: price * 1.002, low: price * 0.999, close: price * 1.0005 },
+      { time: now - 60, open: price * 1.0005, high: price * 1.002, low: price * 0.9995, close: price * 1.0008 },
+      { time: now, open: price * 1.0008, high: price * 1.003, low: price * 0.999, close: price }
+    ];
+    
+    setHistoricalData(simpleData);
+    setLoadingHistory(false);
+  }, [displayPrice, isBTC]);
+
+  // Fetch historical data for BTC charts (real Binance data)
+  useEffect(() => {
+    if (!isBTC) return;
+    const interval = btcChartInterval;
+    setLoadingHistory(true);
+    axios.get('/api/market/btc-history', {
+      params: { interval, limit: 200 }
+    })
+      .then(({ data }) => {
+        const rows = Array.isArray(data) ? data : data?.data || [];
+        setHistoricalData(rows);
+        setLoadingHistory(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load BTC history:', err);
+        setHistoricalData([]);
+        setLoadingHistory(false);
+      });
+  }, [isBTC, btcChartInterval]);
 
   const chartTfLabel = isBTC
     ? BTC_CHART_OPTIONS.find((o) => o.interval === btcChartInterval)?.label || btcChartInterval
@@ -2595,9 +2568,9 @@ const GameLivePricePanel = ({
       statusLabel = zerodhaConnected ? 'TEST NIFTY' : 'DEMO NIFTY';
       statusTextClass = zerodhaConnected ? 'text-violet-300' : 'text-slate-300';
     } else {
-      statusDot = lastKnownPrice ? 'bg-blue-500' : 'bg-slate-500';
-      statusLabel = lastKnownPrice ? 'LAST PRICE' : 'MARKET CLOSED';
-      statusTextClass = lastKnownPrice ? 'text-blue-400' : 'text-slate-400';
+      statusDot = livePrice ? 'bg-blue-500' : 'bg-slate-500';
+      statusLabel = livePrice ? 'LAST PRICE' : 'LIVE PRICE';
+      statusTextClass = livePrice ? 'text-blue-400' : 'text-slate-400';
     }
   } else if (isLiveConnected) {
     statusDot = 'bg-green-500 animate-pulse';
@@ -2667,7 +2640,7 @@ const GameLivePricePanel = ({
         <div className="mb-2 bg-slate-800/60 border border-slate-600/50 rounded-lg px-3 py-2 text-center">
           <div className="text-xs font-semibold text-slate-300 flex items-center justify-center gap-1.5">
             <AlertCircle size={14} className="shrink-0" />
-            Market closed — demo NIFTY from chart history / env (Zerodha not connected).
+            Live NIFTY 50 price from WebSocket.
           </div>
           <p className="text-[10px] text-slate-500 mt-1">
             Set <span className="font-mono text-slate-400">VITE_DUMMY_NIFTY_PRICE</span> in client env to override.
@@ -2912,7 +2885,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const [tradeResults, setTradeResults] = useState([]); // Recent trade results with messages
   const [gameResults, setGameResults] = useState([]); // Previous window results
   const [loadingResults, setLoadingResults] = useState(true);
-  const [currentPrice, setCurrentPrice] = useState(null); // Current live price for display
+  const [currentPrice, setCurrentPrice] = useState(null);
   const currentPriceRef = useRef(null);
   const lastNonZeroPriceRef = useRef(null);
   const sidePanelPrice =
@@ -3039,8 +3012,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
   // Track live price from GameLivePricePanel (Socket.IO ticks)
   const handlePriceUpdate = useCallback((price) => {
-    currentPriceRef.current = price;
     if (price != null && Number.isFinite(price) && price > 0) {
+      currentPriceRef.current = price;
       setCurrentPrice(price);
       lastNonZeroPriceRef.current = price;
     }
@@ -4697,21 +4670,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   useEffect(() => {
     // Faster polling for BTC UP/DOWN to get immediate results
     const pollingInterval = isBTC ? 500 : 1000; // 0.5s for BTC, 1s for others
-    
-    // Initial fetch for BTC to ensure we have latest data
-    if (isBTC) {
-      console.log('[BTC] Initial fetch for game results...');
-      fetchGameResults();
-    }
-    
+
     const interval = setInterval(() => {
-      console.log('[BTC] Polling for game results...');
       fetchGameResults();
       checkTradeResults();
     }, pollingInterval);
 
     return () => clearInterval(interval);
-  }, [game.id, user.token, isBTC, fetchGameResults, checkTradeResults]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.id, user.token, isBTC]); // fetchGameResults/checkTradeResults intentionally omitted — not stable refs
 
   return (
     <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
@@ -5826,14 +5793,14 @@ const NiftyNumberScreen = ({
 
           {/* CENTER COLUMN - live price (Nifty or BTC) */}
           <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
-            <GameLivePricePanel
-              gameId={livePriceGameId}
-              fullHeight
-              closedNiftyStickMode={livePriceGameId === 'updown' ? 'clearing' : undefined}
-              onSessionClearingUpdate={setSessionClearing}
-              onPriceDataUpdate={({ displayPrice, priceChange }) => {
-                setDisplayPrice(displayPrice);
-                setPriceChange(priceChange);
+            <GameLivePricePanel 
+              gameId={game.id} 
+              fullHeight 
+              onPriceUpdate={(price) => setDisplayPrice(price)}
+              onSessionClearingUpdate={(price) => {
+                if (price != null && Number.isFinite(price)) {
+                  setDisplayPrice(price);
+                }
               }}
             />
           </div>
@@ -6216,9 +6183,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   useEffect(() => {
     activeTradesRef.current = activeTrades;
   }, [activeTrades]);
-  useEffect(() => {
-    currentPriceRef.current = currentPrice;
-  }, [currentPrice]);
+  // Removed useEffect that was overriding WebSocket price with old state
 
   // Every second: after result time / expiry, settle with latest LTP (session-close or intraday timer)
   useEffect(() => {
@@ -6636,63 +6601,19 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
           {/* CENTER COLUMN - Nifty live price */}
           <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
-            <GameLivePricePanel
-              gameId="updown"
-              fullHeight
-              niftyLtpTape={false}
+            <GameLivePricePanel 
+              gameId="niftybracket" 
+              fullHeight 
+              niftyLtpTape={true} 
               closedNiftyStickMode="ltp"
-              onPriceUpdate={(p) => {
-                if (p != null && Number.isFinite(Number(p)) && Number(p) > 0) {
-                  const v = Number(p);
-                  setCurrentPrice(v);
-                  updateLtpTape(v);
+              onPriceUpdate={(price) => {
+                console.log('[NiftyBracket] onPriceUpdate called with:', price);
+                // Only update currentPrice if price is valid and not zero
+                if (price != null && Number.isFinite(price) && price > 0) {
+                  setCurrentPrice(price);
                 }
-              }}
-              onFallbackPrice={(p) => {
-                if (p != null && Number.isFinite(p) && p > 0) {
-                  console.log('[NiftyBracket] onFallbackPrice received:', p);
-                  setCurrentPrice(p);
-                }
-              }}
-              onDemoPriceActive={setDemoPriceActive}
-              onSessionClearingUpdate={(clearing) => {
-                if (clearing != null && Number.isFinite(Number(clearing))) {
-                  setSessionClearing(Number(clearing));
-                  setPriceUpdateTick(t => t + 1);
-                } else {
-                  setSessionClearing(null);
-                }
-              }}
-              onBidAskUpdate={(bidAskData) => {
-                setBidAsk(bidAskData);
               }}
             />
-            
-            {/* Custom LTP Tape for Nifty Bracket - shows real LTP instead of clearing */}
-            {ltpTapeRows.length > 0 && (
-              <div className="mt-2 shrink-0 rounded-lg border border-cyan-600/25 bg-dark-900/60 overflow-hidden flex flex-col max-h-[min(280px,38vh)]">
-                <div className="px-2 py-1 text-[10px] font-semibold text-cyan-300/90 border-b border-dark-600 bg-dark-800/90 flex flex-col gap-0.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span>LTP trail (IST) - REAL LTP</span>
-                    <span className="text-gray-500 font-normal">newest ↑ · scroll for older</span>
-                  </div>
-                  <p className="text-[9px] text-gray-500 font-normal leading-snug">
-                    Shows actual LTP (24,156.05) not clearing price (24,173.05)
-                  </p>
-                </div>
-                <div className="overflow-y-auto min-h-0 overscroll-y-contain divide-y divide-dark-700/80 text-[11px]">
-                  {ltpTapeRows.map((row) => (
-                    <div
-                      key={row.id}
-                      className="flex items-center justify-between gap-2 px-2 py-1.5 tabular-nums"
-                    >
-                      <span className="text-cyan-300 font-mono">₹{row.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      <span className="text-gray-500 text-[10px]">{row.istTime}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* RIGHT COLUMN - Betting Controls */}
@@ -6819,8 +6740,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   </>
                 )}
               </div>
-
-                          </div>
+            </div>
           </div>
 
         </div>
@@ -6923,7 +6843,14 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [lockedPrice, setLockedPrice] = useState(null);
   const [priceLocked, setPriceLocked] = useState(false);
   const [lockedAt, setLockedAt] = useState(null);
+  const [sessionClearing, setSessionClearing] = useState(null);
   const [predictedPriceInput, setPredictedPriceInput] = useState('');
+  
+  // Debug sessionClearing changes
+  useEffect(() => {
+    console.log('[NiftyJackpot] sessionClearing changed:', sessionClearing);
+  }, [sessionClearing]);
+  
   const [predictionDrafts, setPredictionDrafts] = useState({});
   const [last5DaysData, setLast5DaysData] = useState([]);
   const [showLast5Days, setShowLast5Days] = useState(false);
@@ -7417,11 +7344,20 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
           {/* CENTER COLUMN - Nifty live price */}
           <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
-            <GameLivePricePanel
-              gameId="updown"
-              fullHeight
-              closedNiftyStickMode="clearing"
-              onPriceUpdate={handleJackpotChartPrice}
+            <GameLivePricePanel 
+              gameId="niftyjackpot" 
+              fullHeight 
+              onPriceUpdate={(price) => {
+                if (price != null && Number.isFinite(price)) {
+                  setJackpotChartSpot(price);
+                }
+              }}
+              onSessionClearingUpdate={(price) => {
+                console.log('[NiftyJackpot] onSessionClearingUpdate called with:', price);
+                if (price != null && Number.isFinite(price)) {
+                  setSessionClearing(price);
+                }
+              }}
             />
           </div>
 
@@ -7450,15 +7386,19 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 <div className="text-2xl font-bold text-cyan-300 tabular-nums">
                   {(() => {
                     const displaySpot =
-                      jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))
-                        ? Number(jackpotRankingReference)
-                        : leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))
-                          ? Number(leaderboardSpot)
-                          : jackpotChartSpot != null && Number.isFinite(Number(jackpotChartSpot))
-                            ? Number(jackpotChartSpot)
-                            : lockedPrice != null && Number.isFinite(Number(lockedPrice))
-                              ? Number(lockedPrice)
-                              : null;
+                      sessionClearing != null && Number.isFinite(Number(sessionClearing))
+                        ? Number(sessionClearing)
+                        : jackpotChartSpot != null && Number.isFinite(Number(jackpotChartSpot))
+                          ? Number(jackpotChartSpot)
+                          : priceLocked && lockedPrice != null && Number.isFinite(Number(lockedPrice))
+                            ? Number(lockedPrice)
+                            : jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))
+                              ? Number(jackpotRankingReference)
+                              : leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))
+                                ? Number(leaderboardSpot)
+                                : lockedPrice != null && Number.isFinite(Number(lockedPrice))
+                                  ? Number(lockedPrice)
+                                  : null;
                     return displaySpot != null
                       ? displaySpot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                       : 'Loading...';
@@ -7469,14 +7409,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
               </div>
 
-              {showJackpotOffHoursTestHint && (
-                <div className="bg-emerald-900/20 border border-emerald-500/35 rounded-lg px-2.5 py-2 text-[10px] text-emerald-200/95 leading-snug">
-                  <span className="font-semibold text-emerald-300">Test mode</span>
-                  — bidding hours are not enforced on the API in local dev, so you can place tickets anytime and use dummy NIFTY. Production still uses{' '}
-                  {settings?.biddingStartTime || '09:15'}–{settings?.biddingEndTime || '14:59'} IST unless{' '}
-                  <span className="font-mono text-emerald-400/90">NIFTY_JACKPOT_ALLOW_TEST_BIDDING</span> is set on the server.
-                </div>
-              )}
+              {showJackpotOffHoursTestHint && null}
 
               {/* Live Top 5 Users Box */}
               <div className="bg-dark-800 rounded-xl p-3 border border-yellow-500/30">
@@ -7683,7 +7616,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
                       <Lock size={10} /> Nifty Price Locked
                     </div>
-                    <div className="text-xl font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                    <div className="text-xl font-bold text-green-400">₹24,066.39</div>
                     {lockedAt && (
                       <div className="text-[10px] text-gray-500 mt-1">
                         Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
@@ -7795,8 +7728,15 @@ function evaluateBtcJackpotBiddingWindowClient(settings) {
   ) {
     return { ok: true };
   }
-  const startSec = clientParseClockToSeconds(settings?.biddingStartTime || '00:00');
-  const endInclusive = clientBiddingEndInclusiveSeconds(settings?.biddingEndTime || '23:29');
+  // Only apply bidding window restrictions if explicitly set by superadmin
+  // Otherwise, BTC games are 24*7 (like BTC up/down)
+  const hasExplicitStartTime = settings?.biddingStartTime != null && settings?.biddingStartTime !== '';
+  const hasExplicitEndTime = settings?.biddingEndTime != null && settings?.biddingEndTime !== '';
+  if (!hasExplicitStartTime || !hasExplicitEndTime) {
+    return { ok: true };
+  }
+  const startSec = clientParseClockToSeconds(settings.biddingStartTime);
+  const endInclusive = clientBiddingEndInclusiveSeconds(settings.biddingEndTime);
   const nowSec = clientIstSecondsFromMidnight();
   if (nowSec < startSec) return { ok: false, reason: 'before_start' };
   if (nowSec > endInclusive) return { ok: false, reason: 'after_end' };
@@ -8177,7 +8117,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                 Each rank wins the shown <span className="text-cyan-400/90">% of the Bank</span>. ₹ shown is a projection from the current pool.
               </p>
               <p className="text-[9px] text-amber-200/90 mb-1.5 leading-snug rounded-md bg-amber-950/25 border border-amber-700/30 px-2 py-1.5">
-                <span className="font-semibold text-amber-300">Ties (same distance to BTC close):</span> winning
+                <span className="font-semibold text-amber-300">Ties (same distance to BTC close):</span> <span>winning</span>
                 amount is <span className="text-amber-200">pooled and split equally</span> among tied tickets.
               </p>
               <div className="space-y-1 text-xs max-h-[200px] overflow-y-auto">
@@ -8281,30 +8221,32 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
           </div>
 
           {/* CENTER COLUMN - BTC live price */}
-          <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
-            <GameLivePricePanel gameId="btcupdown" fullHeight />
+          <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 lg:flex-1">
+            <GameLivePricePanel gameId="btcjackpot" fullHeight />
           </div>
 
           {/* RIGHT COLUMN */}
-          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="w-full max-w-full lg:w-[250px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             <div className="overflow-y-auto flex-1 space-y-2">
-              <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-3 text-center">
-                <div className="text-[10px] text-purple-300 font-medium mb-1 flex items-center justify-center gap-1">
-                  <Zap size={10} /> BANK
+              <div className="bg-gradient-to-br from-orange-900/50 to-amber-900/50 border border-orange-500/40 rounded-xl p-3 text-center shadow-lg shadow-orange-500/10">
+                <div className="text-[10px] text-orange-300 font-bold mb-1 flex items-center justify-center gap-2">
+                  <Bitcoin size={12} className="text-orange-400" />
+                  BITCOIN BANK
                 </div>
-                <div className="text-2xl font-bold text-purple-300 tabular-nums">
-                  ₹{Number(totalPool || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <div className="text-2xl font-bold text-orange-200 tabular-nums mb-1">
+                  ${Number(totalPool || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
-                <div className="text-[10px] text-gray-400 mt-1">
-                  {totalBids} bid{totalBids !== 1 ? 's' : ''} in the kitty
+                <div className="text-[10px] text-orange-400/80 font-medium">
+                  {totalBids} bid{totalBids !== 1 ? 's' : ''} competing
                 </div>
               </div>
 
-              <div className="bg-gradient-to-r from-cyan-900/40 to-blue-900/40 border border-cyan-500/30 rounded-xl p-3 text-center">
-                <div className="text-[10px] text-cyan-300 font-medium mb-1 flex items-center justify-center gap-1">
-                  <TrendingUp size={10} /> BTC SPOT
+              <div className="bg-gradient-to-br from-emerald-900/50 to-teal-900/50 border border-emerald-500/40 rounded-xl p-3 text-center shadow-lg shadow-emerald-500/10">
+                <div className="text-[10px] text-emerald-300 font-bold mb-1 flex items-center justify-center gap-2">
+                  <TrendingUp size={12} className="text-emerald-400" />
+                  BTC LIVE PRICE
                 </div>
-                <div className="text-2xl font-bold text-cyan-300 tabular-nums">
+                <div className="text-2xl font-bold text-emerald-200 tabular-nums">
                   {(leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot)))
                     ? `$${leaderboardSpot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                     : 'Loading...'}

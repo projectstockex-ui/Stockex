@@ -1,5 +1,5 @@
 cserver/.zerodha-session.json
 .zerodha-session.json
-.env
+# .env
 node_modules
 dist

@@ -112,7 +112,7 @@ const walletLedgerSchema = new mongoose.Schema({
     hierarchyRole: { type: String },
     /** Payout to hierarchy member — tagged on Super Admin ADJUSTMENT debits (pool outflow) */
     hierarchyPayoutToRole: { type: String },
-    /** REFERRAL_COMMISSION: wallet segment the referred user earned from (games/mcx/crypto/forex) */
+    /** REFERRAL_COMMISSION: wallet segment the referred user earned from (games/mcx/forex) */
     segment: { type: String },
     /** REFERRAL_COMMISSION_TRANSFER: client the Super Admin share is being routed to */
     referralClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

@@ -58,7 +58,7 @@ class TradeService {
     if (!orderIsUsdSpot(tradeData)) return segmentSettings;
     let out = { ...segmentSettings };
 
-    let key = 'CRYPTO';
+    let key = 'CRYPTOFUT';
     if (orderIsForex(tradeData)) {
       const ds = String(tradeData.displaySegment || '').toUpperCase();
       const seg = String(tradeData.segment || '').toUpperCase();
@@ -77,7 +77,7 @@ class TradeService {
         if (orderIsForex(tradeData)) {
           defInr = Number(asd[key]?.cryptoSpreadInr);
         } else {
-          for (const segKey of ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT']) {
+          for (const segKey of ['CRYPTOFUT', 'CRYPTOOPT']) {
             const v = Number(asd[segKey]?.cryptoSpreadInr);
             if (Number.isFinite(v) && v > 0) {
               defInr = v;
@@ -94,7 +94,7 @@ class TradeService {
         if (orderIsForex(tradeData)) {
           defUsd = Number(asd[key]?.cryptoSpreadUsdPerSide);
         } else {
-          for (const segKey of ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT']) {
+          for (const segKey of ['CRYPTOFUT', 'CRYPTOOPT']) {
             const v = Number(asd[segKey]?.cryptoSpreadUsdPerSide);
             if (Number.isFinite(v) && v > 0) {
               defUsd = v;
@@ -258,7 +258,6 @@ class TradeService {
       'NSE-EQ',
       'BSE-FUT',
       'BSE-OPT',
-      'CRYPTO',
       'FOREXFUT',
       'FOREXOPT',
       'CRYPTOFUT',
@@ -286,8 +285,6 @@ class TradeService {
       segmentKey = isOptions ? 'BSE-OPT' : 'BSE-FUT';
     } else if (segmentUpper === 'CURRENCY' || segmentUpper === 'CDS') {
       segmentKey = 'NSEFUT';
-    } else if (segmentUpper === 'CRYPTO') {
-      segmentKey = 'CRYPTO';
     } else if (segmentUpper === 'FOREX') {
       segmentKey = isOptions ? 'FOREXOPT' : 'FOREXFUT';
     }
@@ -314,9 +311,6 @@ class TradeService {
         parentSegmentPerms.get(segmentKey) ||
         parentSegmentPerms.get(String(rawSeg).toUpperCase()) ||
         null;
-      if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
-        slice = parentSegmentPerms.get('CRYPTO');
-      }
       if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
         slice = parentSegmentPerms.get('FOREX');
       }
@@ -325,9 +319,6 @@ class TradeService {
         parentSegmentPerms[segmentKey] ||
         parentSegmentPerms[String(rawSeg).toUpperCase()] ||
         null;
-      if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
-        slice = parentSegmentPerms.CRYPTO || parentSegmentPerms.crypto;
-      }
       if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
         slice = parentSegmentPerms.FOREX || parentSegmentPerms.forex;
       }
@@ -344,7 +335,6 @@ class TradeService {
     if (sp instanceof Map) {
       let slice = sp.get(segmentKey);
       if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) slice = sp.get('FOREX');
-      if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) slice = sp.get('CRYPTO');
       return normalizeKey(slice);
     }
 
@@ -354,9 +344,6 @@ class TradeService {
       plain[segmentKey] || plain[String(segmentKey).toUpperCase()] || null;
     if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
       slice = plain.FOREX || plain.forex || null;
-    }
-    if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
-      slice = plain.CRYPTO || plain.crypto || null;
     }
     return normalizeKey(slice);
   }
@@ -690,7 +677,7 @@ class TradeService {
     const price = tradeData.price || tradeData.entryPrice || 0;
     const lotSize = tradeData.lotSize || 1;
     const isCryptoTurnover =
-      tradeData.segment === 'CRYPTO' || tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
+      tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(tradeData.segment || '').toUpperCase()) || tradeData.isForex || tradeData.exchange === 'FOREX';
     const turnover = price * lots * lotSize * (isCryptoTurnover ? getUsdInrRate() : 1);
     const ONE_CRORE = 10_000_000;
@@ -861,7 +848,7 @@ class TradeService {
     // 6. Get leverage from admin charges
     // Option buy = no leverage (full premium required as per SEBI/Zerodha rules)
     let leverage = 1;
-    const isCrypto = tradeData.segment === 'CRYPTO' || tradeData.isCrypto;
+    const isCrypto = tradeData.isCrypto;
     const isForex = ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(tradeData.segment || '').toUpperCase()) || tradeData.isForex || tradeData.exchange === 'FOREX';
     const isOptionBuy = tradeData.instrumentType === 'OPTIONS' && tradeData.side === 'BUY';
     const isIntradayProduct = tradeData.productType === 'MIS' || tradeData.productType === 'INTRADAY';
@@ -901,7 +888,7 @@ class TradeService {
       : null;
     if (
       segCryptoLot != null &&
-      (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT' || segU === 'CRYPTO' || tradeData.isCrypto)
+      (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT' || tradeData.isCrypto)
     ) {
       lotSize = segCryptoLot;
     }

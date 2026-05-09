@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Search, RefreshCw, TrendingUp, TrendingDown, Star } from 'lucide-react';
 
-const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
+const MarketWatch = ({ user, onSelectInstrument, onQuickTrade, marketData, mergeMarketDataPatch }) => {
   const [instruments, setInstruments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -49,6 +49,26 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
     if (onSelectInstrument) {
       onSelectInstrument(instrument);
     }
+  };
+
+  // Get live price from marketData
+  const getLivePrice = (instrument) => {
+    if (!marketData || !instrument) return null;
+    
+    // Try to find live data by token, symbol, or tradingSymbol
+    const tokenKey = String(instrument.token || '').trim();
+    const symbolKey = String(instrument.symbol || '').trim();
+    const tradingSymbolKey = String(instrument.tradingSymbol || '').trim();
+    
+    const liveData = marketData[tokenKey] || 
+                   marketData[symbolKey] || 
+                   marketData[tradingSymbolKey] ||
+                   Object.values(marketData).find(d => 
+                     d.tradingsymbol === tradingSymbolKey || 
+                     d.symbol === symbolKey
+                   );
+    
+    return liveData;
   };
 
   if (loading) {
@@ -106,7 +126,14 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
           </div>
         ) : (
           <div className="divide-y divide-dark-700">
-            {filteredInstruments.map(inst => (
+            {filteredInstruments.map(inst => {
+              const liveData = getLivePrice(inst);
+              const currentPrice = liveData?.last_price || liveData?.ltp || inst.ltp || 0;
+              const change = liveData?.change || 0;
+              const changePercent = liveData?.change_percent || 0;
+              const isLive = !!liveData?.last_price;
+              
+              return (
               <div
                 key={inst._id || inst.token}
                 onClick={() => handleInstrumentClick(inst)}
@@ -117,6 +144,11 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
                     <div className="flex items-center gap-2">
                       {inst.isFeatured && <Star size={12} className="text-yellow-400 flex-shrink-0" />}
                       <span className="font-medium text-sm truncate">{inst.symbol}</span>
+                      {isLive && (
+                        <span className="text-xs text-green-400 px-1 py-0.5 bg-green-500/20 rounded animate-pulse">
+                          LIVE
+                        </span>
+                      )}
                       <span className="text-xs text-gray-500 px-1 py-0.5 bg-dark-600 rounded">
                         {inst.exchange}
                       </span>
@@ -130,13 +162,13 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
                   </div>
                   
                   <div className="text-right ml-2">
-                    <div className={`font-mono text-sm ${inst.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {inst.ltp > 0 ? `₹${inst.ltp.toLocaleString()}` : '--'}
+                    <div className={`font-mono text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {currentPrice > 0 ? `₹${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
                     </div>
-                    {inst.changePercent !== 0 && (
-                      <div className={`text-xs flex items-center justify-end gap-0.5 ${inst.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {inst.change >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
-                        {inst.change >= 0 ? '+' : ''}{inst.changePercent?.toFixed(2)}%
+                    {changePercent !== 0 && (
+                      <div className={`text-xs flex items-center justify-end gap-0.5 ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {change >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                        {change >= 0 ? '+' : ''}{changePercent?.toFixed(2)}%
                       </div>
                     )}
                   </div>
@@ -160,7 +192,8 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

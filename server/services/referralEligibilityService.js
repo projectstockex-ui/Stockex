@@ -17,7 +17,7 @@ import {
  * Check if referral commission is eligible for payout
  * @param {ObjectId} referredUserId - User who was referred
  * @param {number} amount - Referral commission amount
- * @param {string} segment - Segment ('games', 'trading', 'mcx', 'crypto', 'forex')
+ * @param {string} segment - Segment ('games', 'trading', 'mcx', 'forex')
  * @returns {Promise<Object>} Eligibility result with details
  */
 export async function isReferralEligible(referredUserId, amount, segment) {

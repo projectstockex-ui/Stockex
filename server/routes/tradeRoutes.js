@@ -96,7 +96,7 @@ router.put('/market-state', ...superAdminAuth, async (req, res) => {
  * @route   PUT /api/trade/market-state/segment/:segment
  * @desc    Update segment-specific timings and settings (Super Admin only)
  * @access  Super Admin only
- * @param   segment - Market segment (EQUITY, FNO, MCX, CRYPTO)
+ * @param   segment - Market segment (EQUITY, FNO, MCX, FOREX, CRYPTOFUT, CRYPTOOPT)
  * @body    { isOpen?, dataStartTime?, tradingStartTime?, tradingEndTime?, dataEndTime?, intradaySquareOffTime?, preMarketDataOnly?, closedDays? }
  * @returns Updated market state
  * 
@@ -107,7 +107,7 @@ router.put('/market-state/segment/:segment', ...superAdminAuth, async (req, res)
     const { segment } = req.params;
     const { isOpen, dataStartTime, tradingStartTime, tradingEndTime, dataEndTime, intradaySquareOffTime, preMarketDataOnly, closedDays } = req.body;
     
-    const validSegments = ['EQUITY', 'FNO', 'MCX', 'CRYPTO'];
+    const validSegments = ['EQUITY', 'FNO', 'MCX'];
     if (!validSegments.includes(segment)) {
       return res.status(400).json({ message: 'Invalid segment' });
     }
@@ -138,7 +138,7 @@ router.put('/market-state/segment/:segment', ...superAdminAuth, async (req, res)
  * @route   PUT /api/trade/market-state/segment/:segment/toggle
  * @desc    Toggle segment open/closed status (Super Admin only)
  * @access  Super Admin only
- * @param   segment - Market segment (EQUITY, FNO, MCX, CRYPTO)
+ * @param   segment - Market segment (EQUITY, FNO, MCX, FOREX, CRYPTOFUT, CRYPTOOPT)
  * @returns Updated market state
  * 
  * Use Case: Quick toggle for segment trading status
@@ -147,7 +147,7 @@ router.put('/market-state/segment/:segment/toggle', ...superAdminAuth, async (re
   try {
     const { segment } = req.params;
     
-    const validSegments = ['EQUITY', 'FNO', 'MCX', 'CRYPTO'];
+    const validSegments = ['EQUITY', 'FNO', 'MCX'];
     if (!validSegments.includes(segment)) {
       return res.status(400).json({ message: 'Invalid segment' });
     }
@@ -168,7 +168,7 @@ router.put('/market-state/segment/:segment/toggle', ...superAdminAuth, async (re
  * @route   GET /api/trade/market-state/trading-status/:segment
  * @desc    Check if trading is currently allowed for a segment
  * @access  Public
- * @param   segment - Market segment (EQUITY, FNO, MCX, CRYPTO)
+ * @param   segment - Market segment (EQUITY, FNO, MCX, FOREX, CRYPTOFUT, CRYPTOOPT)
  * @returns Trading status object
  * 
  * Use Case: Verify if trading is allowed before placing orders
@@ -304,7 +304,7 @@ router.post('/margin-preview', protectUser, async (req, res) => {
     const requiredMargin = TradeService.calculateMargin(price, quantity, lotSize, leverage, productType);
     
     // Use correct wallet based on trade type (triple wallet system)
-    const isCrypto = segment === 'CRYPTO' || exchange === 'BINANCE';
+    const isCrypto = exchange === 'BINANCE';
     const isMCX = segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || 
                   segment === 'COMMODITY' || exchange === 'MCX';
     
@@ -410,7 +410,7 @@ router.post('/admin/create-trade', protectAdmin, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found or not under your management' });
     
     // Normalize segment
-    const allowedSegments = ['EQUITY', 'FNO', 'MCX', 'COMMODITY', 'CRYPTO', 'FOREX', 'CURRENCY', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CDS', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'];
+    const allowedSegments = ['EQUITY', 'FNO', 'MCX', 'COMMODITY', 'FOREX', 'CURRENCY', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CDS', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'];
     const segRaw = (segment || 'EQUITY').toUpperCase();
     const segMap = {
       'NSE F&O': 'FNO', 'NFO': 'FNO', 'NSEFO': 'FNO', 'NSE_FO': 'FNO', 'F&O': 'FNO',
@@ -427,7 +427,6 @@ router.post('/admin/create-trade', protectAdmin, async (req, res) => {
       else if (segNormalized === 'MCX' || segNormalized === 'COMMODITY' || segNormalized === 'MCXFUT') { finalExchange = 'MCX'; finalInstrumentType = 'FUTURES'; }
       else if (segNormalized === 'MCXOPT') { finalExchange = 'MCX'; finalInstrumentType = 'OPTIONS'; }
       else if (segNormalized === 'CURRENCY' || segNormalized === 'CDS') { finalExchange = 'CDS'; finalInstrumentType = 'CURRENCY'; }
-      else if (segNormalized === 'CRYPTO') { finalExchange = 'CRYPTO'; finalInstrumentType = 'CRYPTO'; }
       else if (segNormalized === 'CRYPTOFUT') { finalExchange = 'BINANCE'; finalInstrumentType = 'FUTURES'; }
       else if (segNormalized === 'CRYPTOOPT') { finalExchange = 'BINANCE'; finalInstrumentType = 'OPTIONS'; }
       else if (segNormalized === 'FOREX' || segNormalized === 'FOREXFUT') { finalExchange = 'FOREX'; finalInstrumentType = 'CURRENCY'; }

@@ -32,7 +32,8 @@ class EnvironmentConfig {
       return (process.env.SERVER_URL || 'https://stockex.in').replace(/\/$/, '');
     }
 
-    return 'http://localhost:3000';
+    // Use CLIENT_URL from environment, fallback to 3000 only if absolutely necessary
+    return process.env.CLIENT_URL || 'http://localhost:3000';
   }
 
   /**

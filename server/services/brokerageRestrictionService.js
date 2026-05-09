@@ -2,6 +2,7 @@
  * Brokerage Restriction Service
  * Handles brokerage restriction logic for games and trading segments
  * Follows SOLID principles with single responsibility
+ * Extended with selective inheritance support
  */
 
 /**
@@ -68,6 +69,57 @@ export function getBrokerageRestrictionStatus(admin) {
 }
 
 /**
+ * Enhanced unified check to determine if brokerage should be redirected to Super Admin
+ * Now considers selective inheritance
+ * @param {Object} admin - Admin document
+ * @param {Object} parentAdmin - Parent admin document
+ * @param {string} segment - 'games' | 'trading'
+ * @returns {boolean} - True if brokerage should be redirected to Super Admin
+ */
+export function shouldRedirectBrokerageToSuperAdminEnhanced(admin, parentAdmin, segment) {
+  if (!admin || !segment) return false;
+  
+  // Check direct restriction first
+  if (isGamesBrokerageRestricted(admin) && segment === 'games') return true;
+  if (isTradingBrokerageRestricted(admin) && segment === 'trading') return true;
+  
+  // Check inherited restriction based on inheritance mode
+  if (parentAdmin && admin.restrictMode?.hierarchyInheritanceMode === 'FULL_INHERITANCE') {
+    if (isGamesBrokerageRestricted(parentAdmin) && segment === 'games') return true;
+    if (isTradingBrokerageRestricted(parentAdmin) && segment === 'trading') return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Get comprehensive brokerage restriction status including inheritance
+ * @param {Object} admin - Admin document
+ * @param {Object} parentAdmin - Parent admin document
+ * @returns {Object} - Comprehensive restriction status
+ */
+export function getComprehensiveBrokerageRestrictionStatus(admin, parentAdmin) {
+  const directStatus = getBrokerageRestrictionStatus(admin);
+  
+  return {
+    ...directStatus,
+    hierarchyInheritanceMode: admin.restrictMode?.hierarchyInheritanceMode || 'FULL_INHERITANCE',
+    inheritedRestrictions: {
+      games: parentAdmin && admin.restrictMode?.hierarchyInheritanceMode === 'FULL_INHERITANCE' 
+        ? isGamesBrokerageRestricted(parentAdmin) 
+        : false,
+      trading: parentAdmin && admin.restrictMode?.hierarchyInheritanceMode === 'FULL_INHERITANCE' 
+        ? isTradingBrokerageRestricted(parentAdmin) 
+        : false
+    },
+    effectiveRestrictions: {
+      games: directStatus.games || (parentAdmin && admin.restrictMode?.hierarchyInheritanceMode === 'FULL_INHERITANCE' && isGamesBrokerageRestricted(parentAdmin)),
+      trading: directStatus.trading || (parentAdmin && admin.restrictMode?.hierarchyInheritanceMode === 'FULL_INHERITANCE' && isTradingBrokerageRestricted(parentAdmin))
+    }
+  };
+}
+
+/**
  * Validate brokerage restriction data
  * @param {Object} data - Restriction data to validate
  * @returns {Object} - Validation result with isValid and errors
@@ -81,6 +133,14 @@ export function validateBrokerageRestrictionData(data) {
     }
     if (typeof data.restrictBrokerage.trading !== 'boolean') {
       errors.push('Trading brokerage restriction must be a boolean');
+    }
+  }
+
+  // Validate hierarchy inheritance mode
+  if (data.hierarchyInheritanceMode) {
+    const validModes = ['FULL_INHERITANCE', 'SELECTIVE_INHERITANCE'];
+    if (!validModes.includes(data.hierarchyInheritanceMode)) {
+      errors.push('Invalid hierarchy inheritance mode');
     }
   }
 

@@ -369,7 +369,6 @@ function buildUserInstrumentListQuery(adminCode, { segment, category, search, di
         'NSE-EQ': { exchange: 'NSE' },
         'BSE-FUT': { exchange: 'BFO', instrumentType: 'FUTURES' },
         'BSE-OPT': { exchange: 'BFO', instrumentType: 'OPTIONS' },
-        CRYPTO: { exchange: 'BINANCE', instrumentType: 'CRYPTO' },
         CRYPTOFUT: { exchange: 'BINANCE', instrumentType: 'FUTURES', displaySegment: 'CRYPTOFUT' },
         CRYPTOOPT: { exchange: 'BINANCE', instrumentType: 'OPTIONS', displaySegment: 'CRYPTOOPT' }
       };
@@ -718,12 +717,12 @@ router.get('/admin/restriction-deny-picker', protectAdmin, superAdminOnly, async
   try {
     const exchangeRaw = String(req.query.exchange || '').trim().toUpperCase();
     const displaySegmentRaw = String(req.query.displaySegment || '').trim();
-    const allowedUiExchanges = ['NSE', 'BSE', 'NFO', 'MCX', 'CDS', 'BFO', 'BINANCE', 'CRYPTO', 'FOREX'];
+    const allowedUiExchanges = ['NSE', 'BSE', 'NFO', 'MCX', 'CDS', 'BFO', 'BINANCE', 'FOREX'];
     if (!exchangeRaw || !allowedUiExchanges.includes(exchangeRaw)) {
       return res.status(400).json({ message: 'Missing or invalid exchange' });
     }
 
-    const dbExchange = exchangeRaw === 'CRYPTO' ? 'BINANCE' : exchangeRaw;
+    const dbExchange = exchangeRaw;
 
     if (!displaySegmentRaw) {
       if (dbExchange === 'FOREX') {
@@ -1667,7 +1666,7 @@ router.post('/admin/seed-crypto', protectAdmin, superAdminOnly, async (req, res)
               name: crypto.name,
               pair: crypto.pair,
               lotSize: crypto.lotSize,
-              displaySegment: 'CRYPTO',
+              displaySegment: 'CRYPTOFUT',
               isEnabled: true,
               isCrypto: true
             }
@@ -1681,10 +1680,10 @@ router.post('/admin/seed-crypto', protectAdmin, superAdminOnly, async (req, res)
           exchange: 'BINANCE',
           token: crypto.pair,
           pair: crypto.pair,
-          segment: 'CRYPTO',
-          displaySegment: 'CRYPTO',
-          category: 'CRYPTO',
-          instrumentType: 'CRYPTO',
+          segment: 'CRYPTOFUT',
+          displaySegment: 'CRYPTOFUT',
+          category: 'OTHER',
+          instrumentType: 'FUTURES',
           lotSize: crypto.lotSize,
           tickSize: 0.01,
           isEnabled: true,
@@ -1833,7 +1832,7 @@ router.get('/segments', async (req, res) => {
       if (upper.includes('NSE') || upper.includes('SPOT') || upper === 'EQUITY') return 'NSE';
       if (upper.includes('MCX')) return 'MCX';
       if (upper.includes('CURRENCY') || upper.includes('CDS')) return 'Currency';
-      if (upper.includes('CRYPTO')) return 'Crypto';
+      if (upper.includes('CRYPTOFUT') || upper.includes('CRYPTOOPT')) return 'Crypto';
       return seg; // Return original if no match
     };
     
@@ -1901,7 +1900,7 @@ router.get('/segments', async (req, res) => {
 router.get('/settings-data', async (req, res) => {
   try {
     // All Market Watch segments - these are the standard segment names
-    const MARKET_WATCH_SEGMENTS = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
+    const MARKET_WATCH_SEGMENTS = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
     
     // Map displaySegment to standard Market Watch segment name
     const normalizeSegment = (seg) => {
@@ -2070,7 +2069,6 @@ router.get('/watchlist', protectUser, async (req, res) => {
       'NSE-EQ': [],
       'BSE-FUT': [],
       'BSE-OPT': [],
-      'CRYPTO': [],
       'CRYPTOFUT': [],
       'CRYPTOOPT': [],
       'FOREXFUT': [],
@@ -2283,7 +2281,7 @@ router.post('/watchlist/sync', protectUser, async (req, res) => {
 
     // Update each segment
     for (const [segment, instruments] of Object.entries(watchlistBySegment)) {
-      if (!['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREX', 'FOREXFUT', 'FOREXOPT', 'CDS', 'FAVORITES'].includes(segment)) continue;
+      if (!['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREX', 'FOREXFUT', 'FOREXOPT', 'CDS', 'FAVORITES'].includes(segment)) continue;
 
       const instrumentsClean = (instruments || []).filter(
         (inst) => !watchlistItemIsExpired(inst, inst.token ? syncMap[String(inst.token)] : null)

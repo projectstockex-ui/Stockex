@@ -168,7 +168,7 @@ router.post('/margin-preview', protect, async (req, res) => {
     const segPrev = String(segment || '').toUpperCase();
     if (
       segLotPreview != null &&
-      (segPrev === 'CRYPTOFUT' || segPrev === 'CRYPTOOPT' || segPrev === 'CRYPTO' || req.body.exchange === 'BINANCE')
+      (segPrev === 'CRYPTOFUT' || segPrev === 'CRYPTOOPT' || req.body.exchange === 'BINANCE')
     ) {
       lotSize = segLotPreview;
     }
@@ -179,7 +179,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       req.body.quantity != null && req.body.quantity !== '' && Number.isFinite(Number(req.body.quantity))
         ? Number(req.body.quantity)
         : lots * lotSize;
-    const isCryptoPreview = segment === 'CRYPTO' || segment === 'CRYPTOFUT' || segment === 'CRYPTOOPT' ||
+    const isCryptoPreview = segment === 'CRYPTOFUT' || segment === 'CRYPTOOPT' ||
       req.body.exchange === 'BINANCE' || req.body.isCrypto ||
       segment === 'FOREX' || segment === 'FOREXFUT' || segment === 'FOREXOPT' ||
       req.body.exchange === 'FOREX' || req.body.isForex;
@@ -251,7 +251,7 @@ router.post('/margin-preview', protect, async (req, res) => {
     const spread = TradeService.calculateUserSpread(scriptSettings, side);
     
     // Use correct wallet based on trade type (triple wallet system)
-    const isCrypto = segment === 'CRYPTO' || segment === 'CRYPTOFUT' || segment === 'CRYPTOOPT' ||
+    const isCrypto = segment === 'CRYPTOFUT' || segment === 'CRYPTOOPT' ||
       req.body.exchange === 'BINANCE';
     const isForex = segment === 'FOREX' || segment === 'FOREXFUT' || segment === 'FOREXOPT' ||
       req.body.exchange === 'FOREX' || req.body.isForex;

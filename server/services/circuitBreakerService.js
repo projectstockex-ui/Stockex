@@ -23,7 +23,6 @@ const CIRCUIT_DEFAULTS = {
   MCX: 9,
   COMMODITY: 9,
   CURRENCY: 5,
-  CRYPTO: 30,
   BSE: 10,
   OTHER: 10
 };

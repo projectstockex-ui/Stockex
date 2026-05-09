@@ -161,7 +161,7 @@ router.get('/hierarchies/:rootAdminId/statistics', ...superAdminAuth, getPayoutS
  * @access  Super Admin only
  * @param   userId - MongoDB ObjectId of user
  * @query   amount - Commission amount to check
- * @query   segment - Segment (games, trading, mcx, crypto, forex)
+ * @query   segment - Segment (games, trading, mcx, forex)
  * @returns Eligibility status with details
  * 
  * Example: GET /api/referral-eligibility/users/507f1f77bcf86cd799439011/eligibility?amount=100&segment=games

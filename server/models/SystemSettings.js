@@ -273,25 +273,6 @@ const systemSettingsSchema = new mongoose.Schema({
         maxExchangeQuantity: { type: Number, default: 10000 }
       }
     },
-    CRYPTO: {
-      enabled: { type: Boolean, default: true },
-      intradayLeverage: { type: Number, default: 3 },
-      carryForwardLeverage: { type: Number, default: 2 },
-      marginRequired: { type: Number, default: 33 },
-      lotSize: { type: Number, default: 1 },
-      intradayMaxLots: { type: Number, default: 1000 },
-      intradayBreakupLots: { type: Number, default: 100 },
-      carryForwardMaxLots: { type: Number, default: 500 },
-      carryForwardBreakupLots: { type: Number, default: 50 },
-      brokeragePerLot: { type: Number, default: 30 },
-      brokeragePerCrore: { type: Number, default: 150 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
-      commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
-      maxExchangeLots: { type: Number, default: 1000 },
-      maxLots: { type: Number, default: 500 },
-      minLots: { type: Number, default: 1 },
-      orderLots: { type: Number, default: 100 }
-    },
     CURRENCY: {
       enabled: { type: Boolean, default: true },
       intradayLeverage: { type: Number, default: 10 },
@@ -442,7 +423,7 @@ const systemSettingsSchema = new mongoose.Schema({
 
   // Admin Segment Permissions Defaults - SAME structure as Admin.segmentPermissions
   // These are the master defaults that all admins inherit when they haven't set their own
-  // Uses the same segment keys as Admin model: NSEFUT, NSEOPT, MCXFUT, MCXOPT, NSE-EQ, BSE-FUT, BSE-OPT, CRYPTO, FOREX
+  // Uses the same segment keys as Admin model: NSEFUT, NSEOPT, MCXFUT, MCXOPT, NSE-EQ, BSE-FUT, BSE-OPT, FOREX
   adminSegmentDefaults: {
     type: Map,
     of: {

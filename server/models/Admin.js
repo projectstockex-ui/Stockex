@@ -547,6 +547,12 @@ const adminSchema = new mongoose.Schema({
       games: { type: Boolean, default: false },    // Restrict games brokerage
       trading: { type: Boolean, default: false },  // Restrict trading brokerage
     },
+    /** Hierarchy inheritance mode - control if restrictions apply to child admins */
+    hierarchyInheritanceMode: { 
+      type: String, 
+      enum: ['FULL_INHERITANCE', 'SELECTIVE_INHERITANCE'], 
+      default: 'FULL_INHERITANCE' 
+    },
   },
   
   // Referral eligibility settings - control when referral commissions are paid

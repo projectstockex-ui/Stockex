@@ -24,12 +24,12 @@ const chargesSchema = new mongoose.Schema({
   // For SEGMENT and INSTRUMENT scopes
   segment: {
     type: String,
-    enum: ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY', null],
+    enum: ['EQUITY', 'FNO', 'MCX', 'CURRENCY', null],
     default: null
   },
   instrumentType: {
     type: String,
-    enum: ['STOCK', 'FUTURES', 'OPTIONS', 'CRYPTO', 'CURRENCY', 'INDEX', null],
+    enum: ['STOCK', 'FUTURES', 'OPTIONS', 'CURRENCY', 'INDEX', null],
     default: null
   },
   
@@ -126,7 +126,7 @@ chargesSchema.statics.getChargesForTrade = async function(trade, adminCode, user
   }).lean();
   if (charges) return charges;
   
-  // 4. Check segment-specific charges (EQUITY, FNO, MCX, CRYPTO)
+  // 4. Check segment-specific charges (EQUITY, FNO, MCX, CURRENCY)
   charges = await this.findOne({ 
     scope: 'SEGMENT',
     adminCode: adminCode,
@@ -151,7 +151,7 @@ chargesSchema.statics.getChargesForTrade = async function(trade, adminCode, user
   
   // If no charges found, return defaults based on segment
   if (!charges) {
-    const isCrypto = trade.segment === 'CRYPTO' || trade.isCrypto ||
+    const isCrypto = trade.isCrypto ||
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase()) || trade.isForex;
     const isMCX = trade.segment === 'MCX';
     
@@ -178,7 +178,7 @@ chargesSchema.statics.calculateCharges = async function(trade, adminCode, userId
   const chargesConfig = await this.getChargesForTrade(trade, adminCode, userId);
   
   // Check if crypto trade - crypto has different charge structure
-  const isCrypto = trade.segment === 'CRYPTO' || trade.isCrypto ||
+  const isCrypto = trade.isCrypto ||
     ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase()) || trade.isForex;
   const isMCX = trade.segment === 'MCX';
 

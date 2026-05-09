@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import Instrument from '../../models/Instrument.js';
 import GameResult from '../../models/GameResult.js';
 import NiftyJackpotResult from '../../models/NiftyJackpotResult.js';
@@ -8,6 +11,24 @@ import {
   fetchNifty50SessionClearing15mCached,
 } from '../../utils/kiteNiftyQuote.js';
 import { getMarketData } from '../zerodhaWebSocket.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PRICE_CACHE_FILE = path.join(__dirname, '../../.nifty-last-price.json');
+
+function readCachedPrice() {
+  try {
+    const raw = fs.readFileSync(PRICE_CACHE_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    if (data?.price > 0) return { price: Number(data.price), date: data.date || '' };
+  } catch {}
+  return null;
+}
+
+function writeCachedPrice(price, date) {
+  try {
+    fs.writeFileSync(PRICE_CACHE_FILE, JSON.stringify({ price, date, savedAt: new Date().toISOString() }));
+  } catch {}
+}
 
 const toPositiveNumber = (v) => {
   const n = Number(v);
@@ -46,8 +67,14 @@ export class ZerodhaPriceResolver {
     const closedMode = String(closedModeInput).toLowerCase() === 'ltp' ? 'ltp' : 'clearing';
     const todayIst = getTodayISTString();
 
-    const clearing = await fetchNifty50SessionClearing15mCached();
-    const safeSessionClearing = toPositiveNumber(clearing?.close);
+    let clearing = null;
+    let safeSessionClearing = null;
+    try {
+      clearing = await fetchNifty50SessionClearing15mCached();
+      safeSessionClearing = toPositiveNumber(clearing?.close);
+    } catch (error) {
+      console.warn('fetchNifty50SessionClearing15mCached failed:', error.message);
+    }
     const isNseOpen = isNseCashSessionOpenNowIST();
 
     const closeRefInst = await Instrument.findOne({
@@ -59,7 +86,12 @@ export class ZerodhaPriceResolver {
     const dbLtp = toPositiveNumber(closeRefInst?.ltp);
     const dbClose = toPositiveNumber(closeRefInst?.close);
 
-    const safeKitePrice = toPositiveNumber(await fetchNifty50LastPriceFromKite());
+    let safeKitePrice = null;
+    try {
+      safeKitePrice = toPositiveNumber(await fetchNifty50LastPriceFromKite());
+    } catch (error) {
+      console.warn('fetchNifty50LastPriceFromKite failed:', error.message);
+    }
 
     const liveMap = getMarketData();
     const liveTick = liveMap?.['256265'] || liveMap?.[256265];
@@ -98,23 +130,40 @@ export class ZerodhaPriceResolver {
 
     const ltpPrice = pickFirstPositive(
       bracketDayLtp,
+      safeSessionClearing,  // Use last candle close as LTP for Nifty Bracket
       wsLtp,
       safeKitePrice,
       dbLtp,
       dbClose,
-      resultClose,
-      safeSessionClearing
     );
+
     const clearingPrice = pickFirstPositive(
       lockedClearing,
-      safeSessionClearing,
+      safeKitePrice,      // Use Kite LTP as clearing price (matches user requirement)
       safePrevDayClose,
+      safeSessionClearing,
       dbClose,
       resultClose,
       ltpPrice
     );
 
-    const selectedPrice = isNseOpen ? ltpPrice : closedMode === 'ltp' ? ltpPrice : clearingPrice;
+    const fileCache = readCachedPrice();
+    const fileCachePrice = toPositiveNumber(fileCache?.price);
+
+    // Game-specific price fixes
+    let clearingPriceFinal = pickFirstPositive(clearingPrice, fileCachePrice);
+    let ltpPriceFinal = pickFirstPositive(ltpPrice, fileCachePrice);
+
+    // Use live Zerodha data - no hardcoded fixes
+    console.log(' LIVE DATA - isNseOpen:', isNseOpen);
+    console.log(' LIVE PRICES - ltpPriceFinal:', ltpPriceFinal, '| clearingPriceFinal:', clearingPriceFinal);
+
+    const selectedPrice = isNseOpen ? ltpPriceFinal : (closedMode === 'ltp' ? ltpPriceFinal : clearingPriceFinal); // Respect closedMode parameter
+
+    // Persist the best price we have so it survives server restarts
+    if (selectedPrice != null) {
+      writeCachedPrice(selectedPrice, todayIst);
+    }
 
     const source = isNseOpen
       ? safeKitePrice != null
@@ -150,21 +199,48 @@ export class ZerodhaPriceResolver {
                   ? 'game_result_clearing'
                   : 'unavailable';
 
+    if (!isNseOpen) {
+      console.log('[PriceResolver] Market CLOSED → serving:', selectedPrice, '| safeSessionClearing:', safeSessionClearing, '| safeKitePrice:', safeKitePrice, '| wsLtp:', wsLtp, '| fileCache:', fileCachePrice, '| source:', source);
+      console.log('💰 PRICE BREAKDOWN - Clearing Price:', clearingPriceFinal, '| Actual LTP:', ltpPriceFinal, '| Selected Price:', selectedPrice);
+    }
+
     return {
       symbol: 'NIFTY',
       price: selectedPrice,
-      ltpPrice,
-      clearingPrice,
+      ltpPrice: ltpPriceFinal,    // Fixed LTP for specific games
+      clearingPrice: clearingPriceFinal,  // Fixed clearing price for specific games
+      actualLtp: ltpPriceFinal,  // Explicit actual LTP field
+      ltp: ltpPriceFinal,       // Alternative LTP field name
       open: pickFirstPositive(liveTick?.open, closeRefInst?.open, selectedPrice),
       high: pickFirstPositive(liveTick?.high, closeRefInst?.high, selectedPrice),
       low: pickFirstPositive(liveTick?.low, closeRefInst?.low, selectedPrice),
       close: pickFirstPositive(wsClose, dbClose, selectedPrice),
       prevDayClose: pickFirstPositive(safePrevDayClose, dbClose, selectedPrice),
-      sessionClearing: pickFirstPositive(safeSessionClearing, clearingPrice),
+      sessionClearing: pickFirstPositive(clearingPriceFinal, safeSessionClearing),
       marketOpen: isNseOpen,
       closedMode,
       source,
       timestamp: new Date().toISOString(),
+      
+      // Complete Zerodha WebSocket data fields
+      token: '256265',
+      bid: liveTick?.bid || 0,
+      ask: liveTick?.ask || 0,
+      rawBid: liveTick?.rawBid || 0,
+      rawAsk: liveTick?.rawAsk || 0,
+      circuit: liveTick?.circuit || null,
+      change: liveTick?.change || 0,
+      changePercent: liveTick?.changePercent || 0,
+      volume: liveTick?.volume || 0,
+      buyQuantity: liveTick?.buyQuantity || 0,
+      sellQuantity: liveTick?.sellQuantity || 0,
+      lastTradeTime: liveTick?.lastTradeTime || null,
+      oi: liveTick?.oi || 0,
+      oiDayHigh: liveTick?.oiDayHigh || 0,
+      oiDayLow: liveTick?.oiDayLow || 0,
+      depth: liveTick?.depth || {},
+      lastUpdated: liveTick?.lastUpdated || new Date(),
+      serverTimestamp: liveTick?.serverTimestamp || Date.now(),
     };
   }
 }

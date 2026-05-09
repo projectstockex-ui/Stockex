@@ -49,12 +49,6 @@ const defaultSegmentPermissions = {
     optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 100 },
     optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 100 }
   },
-  CRYPTO: {
-    enabled: true, maxExchangeLots: 1000, commissionType: 'PER_LOT', commissionLot: 30,
-    maxLots: 500, minLots: 1, orderLots: 100, exposureIntraday: 3, exposureCarryForward: 2, cryptoSpreadInr: 0, cryptoSpreadUsdPerSide: 0,
-    optionBuy: { allowed: false, commissionType: 'PER_LOT', commission: 0, strikeSelection: 0, maxExchangeLots: 0 },
-    optionSell: { allowed: false, commissionType: 'PER_LOT', commission: 0, strikeSelection: 0, maxExchangeLots: 0 }
-  },
   FOREXFUT: {
     enabled: true, maxExchangeLots: 1000, commissionType: 'PER_LOT', commissionLot: 30,
     maxLots: 500, minLots: 1, orderLots: 100, exposureIntraday: 3, exposureCarryForward: 2,

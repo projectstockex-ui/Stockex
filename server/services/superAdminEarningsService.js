@@ -11,7 +11,7 @@ import SuperAdminHierarchyEarnings from '../models/SuperAdminHierarchyEarnings.j
  * Track earnings for a hierarchy
  * @param {ObjectId} adminId - Admin ID who generated earnings
  * @param {number} amount - Amount earned
- * @param {string} segment - Segment ('games', 'trading', 'mcx', 'crypto', 'forex')
+ * @param {string} segment - Segment ('games', 'trading', 'mcx', 'forex')
  * @returns {Promise<Object>} Updated earnings record
  */
 export async function trackHierarchyEarnings(adminId, amount, segment) {

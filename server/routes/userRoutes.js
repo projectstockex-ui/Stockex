@@ -309,7 +309,7 @@ router.get('/wallet', ...userAuth, getUserWallet);
  */
 router.get('/platform-charge-status', ...userAuth, getPlatformChargeStatus);
 
-const CRYPTO_SPREAD_SEGMENT_CHAIN = ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'];
+const CRYPTO_SPREAD_SEGMENT_CHAIN = ['CRYPTOFUT', 'CRYPTOOPT'];
 
 function pickPositiveCryptoSpreadUsdFromDefaults(asdPlain) {
   for (const seg of CRYPTO_SPREAD_SEGMENT_CHAIN) {
@@ -1276,7 +1276,7 @@ router.get('/referral-earnings', protectUser, async (req, res) => {
 
     for (const r of trailRows) {
       const rawSegment = (r.meta?.segment || 'trading').toLowerCase();
-      const segment = ['games', 'mcx', 'crypto', 'forex'].includes(rawSegment) ? rawSegment : 'trading';
+      const segment = ['games', 'mcx', 'forex'].includes(rawSegment) ? rawSegment : 'trading';
       entries.push({
         source: 'walletLedger',
         segment,
@@ -1766,7 +1766,6 @@ router.get('/settings', protectUser, async (req, res) => {
       'NSE-EQ',
       'BSE-FUT',
       'BSE-OPT',
-      'CRYPTO',
       'FOREXFUT',
       'FOREXOPT',
       'CRYPTOFUT',

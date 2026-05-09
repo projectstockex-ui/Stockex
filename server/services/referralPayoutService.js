@@ -18,7 +18,7 @@ import {
  * Process conditional referral payout with eligibility check
  * @param {ObjectId} referredUserId - User who was referred
  * @param {number} amount - Referral commission amount
- * @param {string} segment - Segment ('games', 'trading', 'mcx', 'crypto', 'forex')
+ * @param {string} segment - Segment ('games', 'trading', 'mcx', 'forex')
  * @param {Object} metadata - Additional metadata for the payout
  * @returns {Promise<Object>} Payout result
  */

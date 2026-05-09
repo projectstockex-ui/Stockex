@@ -67,7 +67,7 @@ const brokerageTrackingSchema = new mongoose.Schema({
   },
   segment: {
     type: String,
-    enum: ['NSE', 'MCX', 'BFO', 'EQ', 'CRYPTO', 'COMEX', 'FOREX', 'GLOBALINDEX']
+    enum: ['NSE', 'MCX', 'BFO', 'EQ', 'COMEX', 'FOREX', 'GLOBALINDEX']
   },
   
   // Status

@@ -48,8 +48,16 @@ export function evaluateBtcJackpotBiddingWindow(gc) {
     return { ok: true };
   }
 
-  const startSec = parseClockToSeconds(gc?.biddingStartTime || '00:00');
-  const endInclusive = biddingEndInclusiveSecondsFromConfig(gc?.biddingEndTime || '23:29');
+  // Only apply bidding window restrictions if explicitly set by superadmin
+  // Otherwise, BTC games are 24*7 (like BTC up/down)
+  const hasExplicitStartTime = gc?.biddingStartTime != null && gc?.biddingStartTime !== '';
+  const hasExplicitEndTime = gc?.biddingEndTime != null && gc?.biddingEndTime !== '';
+  if (!hasExplicitStartTime || !hasExplicitEndTime) {
+    return { ok: true };
+  }
+
+  const startSec = parseClockToSeconds(gc.biddingStartTime);
+  const endInclusive = biddingEndInclusiveSecondsFromConfig(gc.biddingEndTime);
   const nowSec = getNowISTSecondsFromMidnight();
 
   if (nowSec < startSec) return { ok: false, reason: 'before_start' };

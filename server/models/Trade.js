@@ -33,12 +33,12 @@ const tradeSchema = new mongoose.Schema({
   // Instrument details
   segment: {
     type: String,
-    enum: ['EQUITY', 'FNO', 'MCX', 'COMMODITY', 'CRYPTO', 'FOREX', 'CURRENCY', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CDS', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'],
+    enum: ['EQUITY', 'FNO', 'MCX', 'COMMODITY', 'FOREX', 'CURRENCY', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CDS', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'],
     required: true
   },
   instrumentType: {
     type: String,
-    enum: ['STOCK', 'FUTURES', 'OPTIONS', 'CRYPTO', 'CURRENCY'],
+    enum: ['STOCK', 'FUTURES', 'OPTIONS', 'CURRENCY'],
     required: true
   },
   symbol: {
@@ -64,7 +64,7 @@ const tradeSchema = new mongoose.Schema({
   },
   exchange: {
     type: String,
-    enum: ['NSE', 'BSE', 'NFO', 'MCX', 'BINANCE', 'CDS', 'BFO', 'CRYPTO', 'FOREX'],
+    enum: ['NSE', 'BSE', 'NFO', 'MCX', 'BINANCE', 'CDS', 'BFO', 'FOREX'],
     default: 'NSE'
   },
   

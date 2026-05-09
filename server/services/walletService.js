@@ -15,13 +15,13 @@ class WalletService {
   /**
    * Get the appropriate wallet based on segment
    * @param {Object} user - User document
-   * @param {String} segment - Trading segment (EQUITY, FNO, MCX, CRYPTO, etc.)
+   * @param {String} segment - Trading segment (EQUITY, FNO, MCX, etc.)
    * @returns {Object} - Wallet object reference
    */
   static getWalletBySegment(user, segment) {
     const seg = segment?.toUpperCase() || '';
     
-    if (seg === 'CRYPTO' || seg === 'BINANCE') {
+    if (seg === 'BINANCE' || seg === 'CRYPTOFUT' || seg === 'CRYPTOOPT') {
       return { wallet: user.cryptoWallet, field: 'cryptoWallet' };
     }
     if (seg === 'FOREX' || seg === 'FOREXFUT' || seg === 'FOREXOPT') {
@@ -42,7 +42,7 @@ class WalletService {
    * @returns {String} - Wallet field name
    */
   static getWalletFieldFromTrade(trade) {
-    if (trade.isCrypto || trade.exchange === 'BINANCE' || trade.segment === 'CRYPTO') {
+    if (trade.isCrypto || trade.exchange === 'BINANCE') {
       return 'cryptoWallet';
     }
     if (trade.isForex || trade.exchange === 'FOREX') {
@@ -179,8 +179,7 @@ class WalletService {
       return {
         $or: [
           { isCrypto: true },
-          { exchange: 'BINANCE' },
-          { segment: 'CRYPTO' }
+          { exchange: 'BINANCE' }
         ]
       };
     }
@@ -213,7 +212,7 @@ class WalletService {
       isCrypto: { $ne: true },
       isForex: { $ne: true },
       exchange: { $nin: ['BINANCE', 'MCX', 'FOREX'] },
-      segment: { $nin: ['CRYPTO', 'FOREX', 'FOREXFUT', 'FOREXOPT', 'MCX', 'MCXFUT', 'MCXOPT'] }
+      segment: { $nin: ['FOREX', 'FOREXFUT', 'FOREXOPT', 'MCX', 'MCXFUT', 'MCXOPT'] }
     };
   }
   
@@ -329,7 +328,7 @@ class WalletService {
       },
       crypto: {
         ...this.extractWalletFields(user.cryptoWallet),
-        segment: 'CRYPTO'
+        segment: 'BINANCE'
       },
       forex: {
         ...this.extractWalletFields(user.forexWallet),

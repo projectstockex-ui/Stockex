@@ -8,7 +8,7 @@ export function pattiSegmentKeyFromTrade(trade) {
   const seg = String(trade?.segment || '').toUpperCase();
   const ex = String(trade?.exchange || '').toUpperCase();
 
-  if (trade?.isCrypto || seg.includes('CRYPTO') || ex === 'BINANCE' || ex === 'CRYPTO') {
+  if (trade?.isCrypto || ex === 'BINANCE') {
     return 'CRYPTO';
   }
   if (trade?.isForex || seg.startsWith('FOREX') || ex === 'FOREX') {

@@ -17,6 +17,7 @@ import instrumentRoutes from './routes/instrumentRoutes.js';
 import binanceRoutes from './routes/binanceRoutes.js';
 import zerodhaRoutes, { setSocketIO } from './routes/zerodhaRoutes.js';
 import { initZerodhaWebSocket, getTickerStatus } from './services/zerodhaWebSocket.js';
+import zerodhaController from './controllers/zerodhaController.js';
 import { initBinanceWebSocket } from './services/binanceWebSocket.js';
 import { initForexMarketService } from './services/forexMarketService.js';
 import forexRoutes from './routes/forexRoutes.js';
@@ -87,6 +88,9 @@ initZerodhaWebSocket(io);
 setSocketIO(io);
 setTradeSocketIO(io);
 
+// Initialize ZerodhaController with Socket.IO
+await zerodhaController.initialize(io);
+
 // Initialize Binance WebSocket for real-time crypto data
 initBinanceWebSocket(io);
 // Synthetic forex quotes (USD base API → pairs, INR wallet on trade side)
@@ -97,7 +101,7 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
   
   socket.on('get_zerodha_status', () => {
-    const status = getTickerStatus();
+    const status = zerodhaController.getConnectionStatus();
     socket.emit('zerodha_status', { connected: status.connected });
   });
   
@@ -105,6 +109,11 @@ io.on('connection', (socket) => {
     console.log('Client disconnected:', socket.id);
   });
 });
+
+// NOTE: Live NIFTY 50 prices are handled by ZerodhaController via WebSocket (market_tick events).
+// The fake dynamic price simulation has been removed — it was broadcasting animated fake prices
+// (Math.sin oscillation) every 2 seconds even when market was closed.
+console.log('✅ Price system ready — live prices from Zerodha WebSocket only');
 
 // Middleware - CORS for production
 app.use(cors({
@@ -127,6 +136,23 @@ app.use('/api/binance', binanceRoutes);
 app.use('/api/forex', forexRoutes);
 app.use('/api/zerodha', zerodhaRoutes);
 app.use('/auth/zerodha', zerodhaRoutes); // Alias for Kite Connect redirect URL
+
+// MCX Routes - Enhanced live price endpoints
+import mcxRoutes from './routes/mcxRoutes.js';
+app.use('/api/mcx', mcxRoutes);
+
+// Token renewal routes
+import { initializeTokenRenewal } from './routes/zerodha/tokenRenewalRoutes.js';
+app.use('/api/token-renewal', (req, res, next) => {
+  if (!req.tokenRenewalOrchestrator) {
+    req.tokenRenewalOrchestrator = initializeTokenRenewal(console, {
+      maxTokenAge: 12 * 60 * 60 * 1000, // 12 hours
+      expirationThreshold: 2 * 60 * 60 * 1000, // 2 hours
+      autoReconnect: false // Disabled for production stability
+    });
+  }
+  next();
+});
 app.use('/api/upload', uploadRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/exchange-rate', exchangeRateRoutes);

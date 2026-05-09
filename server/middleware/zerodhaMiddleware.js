@@ -6,6 +6,7 @@
  */
 
 import zerodhaController from '../controllers/zerodhaController.js';
+import zerodhaErrorHandler from '../services/zerodha/error/ZerodhaErrorHandler.js';
 
 /**
  * Middleware to ensure Zerodha is connected
@@ -215,32 +216,49 @@ export const handleZerodhaErrors = (error, req, res, next) => {
   try {
     console.error('Zerodha error:', error);
     
+    // Use error handler to classify and log the error
+    const errorResult = zerodhaErrorHandler.handleError(
+      error,
+      'middleware',
+      zerodhaController,
+      {
+        userId: req.user?.id || req.admin?._id,
+        operation: req.path,
+        metadata: { method: req.method }
+      }
+    );
+    
     // Handle specific Zerodha errors
     if (error.message?.includes('403')) {
       return res.status(401).json({
         message: 'Zerodha authentication failed',
-        error: 'Access token expired or invalid. Please reconnect to Zerodha.'
+        error: 'Access token expired or invalid. Please reconnect to Zerodha.',
+        errorType: errorResult.errorType
       });
     }
     
     if (error.message?.includes('timeout')) {
       return res.status(504).json({
         message: 'Zerodha operation timeout',
-        error: 'The operation took too long. Please try again.'
+        error: 'The operation took too long. Please try again.',
+        errorType: errorResult.errorType
       });
     }
     
     if (error.message?.includes('connection')) {
       return res.status(503).json({
         message: 'Zerodha connection error',
-        error: 'Unable to connect to Zerodha. Please check your connection and try again.'
+        error: 'Unable to connect to Zerodha. Please check your connection and try again.',
+        errorType: errorResult.errorType
       });
     }
     
     // Generic error
     res.status(500).json({
       message: 'Zerodha operation failed',
-      error: error.message || 'An unexpected error occurred'
+      error: error.message || 'An unexpected error occurred',
+      errorType: errorResult.errorType,
+      errorDescription: errorResult.errorDescription
     });
     
   } catch (handlerError) {

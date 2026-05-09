@@ -37,7 +37,6 @@ const pattiSharingSchema = new mongoose.Schema({
     EQUITY: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } },
     FNO: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } },
     MCX: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } },
-    CRYPTO: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } },
     CURRENCY: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } }
   },
   notes: {
@@ -58,7 +57,7 @@ pattiSharingSchema.pre('save', function(next) {
   this.superAdminPercentage = 100 - this.brokerPercentage;
   
   // Also update segment percentages
-  const segments = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY'];
+  const segments = ['EQUITY', 'FNO', 'MCX', 'CURRENCY'];
   segments.forEach(seg => {
     if (this.segments && this.segments[seg]) {
       this.segments[seg].superAdminPercentage = 100 - (this.segments[seg].brokerPercentage || 50);

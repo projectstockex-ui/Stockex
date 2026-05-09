@@ -12,6 +12,7 @@ import RiskConfig from '../models/RiskConfig.js';
 import WalletService from './walletService.js';
 import CircuitBreakerService from './circuitBreakerService.js';
 import { getUsdInrRate } from '../utils/usdInr.js';
+import leverageValidationService from './leverageValidationService.js';
 import {
   orderIsCrypto,
   orderIsForex,
@@ -95,7 +96,6 @@ const MARKET_HOURS = {
   NFO: { open: { hour: 9, minute: 15 }, close: { hour: 15, minute: 30 } },
   MCX: { open: { hour: 9, minute: 0 }, close: { hour: 23, minute: 30 } },
   BINANCE: { open: { hour: 0, minute: 0 }, close: { hour: 23, minute: 59 } }, // 24/7
-  CRYPTO: { open: { hour: 0, minute: 0 }, close: { hour: 23, minute: 59 } }, // 24/7
 };
 
 // Helper function to check margin usage and send warning notification
@@ -212,7 +212,7 @@ class TradingService {
   // Check if market is open - now uses MarketState from database
   static async isMarketOpen(exchange = 'NSE') {
     // Crypto/Binance is always open 24/7
-    if (exchange === 'BINANCE' || exchange === 'CRYPTO') {
+    if (exchange === 'BINANCE') {
       return { open: true, reason: 'Crypto markets are open 24/7' };
     }
     if (exchange === 'FOREX') {
@@ -438,6 +438,26 @@ class TradingService {
   // Place order - Uses user's segment and script settings for all calculations
   // TradePro Trading Engine - 16-step validation pipeline
   static async placeOrder(userId, orderData) {
+    // ==================== STEP 0: LIVE PRICE VALIDATION ====================
+    // Ensure orders use live tick-to-tick prices, not historical data
+    if (orderData.orderType === 'MARKET' && orderData.price) {
+      const now = new Date();
+      const priceAgeMinutes = (now - new Date(orderData.priceTimestamp || now)) / (1000 * 60);
+      
+      if (priceAgeMinutes > 5) {
+        console.log(`🚨 LIVE PRICE VALIDATION FAILED: ${orderData.symbol}`);
+        console.log(`🚨 Price age: ${priceAgeMinutes.toFixed(2)} minutes (max allowed: 5 minutes)`);
+        console.log(`🚨 Price timestamp: ${orderData.priceTimestamp}`);
+        console.log(`🚨 Server time: ${now.toISOString()}`);
+        console.log(`🚨 REJECTING ORDER - Historical price detected`);
+        
+        throw new Error(`Order rejected: Price data is ${priceAgeMinutes.toFixed(2)} minutes old. Live tick-to-tick prices required for market orders.`);
+      } else {
+        console.log(`✅ LIVE PRICE VALIDATION PASSED: ${orderData.symbol}`);
+        console.log(`✅ Price age: ${priceAgeMinutes.toFixed(2)} minutes - Using live data`);
+      }
+    }
+
     // ==================== STEP 1: USER ACTIVE CHECK ====================
     const user = await User.findById(userId).populate({
       path: 'admin',
@@ -461,7 +481,17 @@ class TradingService {
     }
 
     const admin = await this.getAdminSettings(user);
-    
+
+    // Validate leverage against admin's maxLeverageFromParent
+    if (admin && admin.leverageSettings) {
+      const leverageType = orderData.product === 'MIS' ? 'intraday' : 'carryforward';
+      const requestedLeverage = orderData.leverage || admin.leverageSettings.intradayLeverage || 1;
+      const validation = leverageValidationService.validateLeverageAtTradeExecution(admin, leverageType, requestedLeverage);
+      if (!validation.valid) {
+        throw new Error(validation.error);
+      }
+    }
+
     // Get risk config for this user
     const riskConfig = await RiskConfig.getConfig(user.adminCode);
 
@@ -697,7 +727,6 @@ class TradingService {
       segCryptoLot != null &&
       (segU === 'CRYPTOFUT' ||
         segU === 'CRYPTOOPT' ||
-        segU === 'CRYPTO' ||
         orderData.exchange === 'BINANCE')
     ) {
       lotSize = segCryptoLot;
@@ -1949,7 +1978,7 @@ class TradingService {
     if (!trade) throw new Error('Position not found');
     
     // Check if this is a crypto trade
-    const isCrypto = trade.isCrypto || trade.segment === 'CRYPTO' || trade.exchange === 'BINANCE';
+    const isCrypto = trade.isCrypto || trade.exchange === 'BINANCE';
     const isForex = trade.isForex || trade.exchange === 'FOREX' ||
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase());
     const isUsdSpotExit = isCrypto || isForex;

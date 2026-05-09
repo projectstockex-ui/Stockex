@@ -345,7 +345,7 @@ export class ZerodhaSyncService {
     if (exchange === 'NFO' || exchange === 'BFO') return 'FNO';
     if (exchange === 'MCX') return 'MCX';
     if (exchange === 'CDS' || exchange === 'FOREX') return 'CURRENCY';
-    if (exchange === 'BINANCE' || exchange === 'CRYPTO') return 'CRYPTO';
+    if (exchange === 'BINANCE') return 'CRYPTOFUT';
 
     return 'EQUITY';
   }
@@ -362,7 +362,7 @@ export class ZerodhaSyncService {
     if (exchange === 'MCX') return isOption ? 'MCXOPT' : 'MCXFUT';
     if (exchange === 'CDS') return isOption ? 'FOREXOPT' : 'FOREXFUT';
     if (exchange === 'FOREX') return isOption ? 'FOREXOPT' : 'FOREXFUT';
-    if (exchange === 'BINANCE' || exchange === 'CRYPTO') return isFuture ? 'CRYPTOFUT' : 'CRYPTO';
+    if (exchange === 'BINANCE') return isFuture ? 'CRYPTOFUT' : 'CRYPTOOPT';
 
     return 'NSE-EQ';
   }
@@ -384,7 +384,7 @@ export class ZerodhaSyncService {
 
     if (exchange === 'MCX') return 'MCX';
     if (exchange === 'CDS' || exchange === 'FOREX') return 'CURRENCY';
-    if (exchange === 'BINANCE' || exchange === 'CRYPTO') return 'CRYPTO';
+    if (exchange === 'BINANCE') return 'CRYPTOFUT';
     if (type === 'EQ') return u.includes('NIFTY') ? 'INDICES' : 'STOCKS';
     if (u.includes('BANKNIFTY')) return 'BANKNIFTY';
     if (u.includes('FINNIFTY')) return 'FINNIFTY';

@@ -36,6 +36,10 @@ import Admin from '../models/Admin.js';
 
 import User from '../models/User.js';
 
+import adminSegmentSettingsController from '../controllers/adminSegmentSettingsController.js';
+
+import userSegmentSettingsController from '../controllers/userSegmentSettingsController.js';
+
 import BankAccount from '../models/BankAccount.js';
 
 import FundRequest from '../models/FundRequest.js';
@@ -93,6 +97,10 @@ import {
 } from '../services/gameProfitDistribution.js';
 
 import { transferExternalAdminSubtreeToInternalAdmin } from '../services/adminSubtreeTransferService.js';
+
+import leverageValidationService from '../services/leverageValidationService.js';
+
+import leverageController from '../controllers/leverageController.js';
 
 import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.js';
 
@@ -171,6 +179,8 @@ import {
 import { sanitizeInstrumentDenylist } from '../services/instrumentRestrictionService.js';
 
 import { sanitizeGameDenylist } from '../services/gameRestrictionService.js';
+
+import hierarchyValidationService from '../services/hierarchyValidationService.js';
 
 import { protectAdmin, superAdminOnly } from '../middleware/auth.js';
 
@@ -832,6 +842,15 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
     };
 
+    // Validate leverage settings against parent's maxLeverageFromParent
+    if (actualParent.role !== 'SUPER_ADMIN') {
+      const tempAdmin = { leverageSettings };
+      const validation = leverageValidationService.validateLeverageHierarchy(tempAdmin, actualParent);
+      if (!validation.valid) {
+        return res.status(400).json({ message: validation.error });
+      }
+    }
+
     
 
     const admin = await Admin.create({
@@ -1082,9 +1101,22 @@ router.put('/admins/:id/lot-settings', protectAdmin, superAdminOnly, async (req,
 
       if (!admin.leverageSettings) admin.leverageSettings = {};
 
+      const maxRequestedLeverage = Math.max(...enabledLeverages);
+
+      // Validate against parent's maxLeverageFromParent
+      if (admin.parentId) {
+        const parent = await Admin.findById(admin.parentId);
+        if (parent && parent.leverageSettings) {
+          const parentMax = parent.leverageSettings.maxLeverageFromParent || 1;
+          if (maxRequestedLeverage > parentMax) {
+            return res.status(400).json({ message: `limit exceeded: Requested leverage (${maxRequestedLeverage}x) exceeds parent's maximum (${parentMax}x)` });
+          }
+        }
+      }
+
       admin.leverageSettings.enabledLeverages = enabledLeverages;
 
-      admin.leverageSettings.maxLeverage = Math.max(...enabledLeverages);
+      admin.leverageSettings.maxLeverage = maxRequestedLeverage;
 
     }
 
@@ -1140,6 +1172,7 @@ router.put('/admins/:id/restrictions', protectAdmin, superAdminOnly, async (req,
 
   try {
 
+    console.log('[AdminRestrictions] UPDATE CALLED by SuperAdmin');
     const admin = await Admin.findById(req.params.id);
 
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
@@ -1186,7 +1219,8 @@ router.put('/brokers/:id/restrictions', protectAdmin, async (req, res) => {
 
     const currentAdmin = req.admin;
 
-    
+    console.log('[BrokerRestrictions] UPDATE CALLED');
+    console.log('[BrokerRestrictions] Parent:', currentAdmin.name, 'Role:', currentAdmin.role, 'ParentId:', currentAdmin.parentId);
 
     const broker = await Admin.findById(req.params.id);
 
@@ -1194,7 +1228,6 @@ router.put('/brokers/:id/restrictions', protectAdmin, async (req, res) => {
 
     if (broker.role !== 'BROKER') return res.status(400).json({ message: 'Target is not a broker' });
 
-    
 
     // Verify that the current admin is the parent of this broker
 
@@ -1204,7 +1237,12 @@ router.put('/brokers/:id/restrictions', protectAdmin, async (req, res) => {
 
     }
 
-    
+    // Validate category permissions against grandparent segment permissions using service
+    const categoryValidation = await hierarchyValidationService.validateCategoryPermissions(currentAdmin, req.body);
+    if (!categoryValidation.allowed) {
+      console.log('[BrokerRestrictions] BLOCKING:', categoryValidation.message);
+      return res.status(400).json({ message: categoryValidation.message });
+    }
 
     // Validate against parent restrictions
 
@@ -1300,7 +1338,8 @@ router.put('/subbrokers/:id/restrictions', protectAdmin, async (req, res) => {
 
     const currentAdmin = req.admin;
 
-    
+    console.log('[SubBrokerRestrictions] UPDATE CALLED');
+    console.log('[SubBrokerRestrictions] Parent:', currentAdmin.name, 'Role:', currentAdmin.role, 'ParentId:', currentAdmin.parentId);
 
     const subBroker = await Admin.findById(req.params.id);
 
@@ -1308,7 +1347,7 @@ router.put('/subbrokers/:id/restrictions', protectAdmin, async (req, res) => {
 
     if (subBroker.role !== 'SUB_BROKER') return res.status(400).json({ message: 'Target is not a sub-broker' });
 
-    
+
 
     // Verify that the current admin is the parent of this sub-broker
 
@@ -1316,6 +1355,13 @@ router.put('/subbrokers/:id/restrictions', protectAdmin, async (req, res) => {
 
       return res.status(403).json({ message: 'You can only set restrictions for your own sub-brokers' });
 
+    }
+
+    // Validate category permissions against grandparent segment permissions using service
+    const categoryValidation = await hierarchyValidationService.validateCategoryPermissions(currentAdmin, req.body);
+    if (!categoryValidation.allowed) {
+      console.log('[SubBrokerRestrictions] BLOCKING:', categoryValidation.message);
+      return res.status(400).json({ message: categoryValidation.message });
     }
 
     
@@ -1405,39 +1451,41 @@ router.put('/subbrokers/:id/restrictions', protectAdmin, async (req, res) => {
 });
 
 
+// ==================== LEVERAGE CAP ENDPOINTS ====================
+
+// Set leverage cap for Admin (SuperAdmin only)
+router.put('/admins/:id/leverage-cap', protectAdmin, superAdminOnly, (req, res) =>
+  leverageController.setAdminLeverageCap(req, res)
+);
+
+// Set leverage cap for Broker (Admin only)
+router.put('/brokers/:id/leverage-cap', protectAdmin, (req, res) =>
+  leverageController.setBrokerLeverageCap(req, res)
+);
+
+// Set leverage cap for SubBroker (Broker only)
+router.put('/subbrokers/:id/leverage-cap', protectAdmin, (req, res) =>
+  leverageController.setSubBrokerLeverageCap(req, res)
+);
+
 
 // Get all brokers (Admin only)
 
 router.get('/brokers', protectAdmin, async (req, res) => {
-
   try {
-
     const currentAdmin = req.admin;
 
-    
-
     // Admin can only see their own brokers
-
     const brokers = await Admin.find({
-
       role: 'BROKER',
-
       createdBy: currentAdmin._id
-
     }).select('-password -pin');
 
-    
-
     res.json(brokers);
-
   } catch (error) {
-
     res.status(500).json({ message: error.message });
-
   }
-
 });
-
 
 
 // Get all sub-brokers (Broker only)
@@ -1524,31 +1572,16 @@ router.put('/admins/:id/leverage', protectAdmin, async (req, res) => {
 
     }
 
-    
+    // Validate leverage settings using service layer
+    const validation = leverageValidationService.validateChildLeverageSettings(parentAdmin, {
+      maxLeverageFromParent,
+      intradayLeverage,
+      carryForwardLeverage
+    });
 
-    // Get parent's max leverage limit
-
-    const parentMaxLeverage = parentAdmin.role === 'SUPER_ADMIN' 
-
-      ? 2000 // SuperAdmin has unlimited
-
-      : (parentAdmin.leverageSettings?.maxLeverageFromParent || 10);
-
-    
-
-    // Validate maxLeverageFromParent doesn't exceed parent's limit
-
-    if (maxLeverageFromParent && maxLeverageFromParent > parentMaxLeverage) {
-
-      return res.status(400).json({ 
-
-        message: `Cannot set leverage higher than your limit (${parentMaxLeverage}x)` 
-
-      });
-
+    if (!validation.valid) {
+      return res.status(400).json({ message: validation.error });
     }
-
-    
 
     // Initialize leverageSettings if not exists
 
@@ -1561,35 +1594,18 @@ router.put('/admins/:id/leverage', protectAdmin, async (req, res) => {
     
 
     // Update maxLeverageFromParent
-
     if (maxLeverageFromParent) {
-
       childAdmin.leverageSettings.maxLeverageFromParent = maxLeverageFromParent;
-
     }
 
-    
-
-    const maxAllowed = childAdmin.leverageSettings.maxLeverageFromParent || parentMaxLeverage;
-
-    
-
-    // Update intradayLeverage (single value, capped at maxAllowed)
-
+    // Update intradayLeverage
     if (intradayLeverage !== undefined) {
-
-      childAdmin.leverageSettings.intradayLeverage = Math.min(intradayLeverage, maxAllowed);
-
+      childAdmin.leverageSettings.intradayLeverage = intradayLeverage;
     }
 
-    
-
-    // Update carryForwardLeverage (single value, capped at maxAllowed)
-
+    // Update carryForwardLeverage
     if (carryForwardLeverage !== undefined) {
-
-      childAdmin.leverageSettings.carryForwardLeverage = Math.min(carryForwardLeverage, maxAllowed);
-
+      childAdmin.leverageSettings.carryForwardLeverage = carryForwardLeverage;
     }
 
     
@@ -1608,16 +1624,13 @@ router.put('/admins/:id/leverage', protectAdmin, async (req, res) => {
 
     await childAdmin.save();
 
-    
+    // Get parent's max leverage for response
+    const parentMaxLeverage = leverageValidationService.getParentMaxLeverageLimit(parentAdmin);
 
-    res.json({ 
-
+    res.json({
       message: 'Leverage settings updated successfully',
-
       leverageSettings: childAdmin.leverageSettings,
-
       parentMaxLeverage
-
     });
 
   } catch (error) {
@@ -1844,15 +1857,15 @@ router.get('/users/:id/leverage', protectAdmin, async (req, res) => {
 
 });
 
+// Get user's segment settings
+router.get('/users/:id/segment-settings', protectAdmin, userSegmentSettingsController.getSegmentSettings.bind(userSegmentSettingsController));
 
+// Update user's segment settings
+router.put('/users/:id/segment-settings', protectAdmin, userSegmentSettingsController.updateSegmentSettings.bind(userSegmentSettingsController));
 
 // ============ END HIERARCHICAL LEVERAGE MANAGEMENT ============
 
-
-
 // ============ PERMISSION & DEFAULT SETTINGS MANAGEMENT ============
-
-
 
 // Update admin permissions (parent admin can set permissions for child admin)
 
@@ -2093,252 +2106,23 @@ router.put('/admins/:id/default-settings', protectAdmin, async (req, res) => {
 });
 
 
-
 // Update admin's segment permissions and script settings (parent admin or SuperAdmin)
-
-router.put('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
-
-  try {
-
-    const { segmentPermissions, scriptSettings, segmentExplicitKeys } = req.body;
-
-    const parentAdmin = req.admin;
-
-    
-
-    const childAdmin = await Admin.findById(req.params.id);
-
-    if (!childAdmin) return res.status(404).json({ message: 'Admin not found' });
-
-    
-
-    // Verify hierarchy - parent must be able to manage child
-
-    if (parentAdmin.role !== 'SUPER_ADMIN') {
-
-      if (!parentAdmin.canManage(childAdmin.role)) {
-
-        return res.status(403).json({ message: 'You cannot manage this admin level' });
-
-      }
-
-      if (childAdmin.parentId && childAdmin.parentId.toString() !== parentAdmin._id.toString()) {
-
-        const isInHierarchy = childAdmin.hierarchyPath?.some(id => id.toString() === parentAdmin._id.toString());
-
-        if (!isInHierarchy) {
-
-          return res.status(403).json({ message: 'This admin is not under your management' });
-
-        }
-
-      }
-
-    }
-
-    
-
-    const updateFields = {};
-
-    if (segmentPermissions && typeof segmentPermissions === 'object') {
-
-      let plain =
-
-        segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
-
-      if (parentAdmin.role === 'BROKER' || parentAdmin.role === 'SUB_BROKER') {
-
-        const existingSeg =
-
-          childAdmin.segmentPermissions instanceof Map
-
-            ? Object.fromEntries(childAdmin.segmentPermissions)
-
-            : (childAdmin.segmentPermissions || {});
-
-        plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
-
-      }
-
-      updateFields.segmentPermissions = alignSegmentDefaultsMap(plain);
-
-    }
-
-    if (scriptSettings && typeof scriptSettings === 'object') {
-
-      updateFields.scriptSettings = scriptSettings;
-
-    }
-
-    if (segmentExplicitKeys !== undefined) {
-
-      const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
-
-      if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
-
-    }
-
-
-
-    if (Object.keys(updateFields).length === 0) {
-
-      return res.status(400).json({ message: 'No settings provided to update' });
-
-    }
-
-
-
-    await Admin.updateOne({ _id: childAdmin._id }, { $set: updateFields });
-
-
-
-    const updatedAdmin = await Admin.findById(childAdmin._id).select('-password');
-
-    res.json({
-
-      message: 'Admin segment/script settings updated successfully',
-
-      admin: {
-
-        _id: updatedAdmin._id,
-
-        name: updatedAdmin.name,
-
-        adminCode: updatedAdmin.adminCode,
-
-        segmentPermissions: updatedAdmin.segmentPermissions,
-
-        segmentExplicitKeys: updatedAdmin.segmentExplicitKeys,
-
-        scriptSettings: updatedAdmin.scriptSettings,
-
-      },
-
-    });
-
-  } catch (error) {
-
-    res.status(500).json({ message: error.message });
-
-  }
-
-});
-
-
+router.put('/admins/:id/segment-settings', protectAdmin, (req, res, next) => {
+  console.log('[ROUTE] /admins/:id/segment-settings PUT called');
+  console.log('[ROUTE] Params:', req.params);
+  console.log('[ROUTE] Body keys:', Object.keys(req.body));
+  next();
+}, adminSegmentSettingsController.updateSegmentSettings.bind(adminSegmentSettingsController));
 
 // Get admin's segment permissions and script settings
-
-router.get('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
-
-  try {
-
-    const targetAdmin = await Admin.findById(req.params.id).select(
-
-      'segmentPermissions segmentExplicitKeys scriptSettings name adminCode role'
-
-    );
-
-    if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
-
-    
-
-    // Verify access - SuperAdmin can see all, others only their children
-
-    if (req.admin.role !== 'SUPER_ADMIN') {
-
-      const isInHierarchy = targetAdmin.hierarchyPath?.some(id => id.toString() === req.admin._id.toString());
-
-      if (targetAdmin.parentId?.toString() !== req.admin._id.toString() && !isInHierarchy) {
-
-        return res.status(403).json({ message: 'Access denied' });
-
-      }
-
-    }
-
-    
-
-    // Convert Maps to plain objects
-
-    const segmentPermissions = targetAdmin.segmentPermissions instanceof Map
-
-      ? Object.fromEntries(targetAdmin.segmentPermissions)
-
-      : (targetAdmin.segmentPermissions || {});
-
-    const scriptSettings = targetAdmin.scriptSettings instanceof Map
-
-      ? Object.fromEntries(targetAdmin.scriptSettings)
-
-      : (targetAdmin.scriptSettings || {});
+router.get('/admins/:id/segment-settings', protectAdmin, (req, res, next) => {
+  console.log('[ROUTE] GET /admins/:id/segment-settings called');
+  console.log('[ROUTE] Params:', req.params);
+  next();
+}, adminSegmentSettingsController.getSegmentSettings.bind(adminSegmentSettingsController));
 
 
-
-    let segmentExplicitKeys = targetAdmin.segmentExplicitKeys;
-
-    if (segmentExplicitKeys instanceof Map) {
-
-      segmentExplicitKeys = Object.fromEntries(segmentExplicitKeys);
-
-    }
-
-
-
-    let adminSegmentDefaults = {};
-
-    try {
-
-      const sysLean = await SystemSettings.findOne({ settingsType: 'global' })
-
-        .select('adminSegmentDefaults')
-
-        .lean();
-
-      adminSegmentDefaults = plainSegmentDefaultsMap(sysLean?.adminSegmentDefaults || {});
-
-    } catch {
-
-      adminSegmentDefaults = {};
-
-    }
-
-
-
-    res.json({
-
-      admin: {
-
-        _id: targetAdmin._id,
-
-        name: targetAdmin.name,
-
-        adminCode: targetAdmin.adminCode,
-
-        role: targetAdmin.role,
-
-      },
-
-      segmentPermissions,
-
-      segmentExplicitKeys: segmentExplicitKeys || {},
-
-      scriptSettings,
-
-      adminSegmentDefaults,
-
-    });
-
-  } catch (error) {
-
-    res.status(500).json({ message: error.message });
-
-  }
-
-});
-
-
-
-const INDIVIDUAL_PATTI_SEGMENT_KEYS = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY', 'FOREX'];
+const INDIVIDUAL_PATTI_SEGMENT_KEYS = ['EQUITY', 'FNO', 'MCX', 'CURRENCY', 'FOREX'];
 
 
 
@@ -11988,7 +11772,7 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
 
     if (segmentDefaults) {
 
-      const segments = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY'];
+      const segments = ['EQUITY', 'FNO', 'MCX', 'CURRENCY'];
 
       segments.forEach(seg => {
 
