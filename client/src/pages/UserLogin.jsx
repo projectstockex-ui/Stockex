@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2, CheckCircle } from 'lucide-react';
+import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2, CheckCircle, Star, MapPin, Briefcase } from 'lucide-react';
 import axios from 'axios';
 
 const UserLogin = () => {
@@ -787,13 +787,44 @@ const UserLogin = () => {
                       onClick={() => handleSelectBroker(broker)}
                       className="w-full p-4 bg-dark-700 hover:bg-dark-600 rounded-lg text-left transition border border-transparent hover:border-green-500/30"
                     >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium text-white">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="font-medium text-white mb-1">
                             {broker.name || broker.username}
                           </div>
-                          <div className="text-sm text-gray-400">
+                          <div className="text-sm text-gray-400 mb-2">
                             {broker.adminCode}
+                          </div>
+                          
+                          {/* Rating, City, Experience */}
+                          <div className="flex items-center gap-3 text-xs">
+                            {/* Rating in stars */}
+                            <div className="flex items-center gap-1">
+                              {[...Array(5)].map((_, i) => (
+                                <Star
+                                  key={i}
+                                  size={12}
+                                  className={i < (broker.certificate?.rating || 5) ? 'text-yellow-400 fill-yellow-400' : 'text-gray-600'}
+                                />
+                              ))}
+                              <span className="text-gray-400 ml-1">({broker.certificate?.rating || 5})</span>
+                            </div>
+                            
+                            {/* City Code */}
+                            {broker.cityCode && (
+                              <div className="flex items-center gap-1 text-blue-400">
+                                <MapPin size={12} />
+                                <span>{broker.cityCode} {broker.cityName ? `- ${broker.cityName}` : ''}</span>
+                              </div>
+                            )}
+                            
+                            {/* Experience */}
+                            {broker.certificate?.yearsOfExperience > 0 && (
+                              <div className="flex items-center gap-1 text-green-400">
+                                <Briefcase size={12} />
+                                <span>{broker.certificate.yearsOfExperience} yrs</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="text-green-400">

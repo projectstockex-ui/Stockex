@@ -81,6 +81,36 @@ class WalletService {
   }
   
   /**
+   * Get user's leverage for a segment
+   * @param {Object} user - User document
+   * @param {String} segment - Segment name
+   * @returns {Number} - Leverage value
+   */
+  static async getUserLeverage(user, segment) {
+    try {
+      // Get leverage from user's segment permissions or parent admin's settings
+      const segUpper = segment?.toUpperCase() || 'NSEFUT';
+      const userSegmentSettings = user.segmentPermissions?.[segUpper];
+      
+      // Priority: user's lotSettings.intradayLeverage > user's intradayLeverage > default
+      let leverage = 1;
+      
+      if (userSegmentSettings?.lotSettings?.intradayLeverage) {
+        leverage = userSegmentSettings.lotSettings.intradayLeverage;
+      } else if (userSegmentSettings?.intradayLeverage) {
+        leverage = userSegmentSettings.intradayLeverage;
+      } else if (userSegmentSettings?.exposureIntraday) {
+        leverage = userSegmentSettings.exposureIntraday;
+      }
+      
+      return leverage > 0 ? leverage : 1;
+    } catch (error) {
+      console.error('Error getting user leverage:', error);
+      return 1;
+    }
+  }
+
+  /**
    * Recalculate wallet state for a user
    * This is the CORE function that maintains wallet integrity
    * 
@@ -121,20 +151,35 @@ class WalletService {
       // Calculate totals from open positions
       let totalUsedMargin = 0;
       let totalUnrealizedPnL = 0;
+      let positionSegment = null;
       
       for (const position of openPositions) {
         totalUsedMargin += position.marginUsed || position.requiredMargin || 0;
         totalUnrealizedPnL += position.unrealizedPnL || 0;
+        if (!positionSegment) {
+          positionSegment = position.segment;
+        }
       }
       
       // Get balance (this should NOT change from price movement)
       const balance = wallet.tradingBalance || wallet.balance || 0;
       
-      // Calculate equity = balance + unrealizedPnL
-      const equity = balance + totalUnrealizedPnL;
+      // Get user's leverage for this segment
+      const leverage = await this.getUserLeverage(user, positionSegment);
       
-      // Calculate free margin = equity - usedMargin
-      const freeMargin = equity - totalUsedMargin;
+      // Calculate available margin with leverage: (balance * leverage) - usedMargin
+      // If there's unrealized loss, subtract it from available margin
+      const leveragedBalance = balance * leverage;
+      const unrealizedLoss = totalUnrealizedPnL < 0 ? Math.abs(totalUnrealizedPnL) : 0;
+      
+      // Available margin calculation as per user's logic:
+      // Initial: balance * leverage
+      // With position: (balance * leverage) - usedMargin
+      // With loss: (balance * leverage) - usedMargin - unrealizedLoss
+      const availableMargin = leveragedBalance - totalUsedMargin - unrealizedLoss;
+      
+      // Calculate equity = balance + unrealizedPnL (for margin level calculation)
+      const equity = balance + totalUnrealizedPnL;
       
       // Calculate margin level = (equity / usedMargin) * 100
       // Infinity when usedMargin = 0
@@ -145,18 +190,20 @@ class WalletService {
       // Update wallet fields
       updateFields[`${field}.equity`] = Math.round(equity * 100) / 100;
       updateFields[`${field}.usedMargin`] = Math.round(totalUsedMargin * 100) / 100;
-      updateFields[`${field}.freeMargin`] = Math.round(freeMargin * 100) / 100;
+      updateFields[`${field}.freeMargin`] = Math.round(availableMargin * 100) / 100;
       updateFields[`${field}.marginLevel`] = marginLevel ? Math.round(marginLevel * 100) / 100 : null;
       updateFields[`${field}.totalUnrealizedPnL`] = Math.round(totalUnrealizedPnL * 100) / 100;
       updateFields[`${field}.lastUpdatedAt`] = new Date();
+      updateFields[`${field}.leverage`] = leverage;
       
       results[field] = {
         balance,
         equity: Math.round(equity * 100) / 100,
         usedMargin: Math.round(totalUsedMargin * 100) / 100,
-        freeMargin: Math.round(freeMargin * 100) / 100,
+        freeMargin: Math.round(availableMargin * 100) / 100,
         marginLevel: marginLevel ? Math.round(marginLevel * 100) / 100 : null,
         totalUnrealizedPnL: Math.round(totalUnrealizedPnL * 100) / 100,
+        leverage,
         openPositions: openPositions.length
       };
     }

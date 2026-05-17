@@ -26,6 +26,7 @@ import BankSettings from '../models/BankSettings.js';
 import SystemSettings from '../models/SystemSettings.js';
 import BrokerageTracking from '../models/BrokerageTracking.js';
 import { protectAdmin, generateToken } from '../middleware/auth.js';
+import WalletController from '../controllers/walletController.js';
 
 const router = express.Router();
 
@@ -90,7 +91,7 @@ router.get('/brokers/public', async (req, res) => {
       role: 'BROKER',
       status: 'ACTIVE'
     })
-    .select('name username adminCode role parentId branding')
+    .select('name username adminCode role parentId branding cityCode cityName certificate.rating certificate.yearsOfExperience')
     .populate('parentId', 'name username adminCode role')
     .sort({ name: 1 });
 
@@ -1030,61 +1031,10 @@ router.post('/users/:id/convert-to-real', protectAdmin, async (req, res) => {
   }
 });
 
-// Add funds to user wallet
-router.post('/users/:id/wallet/deposit', protectAdmin, async (req, res) => {
-  try {
-    const { amount, description } = req.body;
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    user.wallet.balance += Number(amount);
-    user.marginAvailable += Number(amount);
-    user.wallet.transactions.push({
-      type: 'deposit',
-      amount: Number(amount),
-      description: description || 'Deposit by admin',
-      performedBy: req.admin._id
-    });
-
-    await user.save();
-    res.json({ message: 'Funds added successfully', wallet: user.wallet });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Withdraw funds from user wallet
-router.post('/users/:id/wallet/withdraw', protectAdmin, async (req, res) => {
-  try {
-    const { amount, description } = req.body;
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    if (user.wallet.balance < amount) {
-      return res.status(400).json({ message: 'Insufficient balance' });
-    }
-
-    user.wallet.balance -= Number(amount);
-    user.marginAvailable -= Number(amount);
-    user.wallet.transactions.push({
-      type: 'withdraw',
-      amount: Number(amount),
-      description: description || 'Withdrawal by admin',
-      performedBy: req.admin._id
-    });
-
-    await user.save();
-    res.json({ message: 'Funds withdrawn successfully', wallet: user.wallet });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+// Wallet operations with hierarchical permission validation
+router.post('/users/:id/wallet/deposit', protectAdmin, WalletController.depositToUserWallet);
+router.post('/users/:id/wallet/withdraw', protectAdmin, WalletController.withdrawFromUserWallet);
+router.get('/users/:id/wallet/permissions', protectAdmin, WalletController.getWalletPermissions);
 
 // Get user wallet transactions
 router.get('/users/:id/wallet', protectAdmin, async (req, res) => {

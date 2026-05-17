@@ -38,7 +38,7 @@ const tradeSchema = new mongoose.Schema({
   },
   instrumentType: {
     type: String,
-    enum: ['STOCK', 'FUTURES', 'OPTIONS', 'CURRENCY'],
+    enum: ['STOCK', 'FUTURES', 'OPTIONS', 'CURRENCY', 'CRYPTO'],
     required: true
   },
   symbol: {

@@ -328,7 +328,9 @@ const adminSchema = new mongoose.Schema({
     perTrade: {
       min: { type: Number, default: 0 },      // Minimum brokerage per trade
       max: { type: Number, default: 0 }       // Maximum brokerage per trade - set by SuperAdmin
-    }
+    },
+    // Parent share percentage for extra brokerage (only SuperAdmin ↔ Admin level)
+    parentSharePercentage: { type: Number, default: 5 } // % of extra brokerage shared with parent
   },
   
   // Admin Wallet
@@ -526,6 +528,16 @@ const adminSchema = new mongoose.Schema({
       default: 0 // For sorting on landing page
     }
   },
+
+  // Broker location information for user selection
+  cityCode: {
+    type: String,
+    default: '' // e.g., "DEL", "MUM", "BLR"
+  },
+  cityName: {
+    type: String,
+    default: '' // e.g., "Delhi", "Mumbai", "Bangalore"
+  },
   
   // Restrict Mode - Limit number of users under this admin
   // Set by Super Admin for Admin/Broker/SubBroker
@@ -618,21 +630,40 @@ const adminSchema = new mongoose.Schema({
     type: Map,
     of: {
       enabled: { type: Boolean, default: false },
-      maxExchangeLots: { type: Number, default: 100 },
       commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       /** INR for PER_LOT/PER_TRADE; PER_CRORE uses PERCENT (% of notional) or legacy INR (₹ per crore). */
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
+      /** Commission for PER_CRORE (₹ per crore or % of turnover) - used when commissionType is PER_CRORE */
+      commission: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },
-      orderLots: { type: Number, default: 10 },
       /** Per-order quantity caps (MCX/FNO); used by TradeService margin/order validation */
       quantitySettings: {
-        breakupQuantity: { type: Number, default: 0 },
-        maxBid: { type: Number, default: 0 },
+        breakupQuantity: { type: Number, default: 0 }
       },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      intradayLeverage: { type: Number, default: 1 },
+      carryForwardLeverage: { type: Number, default: 1 },
+      // Lot Mode Settings - applies when user trades in Lots mode
+      lotSettings: {
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxLots: { type: Number, default: 50 },
+        minLots: { type: Number, default: 1 },
+        breakupLots: { type: Number, default: 0 },
+        notificationPercent: { type: Number, default: 70 },
+        autosquarePercent: { type: Number, default: 90 }
+      },
+      // Quantity Mode Settings - applies when user trades in Quantity mode
+      quantityModeSettings: {
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxQuantity: { type: Number, default: 1000 },
+        minQuantity: { type: Number, default: 1 },
+        breakupQuantity: { type: Number, default: 0 }
+      },
       allowClientIntradayOnly: { type: Boolean, default: true },
       defaultIntradayOnly: { type: Boolean, default: false },
       allowLimitPendingOrders: { type: Boolean, default: true },
@@ -658,16 +689,14 @@ const adminSchema = new mongoose.Schema({
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 },
-        maxExchangeLots: { type: Number, default: 100 }
+        strikeSelection: { type: Number, default: 50 }
       },
       optionSell: {
         allowed: { type: Boolean, default: true },
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 },
-        maxExchangeLots: { type: Number, default: 100 }
+        strikeSelection: { type: Number, default: 50 }
       }
     },
     default: {}

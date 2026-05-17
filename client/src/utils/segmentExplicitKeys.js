@@ -13,6 +13,8 @@ export function segmentFieldValuesEqual(a, b) {
 
 /**
  * Per segment, top-level keys whose values differ from Super Admin `adminSegmentDefaults`.
+ * Handles nested objects by checking if they differ at the top level.
+ * For nested objects like lotSettings, always include them if they exist in current data.
  */
 export function computeSegmentExplicitKeys(segDefs, systemDefaultsPlain) {
   const sys = systemDefaultsPlain || {};
@@ -22,7 +24,12 @@ export function computeSegmentExplicitKeys(segDefs, systemDefaultsPlain) {
     const defSeg = sys[seg] || {};
     const keys = [];
     for (const k of Object.keys(cur)) {
-      if (!segmentFieldValuesEqual(cur[k], defSeg[k])) keys.push(k);
+      // Always include nested objects (lotSettings, quantityModeSettings, etc.) if they exist
+      if (k === 'lotSettings' || k === 'quantityModeSettings' || k === 'optionBuy' || k === 'optionSell') {
+        keys.push(k);
+      } else if (!segmentFieldValuesEqual(cur[k], defSeg[k])) {
+        keys.push(k);
+      }
     }
     out[seg] = keys;
   }

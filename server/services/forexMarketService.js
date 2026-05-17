@@ -250,7 +250,9 @@ async function poll(io) {
     if (!io) continue;
 
     io.emit('forex_tick', { [pairU]: tick });
-    io.emit('market_tick', { [pairU]: tick, [def.symbol]: tick });
+    // Removed market_tick emission - forex ticks should only go to forex_tick event
+    // This prevents frontend from receiving forex ticks on market_tick event
+    // market_tick is reserved for NIFTY/Indian market data from Zerodha
     await TradingService.processPendingOrdersForUsdSpotTick({
       pair: pairU,
       symbol: def.symbol,

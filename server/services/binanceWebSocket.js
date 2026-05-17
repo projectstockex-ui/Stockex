@@ -81,7 +81,9 @@ const connectWebSocket = () => {
 
         if (io) {
           io.emit('crypto_tick', { [pair]: tickData, [symbol]: tickData });
-          io.emit('market_tick', { [pair]: tickData, [symbol]: tickData });
+          // Removed market_tick emission - crypto ticks should only go to crypto_tick event
+          // This prevents frontend from receiving crypto ticks on market_tick event
+          // market_tick is reserved for NIFTY/Indian market data from Zerodha
         }
 
         TradingService.processPendingOrdersForUsdSpotTick({

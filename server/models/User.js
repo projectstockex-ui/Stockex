@@ -617,16 +617,33 @@ const userSchema = new mongoose.Schema({
     type: Map,
     of: {
       enabled: { type: Boolean, default: false },
-      maxExchangeLots: { type: Number, default: 100 },
       commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
+      /** Commission for PER_CRORE (₹ per crore or % of turnover) - used when commissionType is PER_CRORE */
+      commission: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },
-      orderLots: { type: Number, default: 10 },
+      // Nested lot settings for separate lot mode configuration
+      lotSettings: {
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxLots: { type: Number, default: 50 },
+        minLots: { type: Number, default: 1 },
+        breakupLots: { type: Number, default: 0 },
+        notificationPercent: { type: Number, default: 70 },
+        autosquarePercent: { type: Number, default: 90 }
+      },
+      // Nested quantity mode settings for separate quantity mode configuration
+      quantityModeSettings: {
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxQuantity: { type: Number, default: 1000 },
+        minQuantity: { type: Number, default: 1 },
+        breakupQuantity: { type: Number, default: 0 }
+      },
       quantitySettings: {
-        breakupQuantity: { type: Number, default: 0 },
-        maxBid: { type: Number, default: 0 },
+        breakupQuantity: { type: Number, default: 0 }
       },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
@@ -659,8 +676,7 @@ const userSchema = new mongoose.Schema({
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 }, // Number of strikes up/down from ATM
-        maxExchangeLots: { type: Number, default: 100 }
+        strikeSelection: { type: Number, default: 50 } // Number of strikes up/down from ATM
       },
       // Option Sell Settings
       optionSell: {
@@ -668,8 +684,7 @@ const userSchema = new mongoose.Schema({
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 }, // Number of strikes up/down from ATM
-        maxExchangeLots: { type: Number, default: 100 }
+        strikeSelection: { type: Number, default: 50 } // Number of strikes up/down from ATM
       }
     },
     default: {} // Inherited from parent admin at creation time
@@ -780,6 +795,20 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Admin',
     default: null
+  },
+
+  // Hierarchical Wallet Permissions
+  // Stores which parent users have what level of access to this user's wallet
+  walletPermissions: {
+    type: Map,
+    of: {
+      parentUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      parentType: { type: String, enum: ['SUPERADMIN', 'ADMIN', 'BROKER', 'SUB_BROKER', 'CLIENT'], default: 'ADMIN' },
+      canDeposit: { type: Boolean, default: false },
+      canWithdraw: { type: Boolean, default: false },
+      canView: { type: Boolean, default: true }
+    },
+    default: {}
   }
 }, { timestamps: true });
 

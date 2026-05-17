@@ -57,8 +57,11 @@ class AdminSegmentSettingsController {
 
       // Filter segment permissions based on parent's enabled segments
       // If parent has disabled a segment, child cannot enable it
+      // Skip filtering if admin is viewing their own settings
       let filteredSegmentPermissions = segmentPermissions;
-      if (req.admin.role !== 'SUPER_ADMIN' && req.admin.parentId) {
+      const isViewingOwnSettings = req.admin._id.toString() === targetAdmin._id.toString();
+      
+      if (req.admin.role !== 'SUPER_ADMIN' && req.admin.parentId && !isViewingOwnSettings) {
         console.log('[Segment Settings GET] Checking parent permissions...');
         const parentAdmin = await Admin.findById(req.admin.parentId).select('name segmentPermissions');
         if (parentAdmin) {
@@ -104,7 +107,11 @@ class AdminSegmentSettingsController {
           console.log('[Segment Settings GET] Parent admin not found');
         }
       } else {
-        console.log('[Segment Settings GET] Skipping filtering - SuperAdmin or no parent');
+        if (isViewingOwnSettings) {
+          console.log('[Segment Settings GET] Skipping filtering - viewing own settings');
+        } else {
+          console.log('[Segment Settings GET] Skipping filtering - SuperAdmin or no parent');
+        }
       }
 
       // Also return adminSegmentDefaults if available from system settings
@@ -153,6 +160,7 @@ class AdminSegmentSettingsController {
       }
 
       console.log('[AdminSegmentSettings] Fetched latest data for current admin:', currentAdmin.name);
+      console.log('[AdminSegmentSettings] Current admin segmentPermissions:', JSON.stringify(currentAdmin.segmentPermissions, null, 2));
 
       const childAdmin = await Admin.findById(req.params.id);
       if (!childAdmin) {
@@ -201,24 +209,44 @@ class AdminSegmentSettingsController {
 
           const parentSeg = parentSegPerms[segName] || {};
 
+          // EXPLICIT CHECK: If trying to enable a segment, check if child admin's direct parent has it enabled
+          if (segData.enabled === true) {
+            // Check if child admin's direct parent has the segment enabled
+            const childDirectParent = await Admin.findById(childAdmin.parentId).select('segmentPermissions name role');
+            if (childDirectParent) {
+              const childParentSegPerms = childDirectParent.segmentPermissions instanceof Map
+                ? Object.fromEntries(childDirectParent.segmentPermissions)
+                : (childDirectParent.segmentPermissions || {});
+              const parentHasSegment = childParentSegPerms[segName]?.enabled ?? false;
+              console.log('[AdminSegmentSettings] Checking if child parent admin has', segName, 'enabled:', parentHasSegment);
+              console.log('[AdminSegmentSettings] Child parent admin:', childDirectParent.name, 'has segments:', Object.keys(childParentSegPerms).filter(k => childParentSegPerms[k]?.enabled));
+              if (!parentHasSegment && childDirectParent.role !== 'SUPER_ADMIN') {
+                console.log('[AdminSegmentSettings] BLOCKING:', segName, '- child parent admin does not have this segment');
+                return res.status(400).json({
+                  message: `Cannot enable ${segName} - child admin's direct parent does not have this segment enabled. Contact your broker.`
+                });
+              }
+            }
+          }
+
           // Validate enabled field using hierarchy validation service
           const segmentValidation = await hierarchyValidationService.validateSegmentPermission(currentAdmin, segName, segData.enabled);
           if (!segmentValidation.allowed) {
             return res.status(400).json({ message: segmentValidation.message });
           }
 
-          // Validate leverage fields
-          const intraday = segData.exposureIntraday || segData.intradayLeverage;
-          const parentIntraday = parentSeg.exposureIntraday || parentSeg.intradayLeverage || parentMaxLeverage;
-          if (intraday && intraday > parentIntraday && currentAdmin.role !== 'SUPER_ADMIN') {
+          // Validate leverage fields - check both old and new field names including nested lotSettings
+          const intraday = segData.lotSettings?.intradayLeverage ?? segData.exposureIntraday ?? segData.intradayLeverage;
+          const parentIntraday = parentSeg.lotSettings?.intradayLeverage ?? parentSeg.exposureIntraday ?? parentSeg.intradayLeverage ?? parentMaxLeverage;
+          if (intraday !== undefined && intraday !== null && parentIntraday !== undefined && parentIntraday !== null && intraday > parentIntraday && currentAdmin.role !== 'SUPER_ADMIN') {
             return res.status(400).json({
               message: `Unable to set the leverage more than parent hierarchy. ${segName} Intraday (${intraday}x) exceeds parent's limit (${parentIntraday}x)`
             });
           }
 
-          const carryForward = segData.exposureCarryForward || segData.carryForwardLeverage;
-          const parentCarryForward = parentSeg.exposureCarryForward || parentSeg.carryForwardLeverage || parentMaxLeverage;
-          if (carryForward && carryForward > parentCarryForward && currentAdmin.role !== 'SUPER_ADMIN') {
+          const carryForward = segData.lotSettings?.carryForwardLeverage ?? segData.exposureCarryForward ?? segData.carryForwardLeverage;
+          const parentCarryForward = parentSeg.lotSettings?.carryForwardLeverage ?? parentSeg.exposureCarryForward ?? parentSeg.carryForwardLeverage ?? parentMaxLeverage;
+          if (carryForward !== undefined && carryForward !== null && parentCarryForward !== undefined && parentCarryForward !== null && carryForward > parentCarryForward && currentAdmin.role !== 'SUPER_ADMIN') {
             return res.status(400).json({
               message: `Unable to set the leverage more than parent hierarchy. ${segName} Carry Forward (${carryForward}x) exceeds parent's limit (${parentCarryForward}x)`
             });
@@ -238,6 +266,24 @@ class AdminSegmentSettingsController {
             if (segData.maxExchangeLots > parentSeg.maxExchangeLots) {
               return res.status(400).json({
                 message: `Unable to set maxExchangeLots more than parent hierarchy. ${segName} maxExchangeLots (${segData.maxExchangeLots}) exceeds parent's limit (${parentSeg.maxExchangeLots})`
+              });
+            }
+          }
+
+          // Validate minExchangeQty - child cannot set lower than parent (must be >= parent)
+          if (segData.minExchangeQty !== undefined && parentSeg.minExchangeQty !== undefined && currentAdmin.role !== 'SUPER_ADMIN') {
+            if (segData.minExchangeQty < parentSeg.minExchangeQty) {
+              return res.status(400).json({
+                message: `Unable to set minExchangeQty lower than parent hierarchy. ${segName} minExchangeQty (${segData.minExchangeQty}) cannot be lower than parent's minimum (${parentSeg.minExchangeQty})`
+              });
+            }
+          }
+
+          // Validate maxExchangeQty - child cannot set higher than parent (must be <= parent)
+          if (segData.maxExchangeQty !== undefined && parentSeg.maxExchangeQty !== undefined && currentAdmin.role !== 'SUPER_ADMIN') {
+            if (segData.maxExchangeQty > parentSeg.maxExchangeQty) {
+              return res.status(400).json({
+                message: `Unable to set maxExchangeQty more than parent hierarchy. ${segName} maxExchangeQty (${segData.maxExchangeQty}) exceeds parent's limit (${parentSeg.maxExchangeQty})`
               });
             }
           }
@@ -269,14 +315,6 @@ class AdminSegmentSettingsController {
             }
           }
 
-          // Validate commissionLot
-          if (segData.commissionLot !== undefined && parentSeg.commissionLot !== undefined && currentAdmin.role !== 'SUPER_ADMIN') {
-            if (segData.commissionLot > parentSeg.commissionLot) {
-              return res.status(400).json({
-                message: `Unable to set commissionLot more than parent hierarchy. ${segName} commissionLot (${segData.commissionLot}) exceeds parent's limit (${parentSeg.commissionLot})`
-              });
-            }
-          }
         }
 
         if (currentAdmin.role === 'BROKER' || currentAdmin.role === 'SUB_BROKER') {
@@ -289,6 +327,38 @@ class AdminSegmentSettingsController {
 
         const { alignSegmentDefaultsMap } = await import('../utils/commissionTypeUnit.js');
         const aligned = alignSegmentDefaultsMap(plain);
+
+        // Preserve new leverage and quantity limit fields that might be stripped by alignment
+        for (const [segName, segData] of Object.entries(plain)) {
+          if (!segData || typeof segData !== 'object') continue;
+          if (segData.intradayLeverage !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].intradayLeverage = segData.intradayLeverage;
+          }
+          if (segData.carryForwardLeverage !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].carryForwardLeverage = segData.carryForwardLeverage;
+          }
+          if (segData.maxIntradayQty !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].maxIntradayQty = segData.maxIntradayQty;
+          }
+          if (segData.maxCarryQty !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].maxCarryQty = segData.maxCarryQty;
+          }
+          // Preserve lotSettings
+          if (segData.lotSettings !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].lotSettings = segData.lotSettings;
+          }
+          // Preserve quantityModeSettings
+          if (segData.quantityModeSettings !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].quantityModeSettings = segData.quantityModeSettings;
+          }
+        }
+
         updateFields.segmentPermissions = aligned;
       }
 

@@ -12,6 +12,7 @@ import {
 // Import page components
 import UserHome from './UserHome';
 import UserAccounts from './UserAccounts';
+import UserTradingTransactions from './UserTradingTransactions';
 
 // Orders Component
 const UserOrders = () => {
@@ -1661,6 +1662,7 @@ const UserDashboardNew = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   
   // Demo account states
   const [demoInfo, setDemoInfo] = useState(null);
@@ -1916,13 +1918,47 @@ const UserDashboardNew = () => {
             </button>
 
             {/* User Menu */}
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center text-sm font-bold">
-                {user?.fullName?.[0] || user?.username?.[0] || 'U'}
-              </div>
-              <button onClick={handleLogout} className="text-gray-400 hover:text-red-400">
-                <LogOut size={18} />
+            <div className="relative">
+              <button 
+                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                className="flex items-center gap-2"
+              >
+                <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center text-sm font-bold">
+                  {user?.fullName?.[0] || user?.username?.[0] || 'U'}
+                </div>
+                <ChevronDown size={16} className="text-gray-400" />
               </button>
+
+              {/* Dropdown Menu */}
+              {userMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-dark-800 border border-dark-600 rounded-lg shadow-lg z-50">
+                  <div className="py-1">
+                    <Link
+                      to="/user/trading"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2 text-gray-300 hover:bg-dark-700 hover:text-white"
+                    >
+                      <TrendingUp size={18} />
+                      <span>Pay Trading</span>
+                    </Link>
+                    <Link
+                      to="/user/transactions"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2 text-gray-300 hover:bg-dark-700 hover:text-white"
+                    >
+                      <Receipt size={18} />
+                      <span>Transactions</span>
+                    </Link>
+                    <button
+                      onClick={() => { setUserMenuOpen(false); handleLogout(); }}
+                      className="flex items-center gap-3 px-4 py-2 text-red-400 hover:bg-dark-700 w-full text-left"
+                    >
+                      <LogOut size={18} />
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -2005,6 +2041,7 @@ const UserDashboardNew = () => {
             <Route path="referral" element={<UserReferral />} />
             <Route path="profile" element={<UserProfile />} />
             <Route path="support" element={<UserSupport />} />
+            <Route path="trading" element={<UserTradingTransactions />} />
             <Route path="*" element={<UserHome />} />
           </Routes>
         </main>
@@ -2248,9 +2285,16 @@ const UserDashboardNew = () => {
                     const displayText = broker.role === 'SUB_BROKER' 
                       ? `${broker.adminCode}${broker.parentCode ? ` (${broker.parentCode})` : ''} - SUB_BROKER`
                       : `${broker.adminCode} - ${broker.role}`;
+                    const ratingStars = '★'.repeat(broker.rating || 5) + '☆'.repeat(5 - (broker.rating || 5));
+                    const extraInfo = [];
+                    if (broker.cityCode) {
+                      extraInfo.push(`${broker.cityCode}${broker.cityName ? ` - ${broker.cityName}` : ''}`);
+                    }
+                    if (broker.yearsOfExperience > 0) extraInfo.push(`${broker.yearsOfExperience} yrs`);
+                    const extraInfoStr = extraInfo.length > 0 ? ` | ${extraInfo.join(' • ')}` : '';
                     return (
-                      <option key={broker._id} value={broker.adminCode}>
-                        {displayText}
+                      <option key={broker._id} value={broker._id}>
+                        {displayText} {ratingStars}{extraInfoStr}
                       </option>
                     );
                   })}

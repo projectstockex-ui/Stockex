@@ -41,20 +41,20 @@ export async function btcJackpotAutoTick() {
     if (!jackpotOn && !numberOn) return;
 
     const nowSec = istSecondsNow();
-    let shouldRun = false;
-    /** Log label only */
-    let scheduleLabel = '';
-    if (numberOn && jackpotOn) {
-      scheduleLabel = gcN.resultTime || '23:30';
-      shouldRun = nowSec >= parseTimeToSecIST(scheduleLabel);
-    } else if (numberOn && !jackpotOn) {
-      scheduleLabel = gcN.resultTime || '23:30';
-      shouldRun = nowSec >= parseTimeToSecIST(scheduleLabel);
-    } else if (jackpotOn && !numberOn) {
-      const endInc = biddingEndInclusiveSecondsFromConfig(gcJ?.biddingEndTime || '23:29');
-      shouldRun = nowSec > endInc;
-      scheduleLabel = `after bidding end (${gcJ?.biddingEndTime || '23:29'} IST)`;
-    }
+    // Check each game's trigger time independently
+    const jackpotEndInc = jackpotOn
+      ? biddingEndInclusiveSecondsFromConfig(gcJ?.biddingEndTime || '23:29')
+      : Infinity;
+    const numberResultSec = numberOn
+      ? parseTimeToSecIST(gcN.resultTime || '23:30')
+      : Infinity;
+    const jackpotShouldRun = jackpotOn && nowSec > jackpotEndInc;
+    const numberShouldRun = numberOn && nowSec >= numberResultSec;
+    const shouldRun = jackpotShouldRun || numberShouldRun;
+    const scheduleLabel = [
+      jackpotShouldRun ? `jackpot end (${gcJ?.biddingEndTime || '23:29'} IST)` : '',
+      numberShouldRun ? `number result (${gcN?.resultTime || '23:30'} IST)` : '',
+    ].filter(Boolean).join(' + ') || 'waiting';
     if (!shouldRun) return;
 
     const today = getTodayISTString();
@@ -114,26 +114,28 @@ export async function btcJackpotAutoTick() {
       return;
     }
 
-    const pendingN2 = numberOn
-      ? await BtcNumberBet.countDocuments({ betDate: today, status: 'pending' })
-      : 0;
-    if (numberOn && pendingN2 > 0) {
-      try {
-        const out = await declareBtcNumberResultForDate({
-          date: today,
-          closingPrice: fresh.lockedBtcPrice,
-        });
-        console.log(
-          `[btcNumber] auto-declared ${today} @ $${Number(fresh.lockedBtcPrice).toFixed(2)}: ${out.summary?.winners ?? 0}W / ${out.summary?.losers ?? 0}L`
-        );
-      } catch (e) {
-        if (!String(e?.message || '').includes('No pending')) {
-          console.warn('[btcNumber] declare:', e?.message || e);
+    // Declare BTC Number only if its own resultTime has passed
+    if (numberShouldRun) {
+      const pendingN2 = await BtcNumberBet.countDocuments({ betDate: today, status: 'pending' });
+      if (pendingN2 > 0) {
+        try {
+          const out = await declareBtcNumberResultForDate({
+            date: today,
+            closingPrice: fresh.lockedBtcPrice,
+          });
+          console.log(
+            `[btcNumber] auto-declared ${today} @ $${Number(fresh.lockedBtcPrice).toFixed(2)}: ${out.summary?.winners ?? 0}W / ${out.summary?.losers ?? 0}L`
+          );
+        } catch (e) {
+          if (!String(e?.message || '').includes('No pending')) {
+            console.warn('[btcNumber] declare:', e?.message || e);
+          }
         }
       }
     }
 
-    if (jackpotOn && !fresh.resultDeclared) {
+    // Declare BTC Jackpot only if its own biddingEndTime has passed
+    if (jackpotShouldRun && !fresh.resultDeclared) {
       try {
         const out = await declareBtcJackpotForDate(today);
         console.log(

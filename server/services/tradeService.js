@@ -6,7 +6,6 @@ import Charges from '../models/Charges.js';
 import WalletLedger from '../models/WalletLedger.js';
 import Instrument from '../models/Instrument.js';
 import SystemSettings from '../models/SystemSettings.js';
-import { getUsdInrRate } from '../utils/usdInr.js';
 import { orderIsUsdSpot, orderIsForex } from '../utils/tradingUsdSpot.js';
 import {
   isBinanceCryptoOrder,
@@ -20,6 +19,7 @@ import { resolvePattiSplitForTrade, splitByChildPercent } from './pattiTradeSett
 import { 
   trackHierarchyEarnings 
 } from './superAdminEarningsService.js';
+import brokerageHierarchySharingService from './brokerageHierarchySharingService.js';
 
 /**
  * Checks if any admin in the hierarchy chain is marked as a franchise root.
@@ -152,17 +152,76 @@ class TradeService {
     const segU = String(segmentRaw || '').toUpperCase();
     if (segU !== 'CRYPTOFUT' && segU !== 'CRYPTOOPT') return;
 
-    let start = (segmentSettings?.cryptoStartTime || '').toString().trim();
-    if (!start && user?.creatorRole === 'SUPER_ADMIN') {
+    // Resolve crypto timing from hierarchy: Super Admin's settings take precedence
+    // Walk up: segmentSettings → user's admin → hierarchy path → system defaults
+    let start = '';
+    let close = '';
+
+    // 1. Try to get from the Super Admin at the top of this user's hierarchy
+    const superAdmin = await this._getSuperAdminForUser(user);
+    if (superAdmin) {
+      const saSegPerms = superAdmin.segmentPermissions instanceof Map
+        ? superAdmin.segmentPermissions.get(segU)
+        : superAdmin.segmentPermissions?.[segU];
+      const saSlice = saSegPerms && typeof saSegPerms.toObject === 'function' ? saSegPerms.toObject() : saSegPerms;
+      if (saSlice) {
+        start = (saSlice.cryptoStartTime || '').toString().trim();
+        close = (saSlice.cryptoClosingTime || '').toString().trim();
+      }
+    }
+
+    // 2. Fallback to system defaults if Super Admin hasn't set them
+    if (!start && !close) {
       const sys = await SystemSettings.getSettings();
       const m = this._segmentMapPlain(sys.adminSegmentDefaults);
       const def = m[segU];
-      if (def) start = (def.cryptoStartTime || '').toString().trim();
+      if (def) {
+        start = (def.cryptoStartTime || '').toString().trim();
+        close = (def.cryptoClosingTime || '').toString().trim();
+      }
     }
-    if (!start) return;
-    if (!this._isNowAtOrAfterIstClock(start)) {
+
+    // Check start time gate
+    if (start && !this._isNowAtOrAfterIstClock(start)) {
       throw new Error(`${segU} trading opens at ${start} IST (crypto start time).`);
     }
+
+    // Check end time gate
+    if (close && this._isNowAtOrAfterIstClock(close)) {
+      throw new Error(`${segU} trading closed at ${close} IST (crypto session end).`);
+    }
+  }
+
+  /** Walk up the hierarchy to find the Super Admin for a given user. */
+  static async _getSuperAdminForUser(user) {
+    const Admin = (await import('../models/Admin.js')).default;
+
+    // If user has hierarchyPath, the first entry is typically the Super Admin
+    if (user.hierarchyPath && user.hierarchyPath.length > 0) {
+      const topId = user.hierarchyPath[0];
+      const top = await Admin.findById(topId).lean();
+      if (top && top.role === 'SUPER_ADMIN') return top;
+    }
+
+    // Walk up via adminCode → createdBy chain
+    let currentAdminCode = user.adminCode;
+    const visited = new Set();
+    while (currentAdminCode && !visited.has(currentAdminCode)) {
+      visited.add(currentAdminCode);
+      const adm = await Admin.findOne({ adminCode: currentAdminCode }).lean();
+      if (!adm) break;
+      if (adm.role === 'SUPER_ADMIN') return adm;
+      // Move up: find the admin who created this one
+      if (adm.createdBy) {
+        const parent = await Admin.findById(adm.createdBy).lean();
+        if (!parent) break;
+        if (parent.role === 'SUPER_ADMIN') return parent;
+        currentAdminCode = parent.adminCode;
+      } else {
+        break;
+      }
+    }
+    return null;
   }
   
   // Calculate required margin for a trade
@@ -175,11 +234,16 @@ class TradeService {
     const effectiveLotSize = isMcx ? 1 : lotSize;
     const notionalValue = price * quantity * effectiveLotSize;
 
+    console.log(`[calculateMargin] price: ${price}, quantity: ${quantity}, lotSize: ${lotSize}, effectiveLotSize: ${effectiveLotSize}, isMcx: ${isMcx}, leverage: ${leverage}, productType: ${productType}`);
+    console.log(`[calculateMargin] notionalValue: ${notionalValue}`);
+
     if (productType === 'CNC') {
       return notionalValue; // Full amount for delivery
     }
 
-    return notionalValue / leverage;
+    const margin = notionalValue / leverage;
+    console.log(`[calculateMargin] calculated margin: ${margin}`);
+    return margin;
   }
   
   // Check if trade segment is MCX (uses separate MCX wallet)
@@ -203,25 +267,56 @@ class TradeService {
     if (isMcx) {
       const mcxBalance = user.mcxWallet?.balance || 0;
       const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      availableMargin = mcxBalance - mcxUsedMargin;
+      // MCX uses leverage-based calculation
+      const mcxLeverage = await this.getUserLeverageForSegment(user, segment);
+      availableMargin = (mcxBalance * mcxLeverage) - mcxUsedMargin;
       walletType = 'MCX';
     } else {
       const walletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
-      availableMargin = walletBalance - user.wallet.usedMargin + (user.wallet.collateralValue || 0);
+      const usedMargin = user.wallet?.usedMargin || 0;
+      const collateralValue = user.wallet?.collateralValue || 0;
+      // Get user's leverage for this segment
+      const leverage = await this.getUserLeverageForSegment(user, segment);
+      // Available margin = (balance * leverage) - usedMargin + collateralValue
+      availableMargin = (walletBalance * leverage) - usedMargin + collateralValue;
       walletType = 'Main';
     }
     
     if (availableMargin < requiredMargin) {
-      throw new Error(`Insufficient margin in ${walletType} Account. Required: ₹${requiredMargin.toFixed(2)}, Available: ₹${availableMargin.toFixed(2)}`);
+      throw new Error(`Insufficient margin in ${walletType} Account. Required: ${requiredMargin.toFixed(2)}, Available: ${availableMargin.toFixed(2)}`);
     }
     
     return { user, availableMargin, isMcx };
+  }
+
+  // Get user's leverage for a segment (helper function)
+  static async getUserLeverageForSegment(user, segment) {
+    try {
+      const segUpper = segment?.toUpperCase() || 'NSEFUT';
+      const userSegmentSettings = user.segmentPermissions?.[segUpper];
+      
+      // Priority: lotSettings.intradayLeverage > intradayLeverage > exposureIntraday > default
+      let leverage = 1;
+      
+      if (userSegmentSettings?.lotSettings?.intradayLeverage) {
+        leverage = userSegmentSettings.lotSettings.intradayLeverage;
+      } else if (userSegmentSettings?.intradayLeverage) {
+        leverage = userSegmentSettings.intradayLeverage;
+      } else if (userSegmentSettings?.exposureIntraday) {
+        leverage = userSegmentSettings.exposureIntraday;
+      }
+      
+      return leverage > 0 ? leverage : 1;
+    } catch (error) {
+      console.error('Error getting user leverage:', error);
+      return 1;
+    }
   }
   
   /** Lowest scaffold when SystemSettings + overlays omit keys. */
   static _SEGMENT_MERGE_FALLBACK = {
     enabled: true,
-    quantitySettings: { breakupQuantity: 0, maxBid: 0 },
+    quantitySettings: { breakupQuantity: 0, maxBid: 0, minExchangeQty: 0, maxExchangeQty: 0 },
     maxExchangeLots: 1000,
     commissionType: 'PER_LOT',
     commissionLot: 0,
@@ -287,6 +382,8 @@ class TradeService {
       segmentKey = 'NSEFUT';
     } else if (segmentUpper === 'FOREX') {
       segmentKey = isOptions ? 'FOREXOPT' : 'FOREXFUT';
+    } else if (segmentUpper === 'BINANCE' || segmentUpper === 'CRYPTO') {
+      segmentKey = isOptions ? 'CRYPTOOPT' : 'CRYPTOFUT';
     }
     return String(segmentKey || segmentUpper || '');
   }
@@ -401,6 +498,24 @@ class TradeService {
           m[k] = { ...(m[k] || {}), ...vv };
           continue;
         }
+        if (k === 'quantityModeSettings' && vv && typeof vv === 'object') {
+          const base = m[k] && typeof m[k] === 'object' ? { ...m[k] } : {};
+          // Only overwrite leverage fields if explicitly > 1 (schema default is 1)
+          for (const [qk, qv] of Object.entries(vv)) {
+            if ((qk === 'intradayLeverage' || qk === 'carryForwardLeverage') && Number(qv) <= 1) continue;
+            if (qv !== undefined) base[qk] = qv;
+          }
+          m[k] = base;
+          continue;
+        }
+        if (k === 'lotSettings' && vv && typeof vv === 'object') {
+          m[k] = { ...(m[k] || {}), ...vv };
+          // Map lotSettings.breakupLots to orderLots for backward compatibility
+          if (vv.breakupLots !== undefined) {
+            m.orderLots = vv.breakupLots;
+          }
+          continue;
+        }
         if (vv !== undefined) {
           m[k] = vv;
         }
@@ -434,13 +549,26 @@ class TradeService {
     const hierExplicitArr = TradeService._explicitKeysForSegment(user.admin?.segmentExplicitKeys, segmentKey);
     const userExplicitArr = TradeService._explicitKeysForSegment(user.segmentExplicitKeys, segmentKey);
 
-    return TradeService._mergeSegmentStack(
+    let result = TradeService._mergeSegmentStack(
       systemSlicePlain,
       hierSlice,
       hierExplicitArr,
       userSlice,
       userExplicitArr
     );
+
+    // Fix: Add default settings for crypto segments if not configured
+    const isCrypto = ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(segmentKey || '').toUpperCase());
+    if (isCrypto && (!result || !result.enabled || result.commission === undefined)) {
+      console.log('[getUserSegmentSettings] Adding default settings for crypto segment:', segmentKey);
+      result = result || {};
+      result.enabled = true;
+      result.commission = result.commission || 2000;
+      result.commissionType = result.commissionType || 'PER_CRORE';
+      result.commissionUnit = result.commissionUnit || null;
+    }
+
+    return result;
   }
   
   // Get user's script-specific settings
@@ -667,19 +795,90 @@ class TradeService {
   
   // Calculate brokerage based on user settings with caps enforcement
   static calculateUserBrokerage(segmentSettings, scriptSettings, tradeData, lots, brokerageCaps = null) {
+    console.log('[calculateUserBrokerage] Raw tradeData:', {
+      segment: tradeData.segment,
+      exchange: tradeData.exchange,
+      isCrypto: tradeData.isCrypto,
+      isForex: tradeData.isForex,
+      instrumentType: tradeData.instrumentType
+    });
+    
+    // Infer segment from exchange if not provided
+    if (!tradeData.segment) {
+      if (tradeData.exchange === 'BINANCE' || tradeData.isCrypto) {
+        tradeData.segment = tradeData.instrumentType === 'OPTIONS' ? 'CRYPTOOPT' : 'CRYPTOFUT';
+        console.log('[calculateUserBrokerage] Inferred segment as CRYPTOFUT/CRYPTOOPT');
+      } else if (tradeData.exchange === 'FOREX' || tradeData.isForex) {
+        tradeData.segment = tradeData.instrumentType === 'OPTIONS' ? 'FOREXOPT' : 'FOREXFUT';
+        console.log('[calculateUserBrokerage] Inferred segment as FOREXFUT/FOREXOPT');
+      } else {
+        console.log('[calculateUserBrokerage] Could not infer segment - exchange:', tradeData.exchange, 'isCrypto:', tradeData.isCrypto);
+      }
+    }
+    
+    console.log('[calculateUserBrokerage] Input:', {
+      segment: tradeData.segment,
+      symbol: tradeData.symbol,
+      lots: lots,
+      segmentSettingsEnabled: segmentSettings?.enabled,
+      segmentSettingsBrokerage: segmentSettings?.commission,
+      segmentSettingsCommissionType: segmentSettings?.commissionType,
+      scriptSettingsBrokerage: scriptSettings?.brokerage,
+      brokerageCaps: brokerageCaps
+    });
+
     let brokerage = 0;
     let commissionType = 'PER_LOT'; // Track commission type for cap enforcement
     const isIntraday = tradeData.productType === 'MIS' || tradeData.productType === 'INTRADAY';
     const isOption = tradeData.instrumentType === 'OPTIONS';
     const isOptionBuy = isOption && tradeData.side === 'BUY';
     const isOptionSell = isOption && tradeData.side === 'SELL';
+
+    const isCrypto = tradeData.isCrypto || tradeData.exchange === 'BINANCE' || 
+      ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(tradeData.segment || '').toUpperCase());
+
+    // Fix: Add default brokerageCaps for crypto segments if not provided
+    if (isCrypto && !brokerageCaps) {
+      console.log('[calculateUserBrokerage] Adding default brokerageCaps for crypto segment');
+      brokerageCaps = {
+        perCrore: { min: 0, max: 2000 },
+        perLot: { min: 0, max: 2000 }
+      };
+    }
+
+    // Fix: Add default scriptSettings for crypto segments if not provided
+    if (isCrypto && !scriptSettings) {
+      console.log('[calculateUserBrokerage] Adding default scriptSettings for crypto segment');
+      scriptSettings = {
+        brokerage: {
+          intradayFuture: 2000,
+          carryFuture: 2000,
+          optionBuyIntraday: 2000,
+          optionBuyCarry: 2000,
+          optionSellIntraday: 2000,
+          optionSellCarry: 2000
+        }
+      };
+    }
+    
+    // Fallback for crypto: use default brokerage if segment settings not enabled
+    if (isCrypto && !segmentSettings?.enabled) {
+      console.log('[calculateUserBrokerage] Using default crypto brokerage (segment not enabled)');
+      // Default crypto brokerage: 2000 per lot (as set by Radha)
+      brokerage = 2000 * lots;
+      commissionType = 'PER_LOT';
+    } else if (isCrypto && !segmentSettings?.commission) {
+      console.log('[calculateUserBrokerage] Using default crypto brokerage (commission not set)');
+      brokerage = 2000 * lots;
+      commissionType = 'PER_LOT';
+    }
     
     const price = tradeData.price || tradeData.entryPrice || 0;
     const lotSize = tradeData.lotSize || 1;
     const isCryptoTurnover =
       tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(tradeData.segment || '').toUpperCase()) || tradeData.isForex || tradeData.exchange === 'FOREX';
-    const turnover = price * lots * lotSize * (isCryptoTurnover ? getUsdInrRate() : 1);
+    const turnover = price * lots * lotSize;
     const ONE_CRORE = 10_000_000;
 
     /**
@@ -725,7 +924,10 @@ class TradeService {
         brokerage = calcBrokerage(commType, commission, os.commissionUnit);
       } else {
         const commType = segmentSettings?.commissionType || 'PER_LOT';
-        const commission = segmentSettings?.commissionLot || 0;
+        // Use commission field for PER_CRORE, commissionLot for PER_LOT/PER_QUANTITY/PER_TRADE
+        const commission = commType === 'PER_CRORE' 
+          ? (segmentSettings?.commission || 0)
+          : (segmentSettings?.commissionLot || 0);
         brokerage = calcBrokerage(commType, commission, segmentSettings?.commissionUnit);
       }
     }
@@ -759,6 +961,13 @@ class TradeService {
       }
     }
     
+    console.log('[calculateUserBrokerage] Output:', {
+      finalBrokerage: brokerage,
+      commissionType: commissionType,
+      turnover: turnover,
+      crores: turnover / 10000000
+    });
+    
     return brokerage;
   }
   
@@ -774,9 +983,7 @@ class TradeService {
     if (Number.isFinite(usdSide) && usdSide > 0) return usdSide;
     const w = Number(segmentSettings?.cryptoSpreadInr);
     if (!Number.isFinite(w) || w <= 0) return 0;
-    const fx = getUsdInrRate();
-    if (!(fx > 0)) return 0;
-    return (w / 2) / fx;
+    return (w / 2);
   }
 
   /**
@@ -795,6 +1002,24 @@ class TradeService {
   
   // Open a new trade
   static async openTrade(tradeData, userId) {
+    // Infer segment from exchange if not provided
+    if (!tradeData.segment) {
+      if (tradeData.exchange === 'BINANCE' || tradeData.isCrypto) {
+        tradeData.segment = tradeData.instrumentType === 'OPTIONS' ? 'CRYPTOOPT' : 'CRYPTOFUT';
+      } else if (tradeData.exchange === 'FOREX' || tradeData.isForex) {
+        tradeData.segment = tradeData.instrumentType === 'OPTIONS' ? 'FOREXOPT' : 'FOREXFUT';
+      }
+    }
+    
+    console.log('[TradeService.openTrade] Segment inference:', {
+      originalSegment: tradeData.segment,
+      exchange: tradeData.exchange,
+      isCrypto: tradeData.isCrypto,
+      isForex: tradeData.isForex,
+      instrumentType: tradeData.instrumentType,
+      finalSegment: tradeData.segment
+    });
+    
     // 1. Check market status (CRYPTO is always open)
     await this.checkMarketOpen(tradeData.segment);
     
@@ -834,8 +1059,17 @@ class TradeService {
     const scriptSettings = this.mergeScriptSettingsWithInstrument(instrumentDoc, rawScriptSettings);
     
     // 4. Validate segment is enabled for user
-    if (!segmentSettings.enabled) {
+    // For crypto/forex, skip enabled check if segmentSettings is null or not explicitly set
+    const isCryptoOrForex = tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
+      ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(tradeData.segment || '').toUpperCase()) ||
+      tradeData.isForex || tradeData.exchange === 'FOREX';
+    if (!isCryptoOrForex && !segmentSettings.enabled) {
       throw new Error(`Trading in ${tradeData.segment} segment is not enabled for your account`);
+    }
+    // For crypto/forex, if segmentSettings exists but is not enabled, still allow trading with default settings
+    if (isCryptoOrForex && (!segmentSettings || !segmentSettings.enabled)) {
+      console.log(`[placeOrder] Crypto/forex segment ${tradeData.segment} not explicitly enabled, using default settings`);
+      // Don't throw error for crypto/forex
     }
 
     await this.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, tradeData.segment);
@@ -977,7 +1211,7 @@ class TradeService {
     }
     
     // 9. Calculate brokerage from user settings with caps from admin + instrument flat charges
-    const marginPrice = (isCrypto || isForex) ? effectiveEntryPrice * getUsdInrRate() : effectiveEntryPrice;
+    const marginPrice = effectiveEntryPrice;
     const tradeValueInrOpen = marginPrice * (tradeData.quantity || 0);
     const baseBrokerage = this.calculateUserBrokerage(
       segmentSettings,
@@ -991,6 +1225,12 @@ class TradeService {
     ) / 100;
     
     // 10. Calculate required margin (USDT / FX quotes; economics in INR)
+    
+    // Check if trade is MCX (uses separate MCX wallet) - calculate before margin calculation
+    const isMcx = this.isMcxTrade(tradeData.segment, tradeData.exchange);
+    
+    console.log(`[TradeService.createTrade] marginPrice: ${marginPrice}, tradeData.quantity: ${tradeData.quantity}, leverage: ${leverage}, isMcx: ${isMcx}, lots: ${lots}`);
+    console.log(`[TradeService.createTrade] scriptSettings.fixedMargin:`, scriptSettings?.fixedMargin);
     
     // Check for fixed margin from script settings
     let requiredMargin;
@@ -1021,8 +1261,9 @@ class TradeService {
       requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, 1, leverage, tradeData.productType, isMcx);
     }
 
+    console.log(`[TradeService.createTrade] Final requiredMargin: ${requiredMargin}`);
+
     // 11. Validate margin - pass segment and exchange for MCX wallet check
-    const isMcx = this.isMcxTrade(tradeData.segment, tradeData.exchange);
     await this.validateMargin(userId, requiredMargin, tradeData.segment, tradeData.exchange);
     
     // 12. Block margin - use MCX wallet for MCX trades
@@ -1080,6 +1321,29 @@ class TradeService {
       commission: brokerage,
       totalCharges: brokerage + (brokerage * 0.18)
     });
+
+    // Process full brokerage distribution to hierarchy on trade open
+    // Distributes brokerage to Radha, Sohan, Roshini, SuperAdmin based on hierarchy
+    console.log('[TradeService] Brokerage distribution check:', {
+      tradeId: trade._id,
+      brokerage: brokerage,
+      admin: admin.name,
+      user: user.userId,
+      adminRole: admin.role
+    });
+    if (brokerage > 0) {
+      setTimeout(async () => {
+        try {
+          console.log('[TradeService] Calling distributeBrokerage for trade:', trade._id, 'amount:', brokerage);
+          await this.distributeBrokerage(trade, brokerage, admin, user);
+          console.log('[TradeService] Brokerage distributed on trade open:', trade._id, brokerage);
+        } catch (error) {
+          console.error('[TradeService] Error processing brokerage distribution on trade open:', error);
+        }
+      }, 1000); // 1 second delay to ensure trade is fully processed
+    } else {
+      console.log('[TradeService] Brokerage is 0, skipping distribution on trade open:', trade._id);
+    }
 
     void import('./marginMonitorService.js').then((m) => m.invalidateMarginOpenTradesCache?.());
 
@@ -1148,13 +1412,11 @@ class TradeService {
       description: `${trade.symbol} ${trade.side} P&L${isMcx ? ' (MCX)' : ''}`
     });
     
-    // Update admin P&L (B_BOOK) — patti split vs parent; brokerage when not prepaid-at-open
-    if (trade.bookType === 'B_BOOK' && admin) {
-      await this.applyBBookAdminPnLSplit(trade, admin, user, trade.adminPnL);
-
-      if (!user.isDemo && (charges.brokerage || 0) > 0) {
-        await this.distributeBrokerageWithPatti(trade, charges.brokerage, admin, user);
-      }
+    // Process full brokerage distribution to hierarchy on trade close
+    // Distributes brokerage to Radha, Sohan, Roshini, SuperAdmin based on hierarchy
+    if (admin && !user.isDemo && (charges.brokerage || 0) > 0) {
+      await this.distributeBrokerageWithPatti(trade, charges.brokerage, admin, user);
+      console.log('[TradeService] Brokerage distributed on trade close:', trade._id, charges.brokerage);
     }
 
     void import('./marginMonitorService.js').then((m) => m.invalidateMarginOpenTradesCache?.());
@@ -1229,13 +1491,18 @@ class TradeService {
     }
   }
 
-  // Distribute brokerage through MLM hierarchy
+  // Distribute brokerage through MLM hierarchy using cascading custom rates
+  // Each admin keeps the difference between their rate and parent's rate
   // Handles cases where hierarchy levels are missing (e.g., user directly under Admin)
   static async distributeBrokerage(trade, totalBrokerage, directAdmin, user) {
     try {
-      // Get system settings for sharing percentages
-      const systemSettings = await SystemSettings.getSettings();
-      const sharing = systemSettings.brokerageSharing || {};
+      console.log('[distributeBrokerage] Starting distribution:', {
+        tradeId: trade._id,
+        totalBrokerage: totalBrokerage,
+        directAdmin: directAdmin.name,
+        directAdminRole: directAdmin.role,
+        userId: user.userId
+      });
 
       // Build hierarchy chain from user up to SuperAdmin
       const hierarchyChain = [];
@@ -1245,108 +1512,45 @@ class TradeService {
           admin: currentAdmin,
           role: currentAdmin.role
         });
+        console.log('[distributeBrokerage] Adding to hierarchy:', {
+          name: currentAdmin.name,
+          role: currentAdmin.role,
+          parentId: currentAdmin.parentId,
+          customRate: currentAdmin.charges?.brokerage || 'not set'
+        });
         if (currentAdmin.role === 'SUPER_ADMIN' || !currentAdmin.parentId) {
           break;
         }
         currentAdmin = await Admin.findById(currentAdmin.parentId);
       }
+      console.log('[distributeBrokerage] Final hierarchy chain:', hierarchyChain.map(h => ({ name: h.admin.name, role: h.role, customRate: h.admin.charges?.brokerage || 'not set' })));
 
-      // If sharing is disabled, give all to direct admin (or Super Admin if employee)
-      if (!sharing.enabled) {
-        const recipient = await resolveHierarchyBrokerageRecipient(
-          directAdmin,
-          Admin,
-          hierarchyChain
-        );
-        if (recipient) {
-          await this.creditBrokerageToAdmin(
-            recipient,
-            totalBrokerage,
-            trade,
-            adminReceivesHierarchyBrokerage(directAdmin)
-              ? 'Full brokerage (sharing disabled)'
-              : 'Full brokerage (sharing disabled; diverted from company employee)'
-          );
-        }
-        return;
-      }
-
-      // Get sharing percentages
-      const superAdminShare = sharing.superAdminShare || 20;
-      const adminShare = sharing.adminShare || 25;
-      const brokerShare = sharing.brokerShare || 25;
-      const subBrokerShare = sharing.subBrokerShare || 30;
+      // Calculate cascading brokerage distribution
+      const distributions = {};
       
-      // Determine which roles exist in hierarchy
-      const hasSubBroker = hierarchyChain.some(h => h.role === 'SUB_BROKER');
-      const hasBroker = hierarchyChain.some(h => h.role === 'BROKER');
-      const hasAdmin = hierarchyChain.some(h => h.role === 'ADMIN');
-      const hasSuperAdmin = hierarchyChain.some(h => h.role === 'SUPER_ADMIN');
-      
-      // Calculate actual distribution based on existing hierarchy
-      // Missing levels' shares go to the next level up
-      let distributions = {};
-      
-      if (sharing.mode === 'CASCADING') {
-        // Cascading mode: each level gets % of remaining
-        let remaining = totalBrokerage;
+      for (let i = 0; i < hierarchyChain.length; i++) {
+        const { admin, role } = hierarchyChain[i];
+        const currentRate = admin.charges?.brokerage || 0;
         
-        if (hasSubBroker) {
-          distributions.SUB_BROKER = remaining * (subBrokerShare / 100);
-          remaining -= distributions.SUB_BROKER;
-        }
-        if (hasBroker) {
-          distributions.BROKER = remaining * (brokerShare / 100);
-          remaining -= distributions.BROKER;
-        }
-        if (hasAdmin) {
-          distributions.ADMIN = remaining * (adminShare / 100);
-          remaining -= distributions.ADMIN;
-        }
-        if (hasSuperAdmin) {
-          distributions.SUPER_ADMIN = remaining; // SuperAdmin gets whatever remains
-        }
-      } else {
-        // Percentage mode: missing level's share cascades UP to the next present level
-        // SubBroker → Broker → Admin → SuperAdmin
-        let sbShare = subBrokerShare;
-        let brShare = brokerShare;
-        let adShare = adminShare;
-        let saShare = superAdminShare;
-        
-        // If no SubBroker, their share goes to Broker (or next up)
-        if (!hasSubBroker) {
-          if (hasBroker) {
-            brShare += sbShare;
-          } else if (hasAdmin) {
-            adShare += sbShare;
-          } else {
-            saShare += sbShare;
-          }
-          sbShare = 0;
+        // Get parent's rate (or 0 if this is Super Admin)
+        let parentRate = 0;
+        if (i < hierarchyChain.length - 1) {
+          const parentAdmin = hierarchyChain[i + 1].admin;
+          parentRate = parentAdmin.charges?.brokerage || 0;
         }
         
-        // If no Broker, their share goes to Admin (or next up)
-        if (!hasBroker) {
-          if (hasAdmin) {
-            adShare += brShare;
-          } else {
-            saShare += brShare;
-          }
-          brShare = 0;
-        }
+        // Calculate brokerage: difference between current rate and parent rate
+        const brokerageAmount = currentRate - parentRate;
         
-        // If no Admin, their share goes to SuperAdmin
-        if (!hasAdmin) {
-          saShare += adShare;
-          adShare = 0;
-        }
+        distributions[role] = brokerageAmount;
         
-        // Calculate actual amounts
-        if (hasSubBroker && sbShare > 0) distributions.SUB_BROKER = totalBrokerage * (sbShare / 100);
-        if (hasBroker && brShare > 0) distributions.BROKER = totalBrokerage * (brShare / 100);
-        if (hasAdmin && adShare > 0) distributions.ADMIN = totalBrokerage * (adShare / 100);
-        if (hasSuperAdmin && saShare > 0) distributions.SUPER_ADMIN = totalBrokerage * (saShare / 100);
+        console.log('[distributeBrokerage] Calculated brokerage for:', {
+          name: admin.name,
+          role,
+          currentRate,
+          parentRate,
+          brokerageAmount
+        });
       }
       
       // Check for franchise root in hierarchy
@@ -1374,7 +1578,7 @@ class TradeService {
           admin,
           amount,
           trade,
-          `${role} share (${((amount / totalBrokerage) * 100).toFixed(1)}%)`
+          `${role} share (₹${amount.toFixed(2)}) - Rate: ₹${admin.charges?.brokerage || 0}/crore`
         );
       }
       
@@ -1418,7 +1622,21 @@ class TradeService {
           console.error('[distributeBrokerage] No Super Admin to credit diverted brokerage');
         }
       }
-      
+
+      // Process brokerage hierarchy sharing for ADMIN role (SuperAdmin ↔ Admin only)
+      if (directAdmin.role === 'ADMIN') {
+        try {
+          const brokerageHierarchySharingService = await import('./brokerageHierarchySharingService.js');
+          await brokerageHierarchySharingService.default.processBrokerageSharing(
+            directAdmin,
+            totalBrokerage,
+            trade._id.toString()
+          );
+        } catch (error) {
+          console.error('[distributeBrokerage] Error in brokerage hierarchy sharing:', error);
+        }
+      }
+
     } catch (error) {
       console.error('Error distributing brokerage:', error);
       const chain = [];
@@ -1442,7 +1660,21 @@ class TradeService {
   
   // Helper to credit brokerage to a single admin
   static async creditBrokerageToAdmin(admin, amount, trade, description) {
-    if (!admin || amount <= 0) return;
+    if (!admin || amount <= 0) {
+      console.log('[creditBrokerageToAdmin] Skipping - admin or amount invalid:', {
+        admin: admin?.name,
+        amount: amount
+      });
+      return;
+    }
+    
+    console.log('[creditBrokerageToAdmin] Crediting brokerage:', {
+      admin: admin.name,
+      role: admin.role,
+      amount: amount,
+      tradeId: trade._id,
+      description: description
+    });
     
     admin.wallet.balance += amount;
     admin.stats.totalBrokerage += amount;
@@ -1458,6 +1690,12 @@ class TradeService {
       balanceAfter: admin.wallet.balance,
       reference: { type: 'Trade', id: trade._id },
       description: `Brokerage from ${trade.tradeId} - ${description}`
+    });
+    
+    console.log('[creditBrokerageToAdmin] Brokerage credited successfully:', {
+      admin: admin.name,
+      amount: amount,
+      newBalance: admin.wallet.balance
     });
   }
   

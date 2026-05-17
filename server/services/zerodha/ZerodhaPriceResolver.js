@@ -97,6 +97,8 @@ export class ZerodhaPriceResolver {
     const liveTick = liveMap?.['256265'] || liveMap?.[256265];
     const wsLtp = toPositiveNumber(liveTick?.ltp);
     const wsClose = toPositiveNumber(liveTick?.close);
+    
+    console.log(' WEBSOCKET DATA - liveTick:', JSON.stringify(liveTick), '| wsLtp:', wsLtp, '| wsClose:', wsClose);
 
     const jackpotLocked = await NiftyJackpotResult.findOne({
       resultDate: todayIst,
@@ -129,11 +131,11 @@ export class ZerodhaPriceResolver {
     const resultClose = toPositiveNumber(latestResult?.closePrice);
 
     const ltpPrice = pickFirstPositive(
-      bracketDayLtp,
-      safeSessionClearing,  // Use last candle close as LTP for Nifty Bracket
+      safeSessionClearing,  // Use session clearing as LTP (last 15m bar close - this is what user wants)
       wsLtp,
       safeKitePrice,
       dbLtp,
+      bracketDayLtp,
       dbClose,
     );
 
@@ -156,7 +158,8 @@ export class ZerodhaPriceResolver {
 
     // Use live Zerodha data - no hardcoded fixes
     console.log(' LIVE DATA - isNseOpen:', isNseOpen);
-    console.log(' LIVE PRICES - ltpPriceFinal:', ltpPriceFinal, '| clearingPriceFinal:', clearingPriceFinal);
+    console.log(' LIVE PRICES - wsLtp:', wsLtp, '| safeKitePrice:', safeKitePrice, '| dbLtp:', dbLtp, '| dbClose:', dbClose, '| safeSessionClearing:', safeSessionClearing);
+    console.log(' CALCULATED - ltpPriceFinal:', ltpPriceFinal, '| clearingPriceFinal:', clearingPriceFinal, '| closedMode:', closedMode);
 
     const selectedPrice = isNseOpen ? ltpPriceFinal : (closedMode === 'ltp' ? ltpPriceFinal : clearingPriceFinal); // Respect closedMode parameter
 

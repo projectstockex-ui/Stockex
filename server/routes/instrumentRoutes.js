@@ -1867,7 +1867,7 @@ router.get('/segments', async (req, res) => {
     }
     
     // Always include all standard segments (even if no instruments exist yet)
-    const standardSegments = ['NSE', 'NSE F&O', 'MCX', 'BSE F&O', 'Currency', 'Crypto'];
+    const standardSegments = ['NSE', 'NSE F&O', 'MCX', 'BSE F&O', 'Currency'];
     for (const seg of standardSegments) {
       if (!segmentMap[seg]) {
         segmentMap[seg] = 0;
@@ -1875,7 +1875,7 @@ router.get('/segments', async (req, res) => {
     }
     
     // Define preferred order
-    const preferredOrder = ['NSE', 'NSE F&O', 'MCX', 'BSE F&O', 'Currency', 'Crypto'];
+    const preferredOrder = ['NSE', 'NSE F&O', 'MCX', 'BSE F&O', 'Currency'];
     
     // Sort by preferred order, then alphabetically
     const result = Object.entries(segmentMap)

@@ -14,6 +14,7 @@
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import { generateToken, generateSessionToken } from '../middleware/auth.js';
+import { sendOTP as sendOTPService, verifyOTP as verifyOTPService } from '../services/otpService.js';
 
 // ==================== USER REGISTRATION ====================
 
@@ -370,5 +371,65 @@ export const getParentInfo = async (req, res) => {
   } catch (error) {
     console.error('[AuthController] Error getting parent info:', error);
     res.status(500).json({ message: 'Failed to get parent information' });
+  }
+};
+
+// ==================== OTP OPERATIONS ====================
+
+/**
+ * Send OTP to phone number
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>}
+ */
+export const sendOTP = async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ message: 'Phone number is required' });
+    }
+
+    // Validate phone format (10 digits)
+    const phoneRegex = /^[0-9]{10}$/;
+    if (!phoneRegex.test(phone)) {
+      return res.status(400).json({ message: 'Invalid phone number. Must be 10 digits.' });
+    }
+
+    // Check if phone already exists
+    const existingUser = await User.findOne({ phone });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Phone number already registered' });
+    }
+
+    // Send OTP using OTP service
+    const result = await sendOTPService(phone);
+    res.json(result);
+  } catch (error) {
+    console.error('[AuthController] Error sending OTP:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * Verify OTP
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>}
+ */
+export const verifyOTP = async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+
+    if (!phone || !otp) {
+      return res.status(400).json({ message: 'Phone and OTP are required' });
+    }
+
+    // Verify OTP using OTP service
+    const result = verifyOTPService(phone, otp);
+    res.json(result);
+  } catch (error) {
+    console.error('[AuthController] Error verifying OTP:', error);
+    res.status(500).json({ message: error.message });
   }
 };

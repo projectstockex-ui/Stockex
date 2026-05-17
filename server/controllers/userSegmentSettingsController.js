@@ -36,7 +36,7 @@ class UserSegmentSettingsController {
       }
 
       // Convert Maps to plain objects
-      const segmentPermissions = user.segmentPermissions instanceof Map
+      let segmentPermissions = user.segmentPermissions instanceof Map
         ? Object.fromEntries(user.segmentPermissions)
         : (user.segmentPermissions || {});
 
@@ -47,6 +47,52 @@ class UserSegmentSettingsController {
       let segmentExplicitKeys = user.segmentExplicitKeys;
       if (segmentExplicitKeys instanceof Map) {
         segmentExplicitKeys = Object.fromEntries(segmentExplicitKeys);
+      }
+
+      // Filter segment permissions based on parent admin's enabled segments
+      // If parent has disabled a segment, child cannot enable it
+      if (user.admin) {
+        const parentAdmin = await Admin.findById(user.admin).select('name segmentPermissions');
+        if (parentAdmin) {
+          const parentSegPerms = parentAdmin.segmentPermissions instanceof Map
+            ? Object.fromEntries(parentAdmin.segmentPermissions)
+            : (parentAdmin.segmentPermissions || {});
+
+          console.log('[UserSegmentSettings GET] Filtering segments based on parent admin permissions');
+          console.log('[UserSegmentSettings GET] Parent:', parentAdmin.name || 'Unknown', 'Parent segments:', Object.keys(parentSegPerms));
+
+          // Filter out segments that parent has disabled
+          const filteredSegmentPermissions = {};
+          for (const [segName, segData] of Object.entries(segmentPermissions)) {
+            const parentSeg = parentSegPerms[segName] || {};
+            const parentSegEnabled = parentSeg.enabled ?? false;
+
+            if (parentSegEnabled) {
+              // Parent has this segment enabled, child can manage it
+              filteredSegmentPermissions[segName] = segData;
+            } else {
+              // Parent has this segment disabled, force it to disabled for child
+              filteredSegmentPermissions[segName] = {
+                ...segData,
+                enabled: false
+              };
+              console.log('[UserSegmentSettings GET] Forced disabled for child:', segName, '- parent has it disabled');
+            }
+          }
+
+          // Also add any segments that parent has but child doesn't
+          for (const [segName, parentSegData] of Object.entries(parentSegPerms)) {
+            if (!filteredSegmentPermissions[segName]) {
+              filteredSegmentPermissions[segName] = {
+                ...parentSegData,
+                enabled: false // Child should explicitly enable if needed
+              };
+            }
+          }
+
+          segmentPermissions = filteredSegmentPermissions;
+          console.log('[UserSegmentSettings GET] Filtered segments:', Object.keys(segmentPermissions));
+        }
       }
 
       res.json({
@@ -128,6 +174,26 @@ class UserSegmentSettingsController {
 
           const parentSeg = parentSegPerms[segName] || {};
 
+          // EXPLICIT CHECK: If trying to enable a segment, check if user's direct parent admin has it enabled
+          if (segData.enabled === true) {
+            // Check if user's direct parent admin has the segment enabled
+            const userDirectParent = await Admin.findById(user.admin).select('segmentPermissions name role');
+            if (userDirectParent) {
+              const userParentSegPerms = userDirectParent.segmentPermissions instanceof Map
+                ? Object.fromEntries(userDirectParent.segmentPermissions)
+                : (userDirectParent.segmentPermissions || {});
+              const parentHasSegment = userParentSegPerms[segName]?.enabled ?? false;
+              console.log('[UserSegmentSettings] Checking if user parent admin has', segName, 'enabled:', parentHasSegment);
+              console.log('[UserSegmentSettings] User parent admin:', userDirectParent.name, 'has segments:', Object.keys(userParentSegPerms).filter(k => userParentSegPerms[k]?.enabled));
+              if (!parentHasSegment && userDirectParent.role !== 'SUPER_ADMIN') {
+                console.log('[UserSegmentSettings] BLOCKING:', segName, '- user parent admin does not have this segment');
+                return res.status(400).json({
+                  message: `Cannot enable ${segName} - user's direct parent admin does not have this segment enabled. Contact your broker.`
+                });
+              }
+            }
+          }
+
           // Validate enabled field using hierarchy validation service
           const segmentValidation = await hierarchyValidationService.validateSegmentPermission(parentAdmin, segName, segData.enabled);
           if (!segmentValidation.allowed) {
@@ -160,30 +226,116 @@ class UserSegmentSettingsController {
             }
           }
 
-          // Validate maxExchangeLots
-          if (segData.maxExchangeLots !== undefined && parentSeg.maxExchangeLots !== undefined && parentAdmin.role !== 'SUPER_ADMIN') {
-            if (segData.maxExchangeLots > parentSeg.maxExchangeLots) {
+          // Validate breakupQuantity (nested under quantitySettings)
+          const userBreakupQty = segData.quantitySettings?.breakupQuantity;
+          const parentBreakupQty = parentSeg.quantitySettings?.breakupQuantity;
+          if (userBreakupQty !== undefined && parentBreakupQty !== undefined && parentAdmin.role !== 'SUPER_ADMIN') {
+            if (userBreakupQty > parentBreakupQty) {
               return res.status(400).json({
-                message: `Unable to set maxExchangeLots more than parent hierarchy. ${segName} maxExchangeLots (${segData.maxExchangeLots}) exceeds parent's limit (${parentSeg.maxExchangeLots})`
+                message: `Unable to set breakupQuantity more than parent hierarchy. ${segName} breakupQuantity (${userBreakupQty}) exceeds parent's limit (${parentBreakupQty})`
               });
             }
           }
 
-          // Validate orderLots
-          if (segData.orderLots !== undefined && parentSeg.orderLots !== undefined && parentAdmin.role !== 'SUPER_ADMIN') {
-            if (segData.orderLots > parentSeg.orderLots) {
-              return res.status(400).json({
-                message: `Unable to set orderLots more than parent hierarchy. ${segName} orderLots (${segData.orderLots}) exceeds parent's limit (${parentSeg.orderLots})`
-              });
+          // Validate nested lotSettings
+          const userLotSettings = segData.lotSettings;
+          const parentLotSettings = parentSeg.lotSettings;
+
+          if (userLotSettings && parentLotSettings && parentAdmin.role !== 'SUPER_ADMIN') {
+            // Validate lotSettings.intradayLeverage
+            if (userLotSettings.intradayLeverage !== undefined && parentLotSettings.intradayLeverage !== undefined) {
+              if (userLotSettings.intradayLeverage > parentLotSettings.intradayLeverage) {
+                return res.status(400).json({
+                  message: `Unable to set lotSettings intradayLeverage more than parent hierarchy. ${segName} intradayLeverage (${userLotSettings.intradayLeverage}x) exceeds parent's limit (${parentLotSettings.intradayLeverage}x)`
+                });
+              }
+            }
+
+            // Validate lotSettings.carryForwardLeverage
+            if (userLotSettings.carryForwardLeverage !== undefined && parentLotSettings.carryForwardLeverage !== undefined) {
+              if (userLotSettings.carryForwardLeverage > parentLotSettings.carryForwardLeverage) {
+                return res.status(400).json({
+                  message: `Unable to set lotSettings carryForwardLeverage more than parent hierarchy. ${segName} carryForwardLeverage (${userLotSettings.carryForwardLeverage}x) exceeds parent's limit (${parentLotSettings.carryForwardLeverage}x)`
+                });
+              }
+            }
+
+            // Validate lotSettings.maxLots
+            if (userLotSettings.maxLots !== undefined && parentLotSettings.maxLots !== undefined) {
+              if (userLotSettings.maxLots > parentLotSettings.maxLots) {
+                return res.status(400).json({
+                  message: `Unable to set lotSettings maxLots more than parent hierarchy. ${segName} maxLots (${userLotSettings.maxLots}) exceeds parent's limit (${parentLotSettings.maxLots})`
+                });
+              }
+            }
+
+            // Validate lotSettings.minLots
+            if (userLotSettings.minLots !== undefined && parentLotSettings.minLots !== undefined) {
+              if (userLotSettings.minLots < parentLotSettings.minLots) {
+                return res.status(400).json({
+                  message: `Unable to set lotSettings minLots less than parent hierarchy. ${segName} minLots (${userLotSettings.minLots}) is less than parent's limit (${parentLotSettings.minLots})`
+                });
+              }
+            }
+
+            // Validate lotSettings.breakupLots
+            if (userLotSettings.breakupLots !== undefined && parentLotSettings.breakupLots !== undefined) {
+              if (userLotSettings.breakupLots > parentLotSettings.breakupLots) {
+                return res.status(400).json({
+                  message: `Unable to set lotSettings breakupLots more than parent hierarchy. ${segName} breakupLots (${userLotSettings.breakupLots}) exceeds parent's limit (${parentLotSettings.breakupLots})`
+                });
+              }
             }
           }
 
-          // Validate commissionLot
-          if (segData.commissionLot !== undefined && parentSeg.commissionLot !== undefined && parentAdmin.role !== 'SUPER_ADMIN') {
-            if (segData.commissionLot > parentSeg.commissionLot) {
-              return res.status(400).json({
-                message: `Unable to set commissionLot more than parent hierarchy. ${segName} commissionLot (${segData.commissionLot}) exceeds parent's limit (${parentSeg.commissionLot})`
-              });
+          // Validate nested quantityModeSettings
+          const userQtySettings = segData.quantityModeSettings;
+          const parentQtySettings = parentSeg.quantityModeSettings;
+
+          if (userQtySettings && parentQtySettings && parentAdmin.role !== 'SUPER_ADMIN') {
+            // Validate quantityModeSettings.intradayLeverage
+            if (userQtySettings.intradayLeverage !== undefined && parentQtySettings.intradayLeverage !== undefined) {
+              if (userQtySettings.intradayLeverage > parentQtySettings.intradayLeverage) {
+                return res.status(400).json({
+                  message: `Unable to set quantityModeSettings intradayLeverage more than parent hierarchy. ${segName} intradayLeverage (${userQtySettings.intradayLeverage}x) exceeds parent's limit (${parentQtySettings.intradayLeverage}x)`
+                });
+              }
+            }
+
+            // Validate quantityModeSettings.carryForwardLeverage
+            if (userQtySettings.carryForwardLeverage !== undefined && parentQtySettings.carryForwardLeverage !== undefined) {
+              if (userQtySettings.carryForwardLeverage > parentQtySettings.carryForwardLeverage) {
+                return res.status(400).json({
+                  message: `Unable to set quantityModeSettings carryForwardLeverage more than parent hierarchy. ${segName} carryForwardLeverage (${userQtySettings.carryForwardLeverage}x) exceeds parent's limit (${parentQtySettings.carryForwardLeverage}x)`
+                });
+              }
+            }
+
+            // Validate quantityModeSettings.maxQuantity
+            if (userQtySettings.maxQuantity !== undefined && parentQtySettings.maxQuantity !== undefined) {
+              if (userQtySettings.maxQuantity > parentQtySettings.maxQuantity) {
+                return res.status(400).json({
+                  message: `Unable to set quantityModeSettings maxQuantity more than parent hierarchy. ${segName} maxQuantity (${userQtySettings.maxQuantity}) exceeds parent's limit (${parentQtySettings.maxQuantity})`
+                });
+              }
+            }
+
+            // Validate quantityModeSettings.minQuantity
+            if (userQtySettings.minQuantity !== undefined && parentQtySettings.minQuantity !== undefined) {
+              if (userQtySettings.minQuantity < parentQtySettings.minQuantity) {
+                return res.status(400).json({
+                  message: `Unable to set quantityModeSettings minQuantity less than parent hierarchy. ${segName} minQuantity (${userQtySettings.minQuantity}) is less than parent's limit (${parentQtySettings.minQuantity})`
+                });
+              }
+            }
+
+            // Validate quantityModeSettings.breakupQuantity
+            if (userQtySettings.breakupQuantity !== undefined && parentQtySettings.breakupQuantity !== undefined) {
+              if (userQtySettings.breakupQuantity > parentQtySettings.breakupQuantity) {
+                return res.status(400).json({
+                  message: `Unable to set quantityModeSettings breakupQuantity more than parent hierarchy. ${segName} breakupQuantity (${userQtySettings.breakupQuantity}) exceeds parent's limit (${parentQtySettings.breakupQuantity})`
+                });
+              }
             }
           }
         }

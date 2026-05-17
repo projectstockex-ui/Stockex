@@ -45,7 +45,9 @@ import {
   registerDemoUser,
   loginUser,
   logoutUser,
-  getParentInfo
+  getParentInfo,
+  sendOTP,
+  verifyOTP
 } from '../controllers/authController.js';
 
 // Profile Controllers
@@ -75,7 +77,10 @@ import {
   getGameLiveActivity,
   getGameRecentWinners,
   getGameStats,
-  getGameHistory
+  getGameHistory,
+  getNiftyJackpotLast5DaysClearing,
+  getNiftyBracketLast5Days,
+  getNiftyJackpotLeaderboard
 } from '../controllers/gamingController.js';
 
 // Notification Controllers
@@ -106,6 +111,9 @@ import {
   getCertifiedBrokers
 } from '../controllers/userController.js';
 
+// Referral Controllers
+import ReferralController from '../controllers/referralController.js';
+
 // ==================== SERVICE IMPORTS ====================
 
 import {
@@ -131,6 +139,7 @@ import {
   addBrokerageDistributionEntries
 } from '../services/gameTransactionSlipService.js';
 import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../utils/istDate.js';
+import { buildNiftyJackpotIstDayQuery } from '../utils/niftyJackpotDayScope.js';
 import {
   sumUpDownSideTicketsInWindow,
   sumBracketSideTicketsInDay,
@@ -162,7 +171,9 @@ import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import UpDownWindowSettlement from '../models/UpDownWindowSettlement.js';
 import WalletLedger from '../models/WalletLedger.js';
+import Trade from '../models/Trade.js';
 import WalletTransferService from '../services/walletTransferService.js';
+import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
 import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 import {
@@ -204,7 +215,6 @@ import {
   validateNiftyUpDownBetPlacement,
   getNiftyUpDownWindowState,
 } from '../../lib/niftyUpDownWindows.js';
-import { sendOTP, verifyOTP } from '../services/otpService.js';
 
 const router = express.Router();
 
@@ -966,7 +976,11 @@ router.get('/wallet', protectUser, async (req, res) => {
     }
     
     const tradingBalance = user.wallet.tradingBalance || 0;
-    const usedMargin = user.wallet.usedMargin || 0;
+    
+    // CRITICAL FIX: Recalculate usedMargin from actual open positions
+    // This ensures usedMargin is always accurate, not stale from database
+    const recalculatedMargin = await recalculateUsedMargin(req.user._id);
+    const usedMargin = recalculatedMargin.wallet;
     
     // Calculate available margin (for trading)
     const availableMargin = tradingBalance 
@@ -1009,23 +1023,23 @@ router.get('/wallet', protectUser, async (req, res) => {
       // Separate MCX Wallet - For MCX Futures and Options trading
       mcxWallet: {
         balance: user.mcxWallet?.balance || 0,
-        usedMargin: user.mcxWallet?.usedMargin || 0,
+        usedMargin: recalculatedMargin.mcxWallet,
         realizedPnL: user.mcxWallet?.realizedPnL || 0,
         unrealizedPnL: user.mcxWallet?.unrealizedPnL || 0,
         todayRealizedPnL: user.mcxWallet?.todayRealizedPnL || 0,
         todayUnrealizedPnL: user.mcxWallet?.todayUnrealizedPnL || 0,
-        availableBalance: (user.mcxWallet?.balance || 0) - (user.mcxWallet?.usedMargin || 0)
+        availableBalance: (user.mcxWallet?.balance || 0) - recalculatedMargin.mcxWallet
       },
       
       // Separate Games Wallet - For fantasy/games trading
       gamesWallet: {
         balance: user.gamesWallet?.balance || 0,
-        usedMargin: user.gamesWallet?.usedMargin || 0,
+        usedMargin: recalculatedMargin.gamesWallet,
         realizedPnL: user.gamesWallet?.realizedPnL || 0,
         unrealizedPnL: user.gamesWallet?.unrealizedPnL || 0,
         todayRealizedPnL: user.gamesWallet?.todayRealizedPnL || 0,
         todayUnrealizedPnL: user.gamesWallet?.todayUnrealizedPnL || 0,
-        availableBalance: (user.gamesWallet?.balance || 0) - (user.gamesWallet?.usedMargin || 0)
+        availableBalance: (user.gamesWallet?.balance || 0) - recalculatedMargin.gamesWallet
       },
       
       // Legacy fields for backward compatibility
@@ -2211,7 +2225,7 @@ router.get('/demo/available-brokers', protectUser, async (req, res) => {
       status: 'ACTIVE',
       role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] }
     })
-    .select('name username adminCode role parentId')
+    .select('name username adminCode role parentId cityCode cityName certificate.rating certificate.yearsOfExperience')
     .populate('parentId', 'adminCode username')
     .sort({ role: 1, name: 1 });
     
@@ -2222,7 +2236,11 @@ router.get('/demo/available-brokers', protectUser, async (req, res) => {
       username: admin.username,
       adminCode: admin.adminCode,
       role: admin.role,
-      parentCode: admin.parentId?.adminCode || null
+      parentCode: admin.parentId?.adminCode || null,
+      cityCode: admin.cityCode || '',
+      cityName: admin.cityName || '',
+      rating: admin.certificate?.rating || 5,
+      yearsOfExperience: admin.certificate?.yearsOfExperience || 0
     }));
     
     res.json(brokersWithParentCode);
@@ -2244,7 +2262,11 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     // Find the admin to assign to
     let admin;
     if (selectedBrokerCode) {
-      admin = await Admin.findOne({ adminCode: selectedBrokerCode, status: 'ACTIVE' });
+      admin = await Admin.findOne({ adminCode: selectedBrokerCode.trim().toUpperCase() });
+      // If not found by adminCode, try searching by username
+      if (!admin) {
+        admin = await Admin.findOne({ username: selectedBrokerCode.trim().toLowerCase() });
+      }
       if (!admin) {
         return res.status(400).json({ message: 'Invalid broker code' });
       }
@@ -2439,6 +2461,24 @@ router.get('/game-settings', protectUser, async (req, res) => {
     const settings = await GameSettings.getSettings();
     const settingsObj = settings.toObject();
     
+    // Filter out games that are enabled globally in GameSettings from the hierarchy denied list
+    // This allows superadmin to enable games globally and override hierarchy deny lists
+    const globalGamesEnabled = settingsObj.gamesEnabled ?? true;
+    const filteredHierarchyDeniedGameKeys = [];
+    
+    if (globalGamesEnabled) {
+      for (const gameKey of hierarchyDeniedGameKeys) {
+        const gameEnabled = settingsObj.games?.[gameKey]?.enabled ?? true;
+        // If game is enabled in GameSettings, don't include it in the denied list
+        if (!gameEnabled) {
+          filteredHierarchyDeniedGameKeys.push(gameKey);
+        }
+      }
+    } else {
+      // If games are globally disabled, keep all games in the denied list
+      filteredHierarchyDeniedGameKeys.push(...hierarchyDeniedGameKeys);
+    }
+    
     // Return only what the frontend needs (no internal/admin fields)
     const games = {};
     if (settingsObj.games) {
@@ -2538,7 +2578,7 @@ router.get('/game-settings', protectUser, async (req, res) => {
         Number.isFinite(Number(settingsObj.gamePositionExpiryGraceSeconds))
           ? Number(settingsObj.gamePositionExpiryGraceSeconds)
           : 3600,
-      hierarchyDeniedGameKeys,
+      hierarchyDeniedGameKeys: filteredHierarchyDeniedGameKeys,
       games,
     });
   } catch (error) {
@@ -5549,243 +5589,7 @@ router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
 
 // Get live leaderboard — each row is one ticket; nearest to reference, then earlier bid time.
 // Before result: reference = live NIFTY spot. After declare: reference = locked close (same as settlement).
-router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
-  try {
-    const date = req.query.date || getTodayIST();
-    const nowIstParts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Kolkata',
-      weekday: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    }).formatToParts(new Date());
-    const part = (t) => nowIstParts.find((p) => p.type === t)?.value;
-    const weekday = String(part('weekday') || '');
-    const secNow =
-      Number(part('hour') || 0) * 3600 +
-      Number(part('minute') || 0) * 60 +
-      Number(part('second') || 0);
-    const isWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday);
-    const isNseOpen = isWeekday && secNow >= 33300 && secNow < 55800;
-
-    const rawBids = await NiftyJackpotBid.find(buildNiftyJackpotIstDayQuery(date))
-      .populate('user', 'name username')
-      .limit(800);
-
-    const jackpotResultDoc = await NiftyJackpotResult.findOne({ resultDate: date })
-      .select('resultDeclared lockedPrice')
-      .lean();
-    const lockedPriceNum =
-      jackpotResultDoc?.lockedPrice != null && Number.isFinite(Number(jackpotResultDoc.lockedPrice))
-        ? Number(jackpotResultDoc.lockedPrice)
-        : null;
-    const resultDeclared = !!jackpotResultDoc?.resultDeclared;
-
-    let referenceSpot = null;
-    if (isNseOpen) {
-      referenceSpot =
-        req.query.spot != null && req.query.spot !== '' && Number.isFinite(Number(req.query.spot))
-          ? Number(req.query.spot)
-          : await resolveNiftyJackpotSpotPrice();
-    } else {
-      const clearing = await fetchNifty50SessionClearing15mCached();
-      referenceSpot =
-        clearing?.close != null && Number.isFinite(Number(clearing.close)) && Number(clearing.close) > 0
-          ? Number(clearing.close)
-          : await resolveNiftyJackpotSpotPrice();
-    }
-
-    // Fallback: if referenceSpot is still null, use a default value to ensure ranking works
-    if (referenceSpot == null || !Number.isFinite(Number(referenceSpot)) || Number(referenceSpot) <= 0) {
-      console.warn('[nifty-jackpot/leaderboard] No valid spot price resolved, using fallback');
-    }
-
-    const bidTimeMs = (b) => {
-      if (b?.createdAt) return new Date(b.createdAt).getTime();
-      if (b?._id?.getTimestamp?.()) return b._id.getTimestamp().getTime();
-      return 0;
-    };
-    const validBidPrice = rawBids.find(
-      (b) => b?.niftyPriceAtBid != null && Number.isFinite(Number(b.niftyPriceAtBid)) && Number(b.niftyPriceAtBid) > 0
-    );
-    const fallbackBidRef =
-      validBidPrice?.niftyPriceAtBid != null ? Number(validBidPrice.niftyPriceAtBid) : null;
-
-    const useLockedForRanking =
-      resultDeclared && lockedPriceNum != null && lockedPriceNum > 0;
-    const rankingRef = useLockedForRanking
-      ? lockedPriceNum
-      : (Number.isFinite(Number(referenceSpot)) && Number(referenceSpot) > 0
-          ? Number(referenceSpot)
-          : fallbackBidRef);
-
-    const bids = sortJackpotBidsByDistanceToReference(rawBids, rankingRef);
-    const uniquePlayerIds = new Set(
-      bids.map((b) => (b.user && b.user._id ? String(b.user._id) : b.user ? String(b.user) : '')).filter(Boolean)
-    );
-
-    const settings = await GameSettings.getSettings();
-    const gameConfig = settings.games?.niftyJackpot;
-    const topWinners = gameConfig?.topWinners || 20;
-
-    // Optional ?limit=N — return top N projected rows only (pool / myRank still use full sorted list)
-    let leaderboardLimit = null;
-    if (req.query.limit != null && String(req.query.limit).trim() !== '') {
-      const ln = parseInt(String(req.query.limit), 10);
-      if (Number.isFinite(ln) && ln > 0) {
-        leaderboardLimit = Math.min(500, ln);
-      }
-    }
-    const bidsForLeaderboard =
-      leaderboardLimit != null ? bids.slice(0, leaderboardLimit) : bids;
-
-    // Calculate total pool and prize percentages
-    const totalPool = bids.reduce((sum, b) => sum + b.amount, 0);
-    const brokeragePercent = gameConfig?.brokeragePercent ?? 0;
-    const netPool = totalPool;
-
-    const leaderboard = bidsForLeaderboard.map((bid, idx) => {
-      const rank = idx + 1;
-      const prizePercent = resolveJackpotPrizePercentForRank(rank, gameConfig);
-      const prize = rank <= topWinners ? Math.round(netPool * prizePercent / 100) : 0;
-      const bidTime = bid.createdAt || bid._id?.getTimestamp?.() || new Date();
-      const refR = Number(rankingRef);
-      const distRef =
-        Number.isFinite(refR) && refR > 0 && bid.niftyPriceAtBid != null && Number.isFinite(Number(bid.niftyPriceAtBid))
-          ? Math.abs(Number(bid.niftyPriceAtBid) - refR)
-          : null;
-      const refLive = Number(referenceSpot);
-      const distLive =
-        useLockedForRanking &&
-        Number.isFinite(refLive) &&
-        refLive > 0 &&
-        bid.niftyPriceAtBid != null &&
-        Number.isFinite(Number(bid.niftyPriceAtBid))
-          ? Math.abs(Number(bid.niftyPriceAtBid) - refLive)
-          : null;
-      return {
-        bidId: bid._id,
-        rank,
-        userId: bid.user?._id,
-        name: bid.user?.name || bid.user?.username || 'Anonymous',
-        amount: bid.amount,
-        bidTime: bidTime,
-        prizePercent,
-        prize,
-        isWinner: rank <= topWinners,
-        status: bid.status,
-        niftyPriceAtBid: bid.niftyPriceAtBid ?? null,
-        distanceToReference: distRef,
-        distanceToSpot: distRef,
-        distanceToLiveSpot: distLive,
-      };
-    });
-
-    const myId = String(req.user._id);
-    let myRank = null;
-    bids.forEach((b, i) => {
-      const uid = b.user && b.user._id ? String(b.user._id) : b.user ? String(b.user) : '';
-      if (uid === myId) {
-        const r = i + 1;
-        if (myRank === null || r < myRank) myRank = r;
-      }
-    });
-
-    const myBids = await NiftyJackpotBid.find({
-      $and: [{ user: req.user._id }, buildNiftyJackpotIstDayQuery(date)],
-    }).sort({ createdAt: -1 });
-    const myLatest = myBids[0];
-    const oneTicketRs = Number(gameConfig?.ticketPrice || settings.tokenValue || 300);
-    const myTicketsToday = myBids.reduce(
-      (s, b) => s + niftyJackpotTicketUnitsForBid(b, oneTicketRs),
-      0
-    );
-
-    const podiumIsOfficial = resultDeclared;
-    const lockedForPodium = lockedPriceNum;
-
-    let anonymousPodium = [];
-    if (podiumIsOfficial) {
-      const won = rawBids.filter((b) => b.status === 'won');
-      let ordered;
-      if (lockedForPodium != null && lockedForPodium > 0) {
-        ordered = sortJackpotBidsByDistanceToReference(won, lockedForPodium);
-      } else {
-        ordered = [...won].sort((a, b) => {
-          const ra = Number(a.rank);
-          const rb = Number(b.rank);
-          if (Number.isFinite(ra) && Number.isFinite(rb) && ra !== rb) return ra - rb;
-          return bidTimeMs(a) - bidTimeMs(b);
-        });
-      }
-      anonymousPodium = ordered.slice(0, 3).map((b) => ({
-        niftyPriceAtBid: b.niftyPriceAtBid ?? null,
-        bidTime: b.createdAt || b._id?.getTimestamp?.() || new Date(),
-      }));
-    } else {
-      anonymousPodium = bids.slice(0, 3).map((b) => ({
-        niftyPriceAtBid: b.niftyPriceAtBid ?? null,
-        bidTime: b.createdAt || b._id?.getTimestamp?.() || new Date(),
-      }));
-    }
-
-    res.json({
-      date,
-      referenceSpot: Number.isFinite(Number(referenceSpot)) ? Number(referenceSpot) : null,
-      rankingReference:
-        Number.isFinite(Number(rankingRef)) && Number(rankingRef) > 0 ? Number(rankingRef) : null,
-      rankingMode: useLockedForRanking ? 'nearest_locked_close' : 'nearest_spot',
-      podiumIsOfficial,
-      anonymousPodium,
-      totalBids: bids.length,
-      ...(leaderboardLimit != null && { leaderboardLimit }),
-      uniquePlayerCount: uniquePlayerIds.size,
-      totalPool,
-      netPool,
-      brokeragePercent,
-      topWinners,
-      prizePercentages: gameConfig?.prizePercentages || null,
-      leaderboard,
-      myRank,
-      myBid: myLatest
-        ? {
-            amount: myLatest.amount,
-            bidTime: myLatest.createdAt,
-            status: myLatest.status,
-            rank: myLatest.rank,
-            prize: myLatest.prize,
-            niftyPriceAtBid: myLatest.niftyPriceAtBid ?? null,
-          }
-        : null,
-      ticketsToday: myTicketsToday,
-    });
-  } catch (error) {
-    console.error('[nifty-jackpot/leaderboard] error:', error);
-    // Keep client stable (no 500 spam loop) with a safe empty payload.
-    return res.json({
-      date: req.query.date || getTodayIST(),
-      referenceSpot: null,
-      rankingReference: null,
-      rankingMode: 'nearest_spot',
-      podiumIsOfficial: false,
-      anonymousPodium: [],
-      totalBids: 0,
-      uniquePlayerCount: 0,
-      totalPool: 0,
-      netPool: 0,
-      brokeragePercent: 0,
-      topWinners: 20,
-      prizePercentages: null,
-      leaderboard: [],
-      myRank: null,
-      myBid: null,
-      ticketsToday: 0,
-      degraded: true,
-      message: error.message,
-    });
-  }
-});
+router.get('/nifty-jackpot/leaderboard', protectUser, getNiftyJackpotLeaderboard);
 
 // Get bid history for current user
 router.get('/nifty-jackpot/history', protectUser, async (req, res) => {
@@ -5826,6 +5630,9 @@ router.get('/nifty-jackpot/locked-price', protectUser, async (req, res) => {
   }
 });
 
+// Nifty jackpot clearing
+router.get('/nifty-jackpot/last-5-days-clearing', protectUser, getNiftyJackpotLast5DaysClearing);
+
 // Get last 5 days closing prices for Nifty Jackpot
 router.get('/nifty-jackpot/last-5-days', protectUser, async (req, res) => {
   try {
@@ -5839,152 +5646,13 @@ router.get('/nifty-jackpot/last-5-days', protectUser, async (req, res) => {
     
     res.json(results);
   } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Get last 5 days clearing / LTP for Nifty Number and Nifty Jackpot (row 1 = today’s live LTP when Kite is connected; next rows = prior sessions’ day close)
-router.get('/nifty-jackpot/last-5-days-clearing', protectUser, async (req, res) => {
-  try {
-    const {
-      fetchNifty50HistoricalFromKite,
-      fetchNifty50LastPriceFromKite,
-      istCalendarDateString,
-    } = await import('../utils/kiteNiftyQuote.js');
-
-    const today = istCalendarDateString();
-    const now = new Date();
-    const ltp = await fetchNifty50LastPriceFromKite();
-
-    const candles = await fetchNifty50HistoricalFromKite({
-      interval: 'day',
-      daysBack: 45,
-      maxCandles: 40,
-    });
-
-    const results = [];
-    if (ltp != null && Number.isFinite(Number(ltp))) {
-      results.push({
-        date: today,
-        closedAt: now.toISOString(),
-        closingPrice: Number(ltp),
-        source: 'Kite LTP (now)',
-        isLive: true,
-        note: 'Live NIFTY 50 LTP — reopen this list to refresh',
-      });
-    }
-
-    if (!candles || candles.length === 0) {
-      return res.json(results);
-    }
-
-    // Index one candle per calendar day (use latest time if duplicates)
-    const byDay = new Map();
-    for (const c of candles) {
-      const dayKey = istCalendarDateString(new Date(c.time * 1000));
-      const prev = byDay.get(dayKey);
-      if (!prev || c.time > prev.time) {
-        byDay.set(dayKey, { time: c.time, close: c.close });
-      }
-    }
-
-    const weekdayCompleted = (dateStr) => {
-      const d = new Date(`${dateStr}T12:00:00+05:30`);
-      const w = d.getDay();
-      return w !== 0 && w !== 6;
-    };
-
-    const historical = [...byDay.entries()]
-      .filter(([d]) => d !== today && weekdayCompleted(d))
-      .sort((a, b) => b[1].time - a[1].time)
-      .map(([d, { time, close }]) => ({
-        date: d,
-        closedAt: new Date(time * 1000).toISOString(),
-        closingPrice: close,
-        source: 'Kite EOD close',
-        isLive: false,
-      }));
-
-    const need = Math.max(0, 5 - results.length);
-    results.push(...historical.slice(0, need));
-
-    res.json(results);
-  } catch (error) {
-    console.error('Error fetching last 5 days clearing for Nifty Number/Jackpot:', error);
+    console.error('Error fetching last 5 days for Nifty Jackpot:', error);
     res.status(500).json({ message: error.message });
   }
 });
 
 // Get last 5 days closing LTP for Nifty Bracket
-router.get('/nifty-bracket/last-5-days', protectUser, async (req, res) => {
-  try {
-    const {
-      fetchNifty50HistoricalFromKite,
-      fetchNifty50LastPriceFromKite,
-      istCalendarDateString,
-    } = await import('../utils/kiteNiftyQuote.js');
-
-    const today = istCalendarDateString();
-    const out = [];
-
-    // Preferred source: Kite daily candles (true previous session closes).
-    const candles = await fetchNifty50HistoricalFromKite({
-      interval: 'day',
-      daysBack: 45,
-      maxCandles: 60,
-    });
-
-    const weekdayCompleted = (dateStr) => {
-      const d = new Date(`${dateStr}T12:00:00+05:30`);
-      const w = d.getDay();
-      return w !== 0 && w !== 6;
-    };
-
-    if (Array.isArray(candles) && candles.length > 0) {
-      const byDay = new Map();
-      for (const c of candles) {
-        const dayKey = istCalendarDateString(new Date(c.time * 1000));
-        const prev = byDay.get(dayKey);
-        if (!prev || c.time > prev.time) {
-          byDay.set(dayKey, { time: c.time, close: c.close });
-        }
-      }
-
-      const historical = [...byDay.entries()]
-        .filter(([d]) => d !== today && weekdayCompleted(d))
-        .sort((a, b) => b[1].time - a[1].time)
-        .slice(0, 5)
-        .map(([d, { time, close }]) => ({
-          date: d,
-          closingLTP: Number(close),
-          closedAt: new Date(time * 1000).toISOString(),
-          source: 'Kite day close',
-        }));
-
-      out.push(...historical);
-    }
-
-    // Fallback: if Kite day candles unavailable, still return stable shape (no 500).
-    if (out.length === 0) {
-      const spot = await resolveNiftyJackpotSpotPrice();
-      const spotNum = Number(spot);
-      if (Number.isFinite(spotNum) && spotNum > 0) {
-        out.push({
-          date: today,
-          closingLTP: spotNum,
-          closedAt: new Date().toISOString(),
-          source: 'live_spot_fallback',
-        });
-      }
-    }
-
-    return res.json(out.slice(0, 5));
-  } catch (error) {
-    console.error('Error fetching last 5 days LTP for Nifty Bracket:', error);
-    // Keep client stable: avoid 500 polling spam loops.
-    return res.json([]);
-  }
-});
+router.get('/nifty-bracket/last-5-days', protectUser, getNiftyBracketLast5Days);
 
 // Get current Nifty LTP (for testing)
 router.get('/nifty-current-ltp', protectUser, async (req, res) => {
@@ -6011,135 +5679,12 @@ router.get('/nifty-current-ltp', protectUser, async (req, res) => {
   }
 });
 
-// Send OTP to phone number
-router.post('/send-otp', async (req, res) => {
-  try {
-    const { phone } = req.body;
-
-    if (!phone) {
-      return res.status(400).json({ message: 'Phone number is required' });
-    }
-
-    // Validate phone format (10 digits)
-    const phoneRegex = /^[0-9]{10}$/;
-    if (!phoneRegex.test(phone)) {
-      return res.status(400).json({ message: 'Invalid phone number. Must be 10 digits.' });
-    }
-
-    // Check if phone already exists
-    const existingUser = await User.findOne({ phone });
-    if (existingUser) {
-      return res.status(400).json({ message: 'Phone number already registered' });
-    }
-
-    // Send OTP
-    const result = await sendOTP(phone);
-    res.json(result);
-  } catch (error) {
-    console.error('Error sending OTP:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Verify OTP
-router.post('/verify-otp', async (req, res) => {
-  try {
-    const { phone, otp } = req.body;
-
-    if (!phone || !otp) {
-      return res.status(400).json({ message: 'Phone number and OTP are required' });
-    }
-
-    // Verify OTP
-    const result = verifyOTP(phone, otp);
-    res.json(result);
-  } catch (error) {
-    console.error('Error verifying OTP:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
+// OTP operations
+router.post('/send-otp', sendOTP);
+router.post('/verify-otp', verifyOTP);
 
 // Get user's referral amounts
-router.get('/referral-amounts', protectUser, async (req, res) => {
-  try {
-    const Referral = require('../models/Referral.js').default;
-    const GamesWalletLedger = require('../models/GamesWalletLedger.js').default;
-    
-    // Find all referrals where this user is the referrer
-    const referrals = await Referral.find({ referrer: req.user._id })
-      .populate('referredUser', 'username phone email')
-      .populate('referrer', 'username')
-      .sort({ createdAt: -1 });
-    
-    // Calculate total earnings and fetch detailed game earnings
-    const totalEarnings = referrals.reduce((sum, ref) => sum + (ref.earnings || 0), 0);
-    
-    // Get detailed earnings breakdown from games wallet ledger
-    const referralAmounts = await Promise.all(referrals.map(async (ref) => {
-      // Fetch game-specific earnings from ledger
-      const gameEarnings = await GamesWalletLedger.find({
-        userId: req.user._id,
-        'meta.referredUser': ref.referredUser._id,
-        entryType: 'credit'
-      }).sort({ createdAt: -1 });
-      
-      // Group earnings by game
-      const earningsByGame = {};
-      gameEarnings.forEach(entry => {
-        const gameName = entry.meta.gameName || entry.gameId || 'Unknown';
-        if (!earningsByGame[gameName]) {
-          earningsByGame[gameName] = {
-            totalAmount: 0,
-            entries: []
-          };
-        }
-        earningsByGame[gameName].totalAmount += entry.amount;
-        earningsByGame[gameName].entries.push({
-          amount: entry.amount,
-          description: entry.description,
-          createdAt: entry.createdAt
-        });
-      });
-      
-      return {
-        id: ref._id,
-        referrer: {
-          id: ref.referrer._id,
-          username: ref.referrer.username
-        },
-        referredUser: {
-          id: ref.referredUser._id,
-          username: ref.referredUser.username,
-          phone: ref.referredUser.phone,
-          email: ref.referredUser.email
-        },
-        referralCode: ref.referralCode,
-        status: ref.status,
-        earnings: ref.earnings || 0,
-        earningsByGame, // Detailed earnings by game
-        firstGameWin: ref.firstGameWin?.credited ? {
-          amount: ref.firstGameWin.amount || 0,
-          creditedAt: ref.firstGameWin.creditedAt,
-          gameName: ref.firstGameWin.gameName || 'Unknown'
-        } : null,
-        firstTradingWin: ref.firstTradingWin?.credited ? {
-          amount: ref.firstTradingWin.amount || 0,
-          creditedAt: ref.firstTradingWin.creditedAt
-        } : null,
-        createdAt: ref.createdAt,
-        activatedAt: ref.activatedAt
-      };
-    }));
-    
-    res.json({
-      referralAmounts,
-      totalEarnings,
-      totalReferrals: referrals.length
-    });
-  } catch (error) {
-    console.error('Error fetching referral amounts:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
+// Referral operations
+router.get('/referral-amounts', protectUser, ReferralController.getReferralAmounts);
 
 export default router;

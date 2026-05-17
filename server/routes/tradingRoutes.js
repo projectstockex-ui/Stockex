@@ -1,7 +1,6 @@
 import express from 'express';
 import TradingService from '../services/tradingService.js';
 import Instrument from '../models/Instrument.js';
-import { getUsdInrRate } from '../utils/usdInr.js';
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import { protectUser as protect, protectAdmin } from '../middleware/auth.js';
@@ -14,6 +13,7 @@ import {
   buildInstrumentDenyContext,
   assertHierarchyInstrumentNotDenied,
 } from '../services/instrumentRestrictionService.js';
+import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
 
 const router = express.Router();
 
@@ -24,6 +24,19 @@ router.post('/order', protect, async (req, res) => {
     if (req.user.isReadOnly) {
       return res.status(403).json({ message: 'Your account is in read-only mode. You can only view and close existing trades.' });
     }
+    
+    // Map segment for crypto/forex exchanges (same logic as margin-preview)
+    const { segment, instrumentType } = req.body;
+    const exchange = req.body.exchange || '';
+    let effectiveSegment = segment;
+    if (exchange === 'BINANCE' && (!segment || segment === 'CRYPTO')) {
+      effectiveSegment = instrumentType === 'OPTIONS' ? 'CRYPTOOPT' : 'CRYPTOFUT';
+    } else if (exchange === 'FOREX' && (!segment || segment === 'FOREX')) {
+      effectiveSegment = instrumentType === 'OPTIONS' ? 'FOREXOPT' : 'FOREXFUT';
+    }
+    
+    // Update req.body with effective segment
+    req.body.segment = effectiveSegment;
     
     console.log('Order request:', req.body);
     const result = await TradingService.placeOrder(req.user._id, req.body);
@@ -115,12 +128,21 @@ router.post('/margin-preview', protect, async (req, res) => {
     const { symbol, productType, side, instrumentType, category, segment } = req.body;
     const lotsRaw = req.body.lots;
     const lots = lotsRaw != null && lotsRaw !== '' && Number.isFinite(Number(lotsRaw)) ? Number(lotsRaw) : 1;
+
+    // Map segment for crypto/forex exchanges
+    let effectiveSegment = segment;
+    const exchange = req.body.exchange || '';
+    if (exchange === 'BINANCE' && (!segment || segment === 'CRYPTO')) {
+      effectiveSegment = instrumentType === 'OPTIONS' ? 'CRYPTOOPT' : 'CRYPTOFUT';
+    } else if (exchange === 'FOREX' && (!segment || segment === 'FOREX')) {
+      effectiveSegment = instrumentType === 'OPTIONS' ? 'FOREXOPT' : 'FOREXFUT';
+    }
     
     // Import TradeService for user settings helpers
     const TradeService = (await import('../services/tradeService.js')).default;
     
     // Get user's segment and script settings (System defaults + hierarchy + user; merged with instrument Rules in margin calculator)
-    let segmentSettings = await TradeService.getUserSegmentSettings(req.user, segment, instrumentType);
+    let segmentSettings = await TradeService.getUserSegmentSettings(req.user, effectiveSegment, instrumentType);
     const orInst = [];
     if (req.body.token) orInst.push({ token: String(req.body.token) });
     if (symbol && req.body.exchange) {
@@ -140,9 +162,17 @@ router.post('/margin-preview', protect, async (req, res) => {
 
     const fullUser = await User.findById(req.user._id).populate({
       path: 'admin',
-      select: 'restrictions hierarchyPath role adminCode',
+      select: 'restrictions hierarchyPath role adminCode segmentPermissions',
     });
-    await assertHierarchyInstrumentNotDenied(fullUser, buildInstrumentDenyContext(req.body, instrumentDoc));
+    try {
+      await assertHierarchyInstrumentNotDenied(fullUser, buildInstrumentDenyContext(req.body, instrumentDoc));
+    } catch (restrictionErr) {
+      // If it's a genuine trading block, re-throw so the user sees the message
+      if (restrictionErr.message && restrictionErr.message.includes('blocked')) {
+        throw restrictionErr;
+      }
+      console.error('[MarginPreview] Instrument restriction check error (non-blocking):', restrictionErr.message);
+    }
 
     const rawScript = TradeService.getUserScriptSettings(req.user, symbol, category);
     const scriptSettings = TradeService.mergeScriptSettingsWithInstrument(instrumentDoc, rawScript);
@@ -160,17 +190,12 @@ router.post('/margin-preview', protect, async (req, res) => {
     leverage = TradeService.capLeverageFromInstrument(instrumentDoc, leverage, isIntraday, isOptionBuy);
     
     const price = req.body.price || 0;
-    const bnCryptoPreview = isBinanceCryptoOrder({ ...req.body, segment });
+    const bnCryptoPreview = isBinanceCryptoOrder({ ...req.body, segment: effectiveSegment });
     let lotSize = req.body.lotSize || TradingService.getLotSize(symbol, category, req.body.exchange);
-    const segLotPreview = !bnCryptoPreview
-      ? TradeService.segmentCryptoLotSizePerUnitLot(segmentSettings)
-      : null;
-    const segPrev = String(segment || '').toUpperCase();
-    if (
-      segLotPreview != null &&
-      (segPrev === 'CRYPTOFUT' || segPrev === 'CRYPTOOPT' || req.body.exchange === 'BINANCE')
-    ) {
-      lotSize = segLotPreview;
+    const segPrev = String(effectiveSegment || '').toUpperCase();
+    // CRYPTOFUT and CRYPTOOPT: No lot system - use quantity directly
+    if (segPrev === 'CRYPTOFUT' || segPrev === 'CRYPTOOPT') {
+      lotSize = 1; // Force lotSize to 1 for crypto futures/options
     }
     if (bnCryptoPreview && instrumentDoc?.lotSize > 0) {
       lotSize = instrumentDoc.lotSize;
@@ -179,11 +204,11 @@ router.post('/margin-preview', protect, async (req, res) => {
       req.body.quantity != null && req.body.quantity !== '' && Number.isFinite(Number(req.body.quantity))
         ? Number(req.body.quantity)
         : lots * lotSize;
-    const isCryptoPreview = segment === 'CRYPTOFUT' || segment === 'CRYPTOOPT' ||
+    const isCryptoPreview = effectiveSegment === 'CRYPTOFUT' || effectiveSegment === 'CRYPTOOPT' || effectiveSegment === 'CRYPTO' ||
       req.body.exchange === 'BINANCE' || req.body.isCrypto ||
-      segment === 'FOREX' || segment === 'FOREXFUT' || segment === 'FOREXOPT' ||
+      effectiveSegment === 'FOREX' || effectiveSegment === 'FOREXFUT' || effectiveSegment === 'FOREXOPT' ||
       req.body.exchange === 'FOREX' || req.body.isForex;
-    const tradeValue = isCryptoPreview ? price * getUsdInrRate() * quantity : price * quantity;
+    const tradeValue = price * quantity;
     
     // Effective lots: exact fraction for USDT/forex; ceil for F&O-style sizing
     const effectivePreviewLots = lotSize > 0 && quantity > 0 ? quantity / lotSize : lots;
@@ -215,80 +240,139 @@ router.post('/margin-preview', protect, async (req, res) => {
     
     // Priority 2: Use segment exposure if no fixed margin
     // Exposure formula: margin = tradeValue / exposure / 1
+    // Also consider intradayLeverage/carryForwardLeverage as exposure fallback
     const segmentSettingsForMargin = TradeService.applyInstrumentExposureOverrides(
       instrumentDoc,
       segmentSettings
     );
-    if (!usedFixedMargin && segmentSettingsForMargin) {
-      const exposureNum = Number(
-        isIntraday
-          ? segmentSettingsForMargin?.exposureIntraday
-          : segmentSettingsForMargin?.exposureCarryForward
-      );
-      const exposure = Number.isFinite(exposureNum) && exposureNum > 0 ? exposureNum : 1;
+    
+    // For all segments: dynamically resolve leverage from segment settings (no hardcoding)
+    const ss = segmentSettingsForMargin || segmentSettings || {};
+    if (!usedFixedMargin) {
+      const candidates = isIntraday
+        ? [
+            ss.quantityModeSettings?.intradayLeverage,
+            ss.lotSettings?.intradayLeverage,
+            ss.exposureIntraday,
+            ss.intradayLeverage
+          ]
+        : [
+            ss.quantityModeSettings?.carryForwardLeverage,
+            ss.lotSettings?.carryForwardLeverage,
+            ss.exposureCarryForward,
+            ss.carryForwardLeverage
+          ];
+      let exposure = 1;
+      for (const v of candidates) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 1) { exposure = n; break; }
+      }
 
-      if (exposure > 0) {
+      if (exposure > 1) {
         marginRequired = tradeValue / exposure / leverage;
         marginSource = 'segment_exposure';
+        // Sync back to segmentSettingsForMargin for response
+        if (segmentSettingsForMargin) {
+          if (isIntraday) segmentSettingsForMargin.exposureIntraday = exposure;
+          else segmentSettingsForMargin.exposureCarryForward = exposure;
+        }
       }
     }
     
     // Priority 3: Fall back to default calculated margin
+    console.log('[MarginPreview] Before fallback check. marginRequired:', marginRequired, 'marginSource:', marginSource);
     const marginCalc = TradingService.calculateMargin({ ...req.body, leverage }, req.user, leverage);
     if (marginRequired === 0) {
       marginRequired = marginCalc.marginRequired;
       marginSource = 'default_calculated';
+      console.log('[MarginPreview] Fallback to default calculated margin. marginRequired:', marginRequired);
     }
+    console.log('[MarginPreview] Final marginRequired:', marginRequired, 'marginSource:', marginSource);
     
     // Note: divisor in responses is fixed at 1; segment exposure carries effective leverage from hierarchy/rules.
 
-    const baseBrokerage = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
-    const extraBrokerage = TradeService.instrumentAdditionalCommission(instrumentDoc, effectiveLots, tradeValue);
-    const oneWayBrokerage = baseBrokerage + extraBrokerage;
-    const brokerage = Math.round(oneWayBrokerage * 2 * 100) / 100;
-    
-    // Calculate spread from user settings
-    const spread = TradeService.calculateUserSpread(scriptSettings, side);
+    let brokerage = 0;
+    let spread = 0;
+    try {
+      const baseBrokerage = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
+      const extraBrokerage = TradeService.instrumentAdditionalCommission(instrumentDoc, effectiveLots, tradeValue);
+      const oneWayBrokerage = baseBrokerage + extraBrokerage;
+      brokerage = Math.round(oneWayBrokerage * 2 * 100) / 100;
+      
+      // Calculate spread from user settings
+      spread = TradeService.calculateUserSpread(scriptSettings, side);
+    } catch (brokerageErr) {
+      console.error('[MarginPreview] Brokerage calculation error (defaulting to 0):', brokerageErr.message);
+      brokerage = 0;
+      spread = 0;
+    }
     
     // Use correct wallet based on trade type (triple wallet system)
-    const isCrypto = segment === 'CRYPTOFUT' || segment === 'CRYPTOOPT' ||
+    const isCrypto = effectiveSegment === 'CRYPTOFUT' || effectiveSegment === 'CRYPTOOPT' ||
       req.body.exchange === 'BINANCE';
-    const isForex = segment === 'FOREX' || segment === 'FOREXFUT' || segment === 'FOREXOPT' ||
+    const isForex = effectiveSegment === 'FOREX' || effectiveSegment === 'FOREXFUT' || effectiveSegment === 'FOREXOPT' ||
       req.body.exchange === 'FOREX' || req.body.isForex;
     const isMCX = segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || 
                   segment === 'COMMODITY' || req.body.exchange === 'MCX';
     
+    // CRITICAL FIX: Recalculate usedMargin from actual open positions
+    // This ensures usedMargin is always accurate, not stale from database
+    const recalculatedMargin = await recalculateUsedMargin(req.user._id);
+    
     let availableBalance, tradingBalance, usedMarginDisplay;
     if (isCrypto) {
       tradingBalance = req.user.cryptoWallet?.balance || 0;
-      usedMarginDisplay = 0;
-      availableBalance = tradingBalance;
+      usedMarginDisplay = recalculatedMargin.cryptoWallet;
+      availableBalance = tradingBalance - usedMarginDisplay;
     } else if (isForex) {
       tradingBalance = req.user.forexWallet?.balance || 0;
-      usedMarginDisplay = 0;
-      availableBalance = tradingBalance;
+      usedMarginDisplay = recalculatedMargin.forexWallet;
+      availableBalance = tradingBalance - usedMarginDisplay;
     } else if (isMCX) {
       tradingBalance = req.user.mcxWallet?.balance || 0;
-      usedMarginDisplay = req.user.mcxWallet?.usedMargin || 0;
+      usedMarginDisplay = recalculatedMargin.mcxWallet;
       availableBalance = tradingBalance - usedMarginDisplay;
     } else {
       tradingBalance = req.user.wallet?.tradingBalance || req.user.wallet?.cashBalance || 0;
-      usedMarginDisplay = req.user.wallet?.usedMargin || req.user.wallet?.blocked || 0;
+      usedMarginDisplay = recalculatedMargin.wallet;
       availableBalance = tradingBalance - usedMarginDisplay;
     }
     
-    // Get lot limits from settings
-    const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50;
-    const minLots = scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1;
+    // Get lot/qty limits from settings - for crypto prefer quantityModeSettings
+    const qtyModeSettings = segmentSettings?.quantityModeSettings;
+    const maxLots = (isCrypto && qtyModeSettings?.maxQuantity > 0)
+      ? qtyModeSettings.maxQuantity
+      : (scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50);
+    const minLots = (isCrypto && qtyModeSettings?.minQuantity > 0)
+      ? qtyModeSettings.minQuantity
+      : (scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1);
     
-    // Get breakup quantity and max bid limits
+    // Get breakup quantity and max bid limits - for crypto prefer quantityModeSettings.breakupQuantity
     const instrumentBreakupQuantity = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.breakupQuantity;
-    const segmentBreakupQuantity = segmentSettings?.quantitySettings?.breakupQuantity;
+    const segmentBreakupQuantity = (isCrypto && qtyModeSettings?.breakupQuantity > 0)
+      ? qtyModeSettings.breakupQuantity
+      : (segmentSettings?.quantitySettings?.breakupQuantity || 0);
     const breakupQuantity = instrumentBreakupQuantity || segmentBreakupQuantity || 0;
-    
+
     const instrumentMaxBid = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.maxBid;
     const segmentMaxBid = segmentSettings?.quantitySettings?.maxBid;
     const maxBid = instrumentMaxBid || segmentMaxBid || 0;
+
+    // Get min/max exchange quantity limits for crypto/forex
+    const instrumentMinExchangeQty = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.minExchangeQty;
+    const segmentMinExchangeQty = segmentSettings?.quantitySettings?.minExchangeQty;
+    const minExchangeQty = instrumentMinExchangeQty || segmentMinExchangeQty || 0;
+
+    const instrumentMaxExchangeQty = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.maxExchangeQty;
+    const segmentMaxExchangeQty = segmentSettings?.quantitySettings?.maxExchangeQty;
+    const maxExchangeQty = instrumentMaxExchangeQty || segmentMaxExchangeQty || 0;
+
+    // Get quantity step from instrument (for crypto/forex)
+    const quantityStep = instrumentDoc?.qtyFilterMin || (isCrypto || isForex ? 0.001 : 1);
+
+    // For crypto/forex, use exchange quantity limits if set
+    const minQuantity = minExchangeQty > 0 ? minExchangeQty : (instrumentDoc?.qtyFilterMin || 0.001);
+    const maxQuantity = maxExchangeQty > 0 ? maxExchangeQty : (instrumentDoc?.qtyFilterMax || 0);
     
     let lotsValid;
     let lotsError = null;
@@ -319,7 +403,10 @@ router.post('/margin-preview', protect, async (req, res) => {
     
     // Get commission from segment settings
     const commission = segmentSettings?.commissionLot || segmentSettings?.commission || 0;
-    const perOrderLots = scriptSettings?.lotSettings?.orderLots || segmentSettings?.orderLots || maxLots;
+    // Map lotSettings.breakupLots to orderLots for backward compatibility
+    const scriptOrderLots = scriptSettings?.lotSettings?.breakupLots ?? scriptSettings?.lotSettings?.orderLots;
+    const segmentOrderLots = segmentSettings?.lotSettings?.breakupLots ?? segmentSettings?.orderLots;
+    const perOrderLots = scriptOrderLots || segmentOrderLots || maxLots;
     
     const totalRequired = marginRequired + brokerage;
     
@@ -336,6 +423,9 @@ router.post('/margin-preview', protect, async (req, res) => {
       brokerage: Math.round(brokerage * 100) / 100,
       commission: Math.round(commission * 100) / 100,
       spread,
+      minQuantity: isCrypto || isForex ? minQuantity : undefined,
+      maxQuantity: isCrypto || isForex ? maxQuantity : undefined,
+      quantityStep: isCrypto || isForex ? quantityStep : undefined,
       lotSize,
       effectiveLots: Math.round(effectivePreviewLots * 1e8) / 1e8,
       maxLots,
@@ -351,6 +441,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       maxBid: maxBid > 0 ? maxBid : null
     });
   } catch (error) {
+    console.error('[MarginPreview] Error:', error.message, error.stack);
     res.status(400).json({ message: error.message });
   }
 });

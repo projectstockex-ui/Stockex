@@ -125,16 +125,17 @@ class HierarchyValidationService {
     console.log('[HierarchyValidationService] Current Admin segmentPermissions:', JSON.stringify(currentAdminSegPerms));
 
     // Check if current admin has this segment enabled
-    const currentAdminSeg = currentAdminSegPerms[segmentName] || {};
-    const currentAdminSegEnabled = currentAdminSeg.enabled ?? false;
+    const parentSeg = currentAdminSegPerms[segmentName] || {};
+    const currentAdminSegEnabled = parentSeg.enabled ?? false;
 
     console.log('[HierarchyValidationService] Current Admin segment enabled for', segmentName, ':', currentAdminSegEnabled);
 
+    // EXPLICIT BLOCK: If current admin doesn't have this segment enabled, block it
     if (!currentAdminSegEnabled) {
       console.log('[HierarchyValidationService] BLOCKING:', segmentName, '- current admin has disabled it');
       return {
         allowed: false,
-        message: `Cannot enable ${segmentName} - you do not have this segment enabled`
+        message: `Cannot enable ${segmentName} - you do not have this segment enabled. Contact your admin.`
       };
     }
 

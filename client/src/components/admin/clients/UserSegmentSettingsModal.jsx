@@ -10,17 +10,16 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [expandedSegment, setExpandedSegment] = useState(null);
   const [segmentPermissions, setSegmentPermissions] = useState({});
+  const [settingsMode, setSettingsMode] = useState('lot');
 
   const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
   const defaultSegmentSettings = {
     enabled: false,
-    maxExchangeLots: 100,
     commissionType: 'PER_LOT',
     commissionLot: 0,
     maxLots: 50,
     minLots: 1,
-    orderLots: 10,
     intradayLeverage: 1,
     carryForwardLeverage: 1,
     exposureIntraday: 1,
@@ -34,8 +33,22 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
     cryptoLotSizeLots: 1,
     cryptoLotSizeQuantity: 0,
     allowLimitPendingOrders: true,
-    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
-    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50 },
+    lotSettings: {
+      intradayLeverage: 1,
+      carryForwardLeverage: 1,
+      maxLots: 50,
+      minLots: 1,
+      breakupLots: 0
+    },
+    quantityModeSettings: {
+      intradayLeverage: 1,
+      carryForwardLeverage: 1,
+      maxQuantity: 1000,
+      minQuantity: 1,
+      breakupQuantity: 0
+    }
   };
 
   useEffect(() => {
@@ -71,6 +84,19 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
     setSegmentPermissions(prev => ({
       ...prev,
       [segment]: { ...prev[segment], [field]: value }
+    }));
+  };
+
+  const handleNestedChange = (segment, parentField, field, value) => {
+    setSegmentPermissions(prev => ({
+      ...prev,
+      [segment]: {
+        ...prev[segment],
+        [parentField]: {
+          ...prev[segment][parentField],
+          [field]: value
+        }
+      }
     }));
   };
 
@@ -175,82 +201,243 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                 {/* Segment Details */}
                 {expandedSegment === segment && (
                   <div className="p-4 border-t border-dark-600 space-y-4">
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                        <input
-                          type="number"
-                          value={segmentPermissions[segment]?.maxLots || 0}
-                          onChange={(e) => handleSegmentChange(segment, 'maxLots', parseInt(e.target.value) || 0)}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
-                        <input
-                          type="number"
-                          value={segmentPermissions[segment]?.minLots || 0}
-                          onChange={(e) => handleSegmentChange(segment, 'minLots', parseInt(e.target.value) || 0)}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Order Lots</label>
-                        <input
-                          type="number"
-                          value={segmentPermissions[segment]?.orderLots || 0}
-                          onChange={(e) => handleSegmentChange(segment, 'orderLots', parseInt(e.target.value) || 0)}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={segmentPermissions[segment]?.intradayLeverage ?? 1}
-                          onChange={(e) => handleSegmentChange(segment, 'intradayLeverage', e.target.value === '' ? 0 : parseFloat(e.target.value))}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Carry Forward Leverage (x)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={segmentPermissions[segment]?.carryForwardLeverage ?? 1}
-                          onChange={(e) => handleSegmentChange(segment, 'carryForwardLeverage', e.target.value === '' ? 0 : parseFloat(e.target.value))}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Exposure Intraday</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={segmentPermissions[segment]?.exposureIntraday ?? 1}
-                          onChange={(e) => handleSegmentChange(segment, 'exposureIntraday', e.target.value === '' ? 0 : parseFloat(e.target.value))}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Exposure Carry Forward</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={segmentPermissions[segment]?.exposureCarryForward ?? 1}
-                          onChange={(e) => handleSegmentChange(segment, 'exposureCarryForward', e.target.value === '' ? 0 : parseFloat(e.target.value))}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
-                        <input
-                          type="number"
-                          value={segmentPermissions[segment]?.maxExchangeLots || 0}
-                          onChange={(e) => handleSegmentChange(segment, 'maxExchangeLots', parseInt(e.target.value) || 0)}
-                          className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                        />
+                    {/* Settings Mode Toggle Buttons */}
+                    <div className="flex gap-2 mb-4">
+                      <button
+                        onClick={() => setSettingsMode('lot')}
+                        className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition ${
+                          settingsMode === 'lot'
+                            ? 'bg-cyan-600 text-white'
+                            : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                        }`}
+                      >
+                        Settings for Lot
+                      </button>
+                      <button
+                        onClick={() => setSettingsMode('quantity')}
+                        className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition ${
+                          settingsMode === 'quantity'
+                            ? 'bg-cyan-600 text-white'
+                            : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                        }`}
+                      >
+                        Settings for Quantity
+                      </button>
+                    </div>
+
+                    {/* Lot Settings */}
+                    {settingsMode === 'lot' && (
+                      <>
+                        <h4 className="text-xs font-semibold text-cyan-400 mb-3">Lot Settings</h4>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={segmentPermissions[segment]?.lotSettings?.intradayLeverage ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleNestedChange(segment, 'lotSettings', 'intradayLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Carry Forward Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={segmentPermissions[segment]?.lotSettings?.carryForwardLeverage ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleNestedChange(segment, 'lotSettings', 'carryForwardLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={segmentPermissions[segment]?.lotSettings?.maxLots ?? 50}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleNestedChange(segment, 'lotSettings', 'maxLots', isNaN(val) ? 50 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={segmentPermissions[segment]?.lotSettings?.minLots ?? 1}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleNestedChange(segment, 'lotSettings', 'minLots', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Breakup Lots</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={segmentPermissions[segment]?.lotSettings?.breakupLots ?? 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleNestedChange(segment, 'lotSettings', 'breakupLots', isNaN(val) ? 0 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Quantity Settings */}
+                    {settingsMode === 'quantity' && (
+                      <>
+                        <h4 className="text-xs font-semibold text-cyan-400 mb-3">Quantity Settings</h4>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={segmentPermissions[segment]?.quantityModeSettings?.intradayLeverage ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleNestedChange(segment, 'quantityModeSettings', 'intradayLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Carry Forward Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={segmentPermissions[segment]?.quantityModeSettings?.carryForwardLeverage ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleNestedChange(segment, 'quantityModeSettings', 'carryForwardLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={segmentPermissions[segment]?.quantityModeSettings?.maxQuantity ?? 1000}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleNestedChange(segment, 'quantityModeSettings', 'maxQuantity', isNaN(val) ? 1000 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Min Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={segmentPermissions[segment]?.quantityModeSettings?.minQuantity ?? 1}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleNestedChange(segment, 'quantityModeSettings', 'minQuantity', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Breakup Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={segmentPermissions[segment]?.quantityModeSettings?.breakupQuantity ?? 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleNestedChange(segment, 'quantityModeSettings', 'breakupQuantity', isNaN(val) ? 0 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Legacy Settings (hidden, kept for backward compatibility) */}
+                    <div className="hidden">
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
+                          <input
+                            type="number"
+                            value={segmentPermissions[segment]?.maxLots || 0}
+                            onChange={(e) => handleSegmentChange(segment, 'maxLots', parseInt(e.target.value) || 0)}
+                            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
+                          <input
+                            type="number"
+                            value={segmentPermissions[segment]?.minLots || 0}
+                            onChange={(e) => handleSegmentChange(segment, 'minLots', parseInt(e.target.value) || 0)}
+                            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={segmentPermissions[segment]?.intradayLeverage ?? 1}
+                            onChange={(e) => handleSegmentChange(segment, 'intradayLeverage', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Carry Forward Leverage (x)</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={segmentPermissions[segment]?.carryForwardLeverage ?? 1}
+                            onChange={(e) => handleSegmentChange(segment, 'carryForwardLeverage', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Exposure Intraday</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={segmentPermissions[segment]?.exposureIntraday ?? 1}
+                            onChange={(e) => handleSegmentChange(segment, 'exposureIntraday', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Exposure Carry Forward</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={segmentPermissions[segment]?.exposureCarryForward ?? 1}
+                            onChange={(e) => handleSegmentChange(segment, 'exposureCarryForward', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -264,7 +451,9 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                           className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                         >
                           <option value="PER_LOT">Per Lot</option>
-                          <option value="PERCENTAGE">Percentage</option>
+                          <option value="PER_QUANTITY">Per Quantity</option>
+                          <option value="PER_TRADE">Per Trade</option>
+                          <option value="PER_CRORE">Per Crore</option>
                         </select>
                       </div>
                       <div>

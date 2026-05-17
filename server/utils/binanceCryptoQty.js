@@ -20,32 +20,63 @@ export function qtyAlignedToExchangeStep(qty, step) {
 }
 
 function resolveMaxMinOrderSteps(segmentSettings, scriptSettings) {
+  // For crypto qty mode: prefer quantityModeSettings over lotSettings
+  const qtyMode = segmentSettings?.quantityModeSettings;
+  const scrQtyMode = scriptSettings?.quantitySettings;
+
+  // Max quantity: quantityModeSettings.maxQuantity > scriptSettings.quantitySettings.maxQuantity > lotSettings.maxLots > segmentSettings.maxLots
+  const maxQtyFromQtyMode = qtyMode?.maxQuantity;
+  const maxQtyFromScript = scrQtyMode?.maxQuantity || scrQtyMode?.perOrderQuantity;
   const maxLotsScr = scriptSettings?.lotSettings?.maxLots;
   const maxLotsSeg = segmentSettings?.maxLots;
+
+  // Min quantity: quantityModeSettings.minQuantity > scriptSettings > segmentSettings.minLots
+  const minQtyFromQtyMode = qtyMode?.minQuantity;
+  const minQtyFromScript = scrQtyMode?.minQuantity;
   const minLotsScr = scriptSettings?.lotSettings?.minLots;
   const minLotsSeg = segmentSettings?.minLots;
+
+  // Breakup/order quantity: quantityModeSettings.breakupQuantity > quantitySettings.breakupQuantity > orderLots
+  const breakupFromQtyMode = qtyMode?.breakupQuantity;
+  const breakupFromSeg = segmentSettings?.quantitySettings?.breakupQuantity;
   const orderLotsScr = scriptSettings?.lotSettings?.orderLots;
   const orderLotsSeg = segmentSettings?.orderLots;
 
+  // Resolve max: prefer qty mode first (crypto uses qty, not lots)
   const maxLots =
-    Number.isFinite(Number(maxLotsScr)) && Number(maxLotsScr) > 0
-      ? Number(maxLotsScr)
-      : Number.isFinite(Number(maxLotsSeg)) && Number(maxLotsSeg) > 0
-        ? Number(maxLotsSeg)
-        : null;
-  const minLots =
-    Number.isFinite(Number(minLotsScr)) && Number(minLotsScr) > 0
-      ? Number(minLotsScr)
-      : Number.isFinite(Number(minLotsSeg)) && Number(minLotsSeg) > 0
-        ? Number(minLotsSeg)
-        : 1;
+    Number.isFinite(Number(maxQtyFromQtyMode)) && Number(maxQtyFromQtyMode) > 0
+      ? Number(maxQtyFromQtyMode)
+      : Number.isFinite(Number(maxQtyFromScript)) && Number(maxQtyFromScript) > 0
+        ? Number(maxQtyFromScript)
+        : Number.isFinite(Number(maxLotsScr)) && Number(maxLotsScr) > 0
+          ? Number(maxLotsScr)
+          : Number.isFinite(Number(maxLotsSeg)) && Number(maxLotsSeg) > 0
+            ? Number(maxLotsSeg)
+            : null;
 
+  // Resolve min: prefer qty mode first
+  const minLots =
+    Number.isFinite(Number(minQtyFromQtyMode)) && Number(minQtyFromQtyMode) > 0
+      ? Number(minQtyFromQtyMode)
+      : Number.isFinite(Number(minQtyFromScript)) && Number(minQtyFromScript) > 0
+        ? Number(minQtyFromScript)
+        : Number.isFinite(Number(minLotsScr)) && Number(minLotsScr) > 0
+          ? Number(minLotsScr)
+          : Number.isFinite(Number(minLotsSeg)) && Number(minLotsSeg) > 0
+            ? Number(minLotsSeg)
+            : 1;
+
+  // Resolve per-order cap (breakup qty): prefer qty mode breakup
   const orderLots =
-    Number.isFinite(Number(orderLotsScr)) && Number(orderLotsScr) > 0
-      ? Number(orderLotsScr)
-      : Number.isFinite(Number(orderLotsSeg)) && Number(orderLotsSeg) > 0
-        ? Number(orderLotsSeg)
-        : null;
+    Number.isFinite(Number(breakupFromQtyMode)) && Number(breakupFromQtyMode) > 0
+      ? Number(breakupFromQtyMode)
+      : Number.isFinite(Number(breakupFromSeg)) && Number(breakupFromSeg) > 0
+        ? Number(breakupFromSeg)
+        : Number.isFinite(Number(orderLotsScr)) && Number(orderLotsScr) > 0
+          ? Number(orderLotsScr)
+          : Number.isFinite(Number(orderLotsSeg)) && Number(orderLotsSeg) > 0
+            ? Number(orderLotsSeg)
+            : null;
 
   const capSteps =
     maxLots != null && orderLots != null

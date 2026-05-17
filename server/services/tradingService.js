@@ -11,7 +11,6 @@ import SystemSettings from '../models/SystemSettings.js';
 import RiskConfig from '../models/RiskConfig.js';
 import WalletService from './walletService.js';
 import CircuitBreakerService from './circuitBreakerService.js';
-import { getUsdInrRate } from '../utils/usdInr.js';
 import leverageValidationService from './leverageValidationService.js';
 import {
   orderIsCrypto,
@@ -241,9 +240,10 @@ class TradingService {
       // MCX should follow actual session clock even if admin forgot to toggle segment switch.
       if (exchange === 'MCX' && !result.allowed) {
         const fallback = this.isMarketOpenFallback('MCX');
-        if (fallback.open) {
-          return { open: true, reason: 'MCX session open (time-window fallback)' };
-        }
+        // Always use fallback result for MCX (time-window based), not database state
+        return fallback.open
+          ? { open: true, reason: 'MCX session open (time-window fallback)' }
+          : { open: false, reason: fallback.reason || result.reason };
       }
       return { open: result.allowed, reason: result.reason };
     } catch (error) {
@@ -262,7 +262,8 @@ class TradingService {
     const [weekday, time] = istTimeStr.split(' ');
     const [hours, minutes] = time.split(':').map(Number);
     
-    if (weekday === 'Sat' || weekday === 'Sun') {
+    // MCX has Sunday trading (9:00 AM - 11:30 PM), so skip weekend check for MCX
+    if (exchange !== 'MCX' && (weekday === 'Sat' || weekday === 'Sun')) {
       return { open: false, reason: 'Market closed on weekends' };
     }
     
@@ -281,23 +282,58 @@ class TradingService {
     return { open: true };
   }
 
+  // Get user's leverage for a segment (helper function)
+  static async getUserLeverageForSegment(user, segment) {
+    try {
+      const segUpper = segment?.toUpperCase() || 'NSEFUT';
+      const userSegmentSettings = user.segmentPermissions?.[segUpper];
+      
+      // Priority: lotSettings.intradayLeverage > intradayLeverage > exposureIntraday > default
+      let leverage = 1;
+      
+      if (userSegmentSettings?.lotSettings?.intradayLeverage) {
+        leverage = userSegmentSettings.lotSettings.intradayLeverage;
+      } else if (userSegmentSettings?.intradayLeverage) {
+        leverage = userSegmentSettings.intradayLeverage;
+      } else if (userSegmentSettings?.exposureIntraday) {
+        leverage = userSegmentSettings.exposureIntraday;
+      }
+      
+      return leverage > 0 ? leverage : 1;
+    } catch (error) {
+      console.error('Error getting user leverage:', error);
+      return 1;
+    }
+  }
+
   // Get admin settings for user
   // First try createdBy (direct parent), then fall back to adminCode
   static async getAdminSettings(user) {
+    console.log('[getAdminSettings] Getting admin for user:', user.userId, 'adminCode:', user.adminCode, 'createdBy:', user.createdBy);
     // First try to get the direct creator (broker/admin who created this user)
     if (user.createdBy) {
       const creator = await Admin.findById(user.createdBy);
       if (creator) {
-        console.log('[getAdminSettings] Found creator:', creator.username, creator.role);
+        console.log('[getAdminSettings] Found creator:', creator.username, creator.role, 'adminCode:', creator.adminCode);
         return creator;
       }
     }
     // Fall back to adminCode lookup
     if (user.adminCode) {
-      const admin = await Admin.findOne({ adminCode: user.adminCode });
-      if (admin) {
-        console.log('[getAdminSettings] Found admin by adminCode:', admin.username, admin.role);
-        return admin;
+      // If adminCode is 'SYSTEM', find the Super Admin instead
+      if (user.adminCode === 'SYSTEM') {
+        console.log('[getAdminSettings] adminCode is SYSTEM, looking for Super Admin');
+        const superAdmin = await Admin.findOne({ role: 'SUPER_ADMIN' });
+        if (superAdmin) {
+          console.log('[getAdminSettings] Found Super Admin for SYSTEM:', superAdmin.username, superAdmin.adminCode);
+          return superAdmin;
+        }
+      } else {
+        const admin = await Admin.findOne({ adminCode: user.adminCode });
+        if (admin) {
+          console.log('[getAdminSettings] Found admin by adminCode:', admin.username, admin.role);
+          return admin;
+        }
       }
     }
     console.log('[getAdminSettings] No admin found for user:', user.username);
@@ -387,7 +423,7 @@ class TradingService {
     
     // Crypto / synthetic forex: live quote in USD; margin uses INR notional
     const isUsdSpot = orderIsUsdSpot({ ...order, segment });
-    const effectivePrice = isUsdSpot ? price * getUsdInrRate() : price;
+    const effectivePrice = price;
     
     // Trade value: quantity already includes lotSize from frontend (quantity = lots × lotSize)
     const tradeValue = quantity * effectivePrice;
@@ -665,8 +701,17 @@ class TradingService {
     const scriptSettings = TradeService.mergeScriptSettingsWithInstrument(instrument, rawScriptSettings);
     
     // Validate segment is enabled
-    if (!segmentSettings.enabled) {
+    // For crypto/forex, skip enabled check if segmentSettings is null or not explicitly set
+    const isCryptoOrForex = orderData.isCrypto || orderData.exchange === 'BINANCE' ||
+      ['FOREX', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'].includes(String(orderData.segment || '').toUpperCase()) ||
+      orderData.isForex || orderData.exchange === 'FOREX';
+    if (!isCryptoOrForex && !segmentSettings.enabled) {
       throw new Error(`Trading in ${orderData.segment} segment is not enabled for your account`);
+    }
+    // For crypto/forex, if segmentSettings exists but is not enabled, still allow trading with default settings
+    if (isCryptoOrForex && (!segmentSettings || !segmentSettings.enabled)) {
+      console.log(`[placeOrder] Crypto/forex segment ${orderData.segment} not explicitly enabled, using default settings`);
+      // Don't throw error for crypto/forex
     }
 
     if (segmentSettings.defaultIntradayOnly === true) {
@@ -710,7 +755,7 @@ class TradingService {
     const isUsdSpot = orderIsUsdSpot(orderData);
     const isCryptoWallet = orderIsCrypto(orderData);
     const isForexWallet = orderIsForex(orderData);
-    const usdInr = isUsdSpot ? getUsdInrRate() : 1;
+    const usdInr = 1;
     const isBinanceCrypto = isBinanceCryptoOrder(orderData);
 
     // Get lot size: Binance crypto uses instrument.exchange step only (qty-only); legacy segment lot mapping skipped.
@@ -721,15 +766,9 @@ class TradingService {
       lotSize = await this.getLotSizeAsync(orderData.symbol, orderData.token, orderData.exchange);
     }
     const segU = String(orderData.segment || '').toUpperCase();
-    const segCryptoLot =
-      !isBinanceCrypto ? TradeService.segmentCryptoLotSizePerUnitLot(segmentSettings) : null;
-    if (
-      segCryptoLot != null &&
-      (segU === 'CRYPTOFUT' ||
-        segU === 'CRYPTOOPT' ||
-        orderData.exchange === 'BINANCE')
-    ) {
-      lotSize = segCryptoLot;
+    // CRYPTOFUT and CRYPTOOPT: No lot system - use quantity directly
+    if (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT') {
+      lotSize = 1; // Force lotSize to 1 for crypto futures/options
     }
 
     if (isBinanceCrypto && instrument?.lotSize > 0) {
@@ -745,12 +784,11 @@ class TradingService {
     // Check if frontend sent quantity directly (quantity mode) - quantity won't equal lots * lotSize
     const isQuantityMode = orderData.quantity && orderData.quantity !== (lots * lotSize);
     const inrNotional = orderData.cryptoAmount || orderData.forexAmount;
-    let totalQuantity = isUsdSpot
-      ? (orderData.quantity ||
+    let totalQuantity = orderData.quantity ||
           (orderData.price > 0 && inrNotional
-            ? inrNotional / (orderData.price * usdInr)
-            : 0))
-      : (orderData.quantity || lots * lotSize);
+            ? inrNotional / orderData.price
+            : 0) ||
+          (lots * lotSize);
     
     if (isUsdSpot && lotSize > 0 && !isBinanceCrypto) {
       lots = totalQuantity / lotSize;
@@ -761,7 +799,7 @@ class TradingService {
         tq = totalQuantity;
       }
       if (!(Number.isFinite(tq) && tq > 0) && orderData.price > 0 && inrNotional) {
-        tq = inrNotional / (orderData.price * getUsdInrRate());
+        tq = inrNotional / orderData.price;
       }
       totalQuantity = tq;
       assertBinanceCryptoQuantityValidated({
@@ -865,20 +903,13 @@ class TradingService {
     const price = orderData.price || 0;
     const spreadUsdSide = Number(segmentSettings?.cryptoSpreadUsdPerSide);
     const segmentSpreadMarkupInr =
-      isCryptoWallet &&
-      isUsdSpot &&
+      (isCryptoWallet || isForexWallet) &&
       orderData.orderType === 'MARKET' &&
       orderData.side === 'BUY' &&
-      Number.isFinite(spreadUsdSide) &&
-      spreadUsdSide > 0
-        ? spreadUsdSide * usdInr * totalQuantity
-        : (isCryptoWallet || isForexWallet) &&
-            orderData.orderType === 'MARKET' &&
-            orderData.side === 'BUY' &&
-            Number(segmentSettings?.cryptoSpreadInr) > 0
-          ? (Number(segmentSettings.cryptoSpreadInr) / 2) * totalQuantity
-          : 0;
-    const tradeValue = isUsdSpot ? price * usdInr * totalQuantity + segmentSpreadMarkupInr : price * totalQuantity;
+      Number(segmentSettings?.cryptoSpreadInr) > 0
+        ? (Number(segmentSettings.cryptoSpreadInr) / 2) * totalQuantity
+        : 0;
+    const tradeValue = price * totalQuantity + segmentSpreadMarkupInr;
 
     const oneWayBrokerage =
       TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, orderData, lots) +
@@ -904,21 +935,32 @@ class TradingService {
       }
     }
     
-    // Priority 2: Use segment exposure if no fixed margin
-    // Exposure formula: margin = tradeValue / exposure / 1
+    // Priority 2: Use segment exposure/leverage if no fixed margin
+    // Dynamically resolve from all possible sources (admin sets these via UI)
     const segmentSettingsForMargin = TradeService.applyInstrumentExposureOverrides(instrument, segmentSettings);
     if (!usedFixedMargin && segmentSettingsForMargin) {
-      const exposureNum = Number(
-        isIntraday
-          ? segmentSettingsForMargin?.exposureIntraday
-          : segmentSettingsForMargin?.exposureCarryForward
-      );
-      const exposure = Number.isFinite(exposureNum) && exposureNum > 0 ? exposureNum : 1;
+      const candidates = isIntraday
+        ? [
+            segmentSettingsForMargin?.quantityModeSettings?.intradayLeverage,
+            segmentSettingsForMargin?.lotSettings?.intradayLeverage,
+            segmentSettingsForMargin?.exposureIntraday,
+            segmentSettingsForMargin?.intradayLeverage
+          ]
+        : [
+            segmentSettingsForMargin?.quantityModeSettings?.carryForwardLeverage,
+            segmentSettingsForMargin?.lotSettings?.carryForwardLeverage,
+            segmentSettingsForMargin?.exposureCarryForward,
+            segmentSettingsForMargin?.carryForwardLeverage
+          ];
+      let exposureNum = 1;
+      for (const v of candidates) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 1) { exposureNum = n; break; }
+      }
 
-      if (exposure > 0) {
-        marginRequired = tradeValue / exposure / leverage;
+      if (exposureNum > 1) {
+        marginRequired = tradeValue / exposureNum / leverage;
         marginSource = 'segment_exposure';
-        console.log('Order margin from exposure:', { tradeValue, exposure, leverage, marginRequired, isIntraday });
       }
     }
     
@@ -928,13 +970,20 @@ class TradingService {
       marginSource = 'default_calculated';
     }
     
+    // Determine if MCX trade - check before applying minimum margin
+    const isMCXTrade = orderData.exchange === 'MCX' || orderData.segment === 'MCX' || 
+                       orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
+    
     // CRITICAL: Ensure minimum margin is required (prevent 0 margin trades)
     // Minimum margin should be at least 1% of trade value or ₹100, whichever is higher
-    const minMargin = Math.max(tradeValue * 0.01, 100);
-    if (marginRequired < minMargin && tradeValue > 0) {
-      console.log(`[Trade] Margin too low (${marginRequired}), setting minimum margin: ${minMargin}`);
-      marginRequired = minMargin;
-      marginSource = 'minimum_enforced';
+    // EXCLUDE MCX trades from minimum margin enforcement - they use leverage-based calculation
+    if (!isMCXTrade) {
+      const minMargin = Math.max(tradeValue * 0.01, 100);
+      if (marginRequired < minMargin && tradeValue > 0) {
+        console.log(`[Trade] Margin too low (${marginRequired}), setting minimum margin: ${minMargin}`);
+        marginRequired = minMargin;
+        marginSource = 'minimum_enforced';
+      }
     }
 
     // Determine if MCX trade - check before balance validation
@@ -942,42 +991,22 @@ class TradingService {
                            orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
     
     const spotTradeCostInr =
-      isCryptoWallet || isForexWallet ? price * usdInr * totalQuantity + segmentSpreadMarkupInr : 0;
+      isCryptoWallet || isForexWallet ? price * totalQuantity + segmentSpreadMarkupInr : 0;
     
     // Use appropriate wallet based on trade type
     let availableBalance;
     if (isCryptoWallet) {
       availableBalance = user.cryptoWallet?.balance || 0;
-      const totalRequired = spotTradeCostInr + totalCommission;
+      // For leveraged crypto trades (MIS), only require marginRequired + commission, not full trade value
+      const totalRequired = marginRequired + totalCommission;
       if (totalRequired > availableBalance) {
-        throw new Error(`Insufficient crypto wallet balance. Required: ₹${totalRequired.toFixed(2)}, Available: ₹${availableBalance.toFixed(2)}`);
+        throw new Error(`Insufficient crypto wallet balance. Required: ${totalRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
       }
     } else if (isForexWallet) {
       availableBalance = user.forexWallet?.balance || 0;
-      const totalRequired = spotTradeCostInr + totalCommission;
+      const totalRequired = marginRequired + totalCommission;
       if (totalRequired > availableBalance) {
-        throw new Error(`Insufficient forex wallet balance. Required: ₹${totalRequired.toFixed(2)}, Available: ₹${availableBalance.toFixed(2)}`);
-      }
-    } else if (isMCXTradeEarly) {
-      // MCX trades use separate MCX wallet with margin system
-      const mcxBalance = user.mcxWallet?.balance || 0;
-      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      
-      // CRITICAL: Check if MCX wallet balance is 0 or negative
-      if (mcxBalance <= 0) {
-        throw new Error(`Cannot place MCX trade. Your MCX wallet balance is ₹0. Please transfer funds to your MCX wallet.`);
-      }
-      
-      availableBalance = mcxBalance - mcxUsedMargin;
-      
-      // CRITICAL: Ensure available MCX balance is positive
-      if (availableBalance <= 0) {
-        throw new Error(`Insufficient MCX margin. Your available MCX balance is ₹${availableBalance.toLocaleString()}. Please close some positions or add funds.`);
-      }
-      
-      // Check if user has enough in MCX wallet for margin + commission
-      if ((marginRequired + totalCommission) > availableBalance) {
-        throw new Error(`Insufficient MCX wallet balance. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${availableBalance.toLocaleString()}`);
+        throw new Error(`Insufficient forex wallet balance. Required: ${totalRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
       }
     } else {
       // Regular trades use trading balance with margin system
@@ -1010,19 +1039,23 @@ class TradingService {
       // Only available for NFO/Futures trades
       const usablePledge = isNFOTrade ? (pledgeBalance - pledgeUsedMargin) * (1 - haircutPercent / 100) : 0;
       
+      // Get user's leverage for this segment
+      const leverage = await this.getUserLeverageForSegment(user, orderData.segment);
+      
       // For Cash/Delivery trades: 1:1 leverage, no pledge benefit
       // For NFO/Futures trades: wallet + pledge margin available for margin requirement
-      availableBalance = (walletBalance - blockedMargin) + Math.max(0, usablePledge);
+      // UPDATED: Use leverage-based calculation: (balance * leverage) - usedMargin + pledge
+      availableBalance = (walletBalance * leverage) - blockedMargin + Math.max(0, usablePledge);
       
       // CRITICAL: Ensure available balance is positive
       if (availableBalance <= 0) {
-        throw new Error(`Insufficient available margin. Your available balance is ₹${availableBalance.toLocaleString()}. Please close some positions or add funds.`);
+        throw new Error(`Insufficient available margin. Your available balance is ${availableBalance.toLocaleString()}. Please close some positions or add funds.`);
       }
       
       // Check if user has enough for margin + commission
       if ((marginRequired + totalCommission) > availableBalance) {
-        const pledgeMsg = isNFOTrade && usablePledge > 0 ? ` (Pledge: ₹${Math.max(0, usablePledge).toLocaleString()} used FIRST, then Wallet)` : '';
-        throw new Error(`Insufficient funds. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${availableBalance.toLocaleString()}${pledgeMsg}`);
+        const pledgeMsg = isNFOTrade && usablePledge > 0 ? ` (Pledge: ${Math.max(0, usablePledge).toLocaleString()} used FIRST, then Wallet)` : '';
+        throw new Error(`Insufficient funds. Required: ${(marginRequired + totalCommission).toLocaleString()}, Available: ${availableBalance.toLocaleString()}${pledgeMsg}`);
       }
     }
 
@@ -1050,9 +1083,11 @@ class TradingService {
 
     // Get adminCode from user or fetch from admin if not set
     let adminCode = user.adminCode;
+    console.log('[placeOrder] Initial adminCode:', adminCode, 'user.admin:', user.admin);
     if (!adminCode && user.admin) {
       const userAdmin = await Admin.findById(user.admin);
       adminCode = userAdmin?.adminCode || 'SYSTEM';
+      console.log('[placeOrder] Fetched adminCode from user.admin:', adminCode);
       // Update user with adminCode for future trades using updateOne to avoid validation issues
       await User.updateOne({ _id: user._id }, { $set: { adminCode: adminCode } });
       user.adminCode = adminCode;
@@ -1061,7 +1096,7 @@ class TradingService {
     if (!adminCode) {
       if (isCryptoWallet || isForexWallet) {
         adminCode = 'SYSTEM';
-        console.log('Using SYSTEM adminCode for USD spot trade');
+        console.log('[placeOrder] Using SYSTEM adminCode for USD spot trade');
       } else {
         throw new Error('User not linked to any admin. Please contact support.');
       }
@@ -1109,25 +1144,18 @@ class TradingService {
       trade.entryPrice = effectiveEntryPrice;
       trade.currentPrice = orderData.price;
       trade.marketPrice = orderData.price;
-      if (isCryptoWallet || isForexWallet) {
-        const fx = getUsdInrRate();
-        trade.entryPrice = effectiveEntryPrice * fx;
-        trade.currentPrice = (orderData.price || 0) * fx;
-        trade.marketPrice = (orderData.price || 0) * fx;
-      }
     } else if (isCryptoWallet || isForexWallet) {
-      const fx = getUsdInrRate();
       if (trade.limitPrice != null && Number(trade.limitPrice) > 0) {
-        trade.limitPrice = Number(trade.limitPrice) * fx;
+        trade.limitPrice = Number(trade.limitPrice);
       }
       if (trade.triggerPrice != null && Number(trade.triggerPrice) > 0) {
-        trade.triggerPrice = Number(trade.triggerPrice) * fx;
+        trade.triggerPrice = Number(trade.triggerPrice);
       }
       if (trade.stopLoss != null && Number(trade.stopLoss) > 0) {
-        trade.stopLoss = Number(trade.stopLoss) * fx;
+        trade.stopLoss = Number(trade.stopLoss);
       }
       if (trade.target != null && Number(trade.target) > 0) {
-        trade.target = Number(trade.target) * fx;
+        trade.target = Number(trade.target);
       }
     }
 
@@ -1136,17 +1164,13 @@ class TradingService {
     let newForexBalance = user.forexWallet?.balance || 0;
     let newMcxBalance, newMcxUsedMargin;
     
-    // Check if this is an MCX trade
-    const isMCXTrade = orderData.exchange === 'MCX' || orderData.segment === 'MCX' || 
-                       orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
-    
     if (isCryptoWallet) {
       const cryptoBalance = user.cryptoWallet?.balance || 0;
-      const totalDeduction = spotTradeCostInr + totalCommission;
+      const totalDeduction = marginRequired + totalCommission;
       newCryptoBalance = cryptoBalance - totalDeduction;
       
       if (newCryptoBalance < 0) {
-        throw new Error(`Insufficient crypto wallet balance. Required: ₹${totalDeduction.toFixed(2)}, Available: ₹${cryptoBalance.toFixed(2)}`);
+        throw new Error(`Insufficient crypto wallet balance. Required: ${totalDeduction.toFixed(2)}, Available: ${cryptoBalance.toFixed(2)}`);
       }
       
       newTradingBalance = user.wallet.tradingBalance || 0;
@@ -1154,17 +1178,16 @@ class TradingService {
       newBlocked = user.wallet.blocked || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      console.log(`Crypto trade: Deducting ₹${totalDeduction.toFixed(2)} from crypto wallet`);
+      console.log(`Crypto trade: Deducting ${totalDeduction.toFixed(2)} from crypto wallet`);
       
-      marginRequired = spotTradeCostInr;
-      trade.marginUsed = spotTradeCostInr;
+      trade.marginUsed = marginRequired;
     } else if (isForexWallet) {
       const forexBalance = user.forexWallet?.balance || 0;
-      const totalDeduction = spotTradeCostInr + totalCommission;
+      const totalDeduction = marginRequired + totalCommission;
       newForexBalance = forexBalance - totalDeduction;
       
       if (newForexBalance < 0) {
-        throw new Error(`Insufficient forex wallet balance. Required: ₹${totalDeduction.toFixed(2)}, Available: ₹${forexBalance.toFixed(2)}`);
+        throw new Error(`Insufficient forex wallet balance. Required: ${totalDeduction.toFixed(2)}, Available: ${forexBalance.toFixed(2)}`);
       }
       
       newCryptoBalance = user.cryptoWallet?.balance || 0;
@@ -1173,25 +1196,26 @@ class TradingService {
       newBlocked = user.wallet.blocked || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      console.log(`Forex trade: Deducting ₹${totalDeduction.toFixed(2)} from forex wallet`);
+      console.log(`Forex trade: Deducting ${totalDeduction.toFixed(2)} from forex wallet`);
       
-      marginRequired = spotTradeCostInr;
-      trade.marginUsed = spotTradeCostInr;
+      trade.marginUsed = marginRequired;
     } else if (isMCXTrade) {
       // MCX trades: Block margin in usedMargin, deduct only commission from balance
-      // Available = balance - usedMargin, so we only track margin in usedMargin (not deduct from balance)
+      // Available = (balance * leverage) - usedMargin, so we only track margin in usedMargin (not deduct from balance)
       const mcxBalance = user.mcxWallet?.balance || 0;
       const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      const mcxAvailable = mcxBalance - mcxUsedMargin;
+      // Get MCX leverage
+      const mcxLeverage = await this.getUserLeverageForSegment(user, orderData.segment);
+      const mcxAvailable = (mcxBalance * mcxLeverage) - mcxUsedMargin;
       
       // Check if user has enough in MCX wallet
       if ((marginRequired + totalCommission) > mcxAvailable) {
-        throw new Error(`Insufficient MCX wallet balance. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${mcxAvailable.toLocaleString()}`);
+        throw new Error(`Insufficient MCX wallet balance. Required: ${(marginRequired + totalCommission).toLocaleString()}, Available: ${mcxAvailable.toLocaleString()}`);
       }
       
       // Update MCX wallet - only deduct commission from balance, margin is tracked in usedMargin
       newMcxBalance = mcxBalance - totalCommission; // Only commission deducted
-      newMcxUsedMargin = mcxUsedMargin + marginRequired; // Block margin (available = balance - usedMargin)
+      newMcxUsedMargin = mcxUsedMargin + marginRequired; // Block margin (available = balance * leverage - usedMargin)
       
       // Regular wallet unchanged for MCX trades
       newTradingBalance = user.wallet.tradingBalance || 0;
@@ -1326,18 +1350,44 @@ class TradingService {
       if (!user.forexWallet) user.forexWallet = {};
       user.forexWallet.balance = newForexBalance;
     }
+    if (isMCXTrade) {
+      if (!user.mcxWallet) user.mcxWallet = {};
+      user.mcxWallet.balance = newMcxBalance;
+      user.mcxWallet.usedMargin = newMcxUsedMargin;
+    }
     
     await trade.save();
 
     if (trade.status === 'OPEN' && trade.bookType === 'B_BOOK' && admin && !user.isDemo) {
       const brk = trade.commission || 0;
+      console.log('[placeOrder] Brokerage distribution check:', {
+        status: trade.status,
+        bookType: trade.bookType,
+        admin: admin ? admin.adminCode : null,
+        adminRole: admin ? admin.role : null,
+        isDemo: user.isDemo,
+        commission: brk,
+        userId: user.userId,
+        tradeId: trade._id
+      });
       if (brk > 0) {
         try {
           await TradeService.distributeBrokerageWithPatti(trade, brk, admin, user);
+          console.log('[placeOrder] Brokerage distributed successfully');
         } catch (distErr) {
           console.error('[placeOrder] distributeBrokerageWithPatti at open:', distErr?.message || distErr);
         }
+      } else {
+        console.log('[placeOrder] Commission is 0, skipping brokerage distribution');
       }
+    } else {
+      console.log('[placeOrder] Brokerage distribution skipped:', {
+        status: trade.status,
+        bookType: trade.bookType,
+        admin: admin ? admin.adminCode : null,
+        isDemo: user.isDemo,
+        commission: trade.commission
+      });
     }
 
     // USD spot pending LIMIT/SL: fill when book satisfies (ticks also fill via processPendingOrdersForUsdSpotTick)
@@ -1424,7 +1474,7 @@ class TradingService {
     const trade = await Trade.findById(tradeId);
     if (!trade || trade.status !== 'PENDING') return null;
 
-    const ref = tradeIsUsdSpot(trade) ? currentPrice * getUsdInrRate() : currentPrice;
+    const ref = currentPrice;
     let shouldExecute = false;
 
     if (trade.orderType === 'LIMIT') {
@@ -1470,7 +1520,7 @@ class TradingService {
     const trade = await Trade.findById(tradeId);
     if (!trade || trade.status !== 'OPEN') return null;
 
-    const ref = tradeIsUsdSpot(trade) ? currentPrice * getUsdInrRate() : currentPrice;
+    const ref = currentPrice;
     let shouldClose = false;
     let closeReason = null;
 
@@ -1513,9 +1563,8 @@ class TradingService {
     
     const admin = await Admin.findOne({ adminCode: trade.adminCode });
 
-    // Apply spread to exit price (opposite of entry). USD-spot exits use USDT/FX quote; entry stored in INR.
+    // Apply spread to exit price (opposite of entry).
     const spreadPoints = trade.spread || 0;
-    const fxUsd = tradeIsUsdSpot(trade) ? getUsdInrRate() : 1;
     let effectiveExitPrice = exitPrice;
 
     if (spreadPoints > 0) {
@@ -1526,21 +1575,19 @@ class TradingService {
       }
     }
 
-    const exitPriceInInr = tradeIsUsdSpot(trade) ? effectiveExitPrice * fxUsd : effectiveExitPrice;
-
-    trade.exitPrice = exitPriceInInr;
+    trade.exitPrice = effectiveExitPrice;
     const charges = await Charges.calculateCharges(trade, trade.adminCode, trade.user);
     trade.charges = charges;
 
     const multiplier = trade.side === 'BUY' ? 1 : -1;
-    const priceDiff = (exitPriceInInr - trade.entryPrice) * multiplier;
+    const priceDiff = (effectiveExitPrice - trade.entryPrice) * multiplier;
     const grossPnL = priceDiff * trade.quantity;
 
     const closingCharges = (charges.exchange || 0) + (charges.gst || 0) + (charges.stt || 0) + (charges.sebi || 0) + (charges.stamp || 0);
     const netPnL = grossPnL - closingCharges;
 
-    trade.exitPrice = exitPriceInInr;
-    trade.effectiveExitPrice = exitPriceInInr;
+    trade.exitPrice = effectiveExitPrice;
+    trade.effectiveExitPrice = effectiveExitPrice;
     trade.status = 'CLOSED';
     trade.closeReason = reason;
     trade.closedAt = new Date();
@@ -1800,8 +1847,8 @@ class TradingService {
       trade,
       pnl: netPnL,
       grossPnL,
-      exitPrice: exitPriceInInr,
-      effectiveExitPrice: exitPriceInInr,
+      exitPrice: effectiveExitPrice,
+      effectiveExitPrice: effectiveExitPrice,
       spread: spreadPoints,
       charges
     };
@@ -2021,11 +2068,10 @@ class TradingService {
       }
     }
     
-    if (isUsdSpotExit && (!price || price <= 0)) {
-      const fx = getUsdInrRate();
+    if (!price || price <= 0) {
       const e = trade.entryPrice || 0;
-      price = e > 0 && fx > 0 ? e / fx : e;
-      console.log(`USD spot trade: Using entry-based USD price ${price} as exit price`);
+      price = e > 0 ? e : e;
+      console.log(`Using entry-based price ${price} as exit price`);
     }
     
     // Validate price is reasonable (not zero or negative)
@@ -2158,3 +2204,4 @@ class TradingService {
 }
 
 export default TradingService;
+

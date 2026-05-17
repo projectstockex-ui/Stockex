@@ -73,14 +73,17 @@ function buildAllowedOrigins() {
 const allowedOrigins = buildAllowedOrigins();
 
 const app = express();
-const httpServer = createServer(app);
+const server = createServer(app);
 
-const io = new Server(httpServer, {
+const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  // Balanced configuration for stability and speed
+  pingTimeout: 30000,
+  pingInterval: 25000,
 });
 
 // Initialize Zerodha WebSocket service with Socket.IO
@@ -207,13 +210,13 @@ const PORT = process.env.PORT || 5001;
   
   console.log(`[stockex-api] Binding HTTP 0.0.0.0:${PORT}...`);
 
-  httpServer.on('error', (err) => {
+  server.on('error', (err) => {
     console.error('HTTP server failed to start:', err.message);
     process.exit(1);
   });
 
   // Bind IPv4 explicitly so nginx upstream 127.0.0.1 always matches (avoids localhost IPv6-only mismatches).
-  httpServer.listen(PORT, '0.0.0.0', () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on 0.0.0.0:${PORT}`);
     // Run only after DB is ready (avoids Mongoose buffer timeout on startup)
     cleanupExpiredDemoAccounts();

@@ -1,5 +1,6 @@
 import Admin from '../models/Admin.js';
 import User from '../models/User.js';
+import GameSettings from '../models/GameSettings.js';
 import { collectHierarchyAdminIds } from '../utils/hierarchyAdminIds.js';
 
 /** Canonical keys — match GameSettings.games.* and wallet ledger meta.gameKey */
@@ -77,6 +78,30 @@ function labelForGameKey(gameKey) {
 
 export async function assertHierarchyGameNotDenied(user, gameKey) {
   if (!ALLOWED.has(gameKey)) return;
+  
+  // Check if games are enabled globally and if the specific game is enabled
+  try {
+    const gameSettings = await GameSettings.getSettings();
+    const globalGamesEnabled = gameSettings?.gamesEnabled ?? true; // Default to enabled if not set
+    const gameEnabled = gameSettings?.games?.[gameKey]?.enabled ?? true; // Default to enabled if not set
+    
+    // If both global games and specific game are enabled, allow access regardless of deny list
+    // This allows superadmin to enable games globally and override deny lists
+    if (globalGamesEnabled && gameEnabled) {
+      console.log('[GameRestriction] Games are globally enabled and', gameKey, 'is enabled in GameSettings, allowing access');
+      return;
+    }
+    
+    if (!globalGamesEnabled) {
+      console.log('[GameRestriction] Games are globally disabled in GameSettings');
+    } else if (!gameEnabled) {
+      console.log('[GameRestriction] Game', gameKey, 'is disabled in GameSettings');
+    }
+  } catch (error) {
+    console.error('[GameRestriction] Error checking GameSettings:', error.message);
+    // Continue with deny list check if GameSettings check fails
+  }
+  
   const merged = await getMergedGameDenylistForPrincipal(user);
   if (merged.includes(gameKey)) {
     throw new Error(

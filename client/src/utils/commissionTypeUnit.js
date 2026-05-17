@@ -10,7 +10,7 @@ export function requiredUnitForCommissionType(commissionType) {
 
 /** Label for the numeric commission field. */
 export function commissionAmountLabel(commissionType) {
-  return commissionType === 'PER_CRORE' ? 'Amount (%)' : 'Amount (₹)';
+  return 'Amount (₹)';
 }
 
 export function commissionHelperText(commissionType) {

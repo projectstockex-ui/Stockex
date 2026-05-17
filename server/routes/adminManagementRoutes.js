@@ -72,6 +72,8 @@ import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 
+import BtcJackpotBid from '../models/BtcJackpotBid.js';
+
 import brokerageRestrictionRoutes from './brokerageRestrictionRoutes.js';
 
 import referralEligibilityRoutes from './referralEligibilityRoutes.js';
@@ -192,6 +194,41 @@ const router = express.Router();
 
 // ==================== HELPER FUNCTIONS ====================
 
+
+/**
+ * Counts unsettled (pending/active) bets for a given game.
+ * Used to prevent SuperAdmin from disabling a game while users have open positions.
+ */
+async function countPendingBetsForGame(gameId) {
+  const GAME_FRIENDLY = {
+    niftyUpDown: 'Nifty Up/Down',
+    btcUpDown: 'BTC Up/Down',
+    niftyNumber: 'Nifty Number',
+    niftyBracket: 'Nifty Bracket',
+    niftyJackpot: 'Nifty Jackpot',
+    btcJackpot: 'BTC Jackpot',
+    btcNumber: 'BTC Number',
+  };
+
+  switch (gameId) {
+    case 'niftyUpDown':
+      return GameTransactionSlip.countDocuments({ gameIds: 'updown', status: 'PENDING' });
+    case 'btcUpDown':
+      return GameTransactionSlip.countDocuments({ gameIds: 'btcupdown', status: 'PENDING' });
+    case 'niftyNumber':
+      return NiftyNumberBet.countDocuments({ status: 'pending' });
+    case 'niftyBracket':
+      return NiftyBracketTrade.countDocuments({ status: 'active' });
+    case 'niftyJackpot':
+      return NiftyJackpotBid.countDocuments({ status: 'pending' });
+    case 'btcJackpot':
+      return BtcJackpotBid.countDocuments({ status: 'pending' });
+    case 'btcNumber':
+      return BtcNumberBet.countDocuments({ status: 'pending' });
+    default:
+      return 0;
+  }
+}
 
 
 // Hierarchy levels for permission checks
@@ -338,7 +375,7 @@ const superAdminAuth = [protectAdmin, superAdminOnly];
 
 
 
-function normalizeRestrictionsPayload(body) {
+function normalizeRestrictionsPayload(body, callerRole) {
 
   if (!body || typeof body !== 'object') return {};
 
@@ -346,7 +383,12 @@ function normalizeRestrictionsPayload(body) {
 
   restrictions.instrumentDenylist = sanitizeInstrumentDenylist(body.instrumentDenylist);
 
-  restrictions.gameDenylist = sanitizeGameDenylist(body.gameDenylist);
+  // Only SuperAdmin may set the game deny-list
+  if (callerRole === 'SUPER_ADMIN') {
+    restrictions.gameDenylist = sanitizeGameDenylist(body.gameDenylist);
+  } else {
+    delete restrictions.gameDenylist;
+  }
 
   return restrictions;
 
@@ -528,7 +570,7 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
   try {
 
-    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, autosquare, breakupQuantity, maxLotQuantity } = req.body;
+    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, cityCode, cityName, autosquare, breakupQuantity, maxLotQuantity } = req.body;
 
     
 
@@ -877,6 +919,10 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
       leverageSettings,
 
+      cityCode: cityCode || '', // City code for broker location (e.g., DEL, MUM, BLR)
+
+      cityName: cityName || '', // City name for broker location (e.g., Delhi, Mumbai, Bangalore)
+
       createdBy: req.admin._id,
 
       parentId: actualParent._id,
@@ -1181,7 +1227,7 @@ router.put('/admins/:id/restrictions', protectAdmin, superAdminOnly, async (req,
 
 
 
-    admin.restrictions = normalizeRestrictionsPayload(req.body);
+    admin.restrictions = normalizeRestrictionsPayload(req.body, req.admin?.role);
 
     admin.markModified('restrictions');
 
@@ -1300,7 +1346,7 @@ router.put('/brokers/:id/restrictions', protectAdmin, async (req, res) => {
 
 
 
-    broker.restrictions = normalizeRestrictionsPayload(req.body);
+    broker.restrictions = normalizeRestrictionsPayload(req.body, req.admin?.role);
 
     broker.markModified('restrictions');
 
@@ -1422,7 +1468,7 @@ router.put('/subbrokers/:id/restrictions', protectAdmin, async (req, res) => {
 
 
 
-    subBroker.restrictions = normalizeRestrictionsPayload(req.body);
+    subBroker.restrictions = normalizeRestrictionsPayload(req.body, req.admin?.role);
 
     subBroker.markModified('restrictions');
 
@@ -1855,6 +1901,45 @@ router.get('/users/:id/leverage', protectAdmin, async (req, res) => {
 
   }
 
+});
+
+// Get parent admin's segment permissions as baseline for hierarchy checks
+router.get('/users/:id/parent-segment-baseline', protectAdmin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Get parent admin's segment permissions
+    let parentSegmentPermissions = {};
+    if (user.admin) {
+      const parentAdmin = await Admin.findById(user.admin);
+      if (parentAdmin && parentAdmin.segmentPermissions) {
+        // Convert Map to plain object if needed
+        parentSegmentPermissions = parentAdmin.segmentPermissions instanceof Map
+          ? Object.fromEntries(parentAdmin.segmentPermissions)
+          : parentAdmin.segmentPermissions;
+      }
+    }
+
+    // If no parent admin or no parent segment permissions, use system defaults
+    if (!parentSegmentPermissions || Object.keys(parentSegmentPermissions).length === 0) {
+      try {
+        const sysLean = await SystemSettings.findOne({ settingsType: 'global' })
+          .select('adminSegmentDefaults')
+          .lean();
+        const adminSegmentDefaults = plainSegmentDefaultsMap(sysLean?.adminSegmentDefaults || {});
+        parentSegmentPermissions = adminSegmentDefaults;
+      } catch {
+        parentSegmentPermissions = {};
+      }
+    }
+
+    console.log('[Parent Segment Baseline] User:', user.username, 'Parent segmentPermissions:', JSON.stringify(parentSegmentPermissions, null, 2));
+    res.json({ baseline: parentSegmentPermissions });
+  } catch (error) {
+    console.error('[Parent Segment Baseline] Error:', error);
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // Get user's segment settings
@@ -4462,15 +4547,17 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
 
     const user = await User.findOne(query);
 
-    
+
 
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    
+
 
     const { segmentPermissions, scriptSettings, mergeScriptSettings, segmentExplicitKeys } = req.body;
 
-
+    console.log('[Save User Settings] User:', user.username);
+    console.log('[Save User Settings] Received segmentPermissions:', JSON.stringify(segmentPermissions, null, 2));
+    console.log('[Save User Settings] Received segmentExplicitKeys:', JSON.stringify(segmentExplicitKeys, null, 2));
 
     const updateFields = {};
 
@@ -4494,7 +4581,8 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
 
       }
 
-      updateFields.segmentPermissions = plain;
+      // Convert to Map for database storage
+      updateFields.segmentPermissions = new Map(Object.entries(plain));
 
     }
 
@@ -4584,13 +4672,28 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
 
     }
 
+    // Update segmentPermissions by updating individual entries in the Map
+    if (updateFields.segmentPermissions) {
+      const newPermissions = updateFields.segmentPermissions instanceof Map
+        ? updateFields.segmentPermissions
+        : new Map(Object.entries(updateFields.segmentPermissions));
 
+      // Clear existing Map and set new entries
+      user.segmentPermissions.clear();
+      for (const [key, value] of newPermissions.entries()) {
+        user.segmentPermissions.set(key, value);
+      }
+      user.markModified('segmentPermissions');
+    }
 
-    // Use updateOne to avoid segmentPermissions validation error
+    if (updateFields.scriptSettings) {
+      user.scriptSettings = updateFields.scriptSettings;
+    }
+    if (updateFields.segmentExplicitKeys) {
+      user.segmentExplicitKeys = updateFields.segmentExplicitKeys;
+    }
 
-    await User.updateOne({ _id: user._id }, { $set: updateFields });
-
-    
+    await user.save();
 
     const updatedUser = await User.findById(user._id).select('-password');
 
@@ -7744,7 +7847,7 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
       let poolRows = [];
 
-      if (perspectiveSuper && tUpper !== 'CREDIT') {
+      if (perspectiveSuper) {
 
         const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' }).select('_id').lean();
 
@@ -7756,15 +7859,24 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
           } else {
 
+            // Determine which pool row types to fetch based on tab
+            // "Debited to you" (tUpper=DEBIT) → SA DEBIT rows (payouts to users)
+            // "Credited to you" (tUpper=CREDIT) → SA CREDIT rows (stakes from users)
+            // "All lines" (no type) → both SA DEBIT and CREDIT rows
+            let poolType;
+            if (tUpper === 'DEBIT') poolType = 'DEBIT';
+            else if (tUpper === 'CREDIT') poolType = 'CREDIT';
+            else poolType = null; // both
+
             const poolBaseOr = [
 
-              { 'meta.poolDebitKind': { $in: GAMES_POOL_DEBIT_KINDS } },
+              { 'meta.poolDebitKind': { $in: [...GAMES_POOL_DEBIT_KINDS, 'BTC_JACKPOT_STAKE', 'BTC_NUMBER_STAKE', 'UPDOWN_STAKE'] } },
 
               {
 
                 description: {
 
-                  $regex: /(gross prize hierarchy share|release win brokerage for hierarchy)/i,
+                  $regex: /(gross prize hierarchy share|release win brokerage for hierarchy|stake to Bank)/i,
 
                 },
 
@@ -7778,13 +7890,15 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
               ownerId: sa._id,
 
-              type: 'DEBIT',
-
               reason: 'ADJUSTMENT',
 
               $and: [{ $or: poolBaseOr }],
 
             };
+
+            if (poolType) {
+              poolFilter.type = poolType;
+            }
 
             if (gameIdRaw && SUPER_ADMIN_GAMES_LEDGER_GAME_IDS.includes(gameIdRaw)) {
 
@@ -7880,7 +7994,7 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
             createdAt: row.createdAt,
 
-            type: 'DEBIT',
+            type: row.type || 'DEBIT',
 
             reason: 'HOUSE_POOL',
 
@@ -8014,7 +8128,20 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
         : transactionsGames;
 
-
+      // Augment summary with pool row totals (SA credits from stakes, SA debits from payouts)
+      if (perspectiveSuper && summary && poolRows.length) {
+        for (const pr of poolRows) {
+          const amt = Number(pr.amount) || 0;
+          if (pr.type === 'CREDIT') {
+            summary.credits = (summary.credits || 0) + amt;
+            summary.creditCount = (summary.creditCount || 0) + 1;
+          } else if (pr.type === 'DEBIT') {
+            summary.debits = (summary.debits || 0) + amt;
+            summary.debitCount = (summary.debitCount || 0) + 1;
+          }
+        }
+        summary.net = (summary.credits || 0) - (summary.debits || 0);
+      }
 
       return res.json({ transactions, summary, scope: 'games' });
 
@@ -13082,6 +13209,18 @@ router.patch('/game-settings/game/:gameId/toggle', protectAdmin, superAdminOnly,
 
     if (settings.games && settings.games[gameId]) {
 
+      const currentlyEnabled = settings.games[gameId].enabled !== false;
+
+      // Block disable if users have unsettled bets
+      if (currentlyEnabled) {
+        const pendingCount = await countPendingBetsForGame(gameId);
+        if (pendingCount > 0) {
+          return res.status(400).json({
+            message: `Cannot disable ${settings.games[gameId].name || gameId} — ${pendingCount} user(s) have placed tickets on this game whose win/loss is not yet decided. Please wait until all results are settled.`
+          });
+        }
+      }
+
       settings.games[gameId].enabled = !settings.games[gameId].enabled;
 
       settings.markModified('games');
@@ -13119,6 +13258,19 @@ router.patch('/game-settings/toggle-all', protectAdmin, superAdminOnly, async (r
   try {
 
     let settings = await GameSettings.getSettings();
+
+    // Block "Disable All" if any game has unsettled bets
+    if (settings.gamesEnabled) {
+      const allGameIds = ['niftyUpDown', 'btcUpDown', 'niftyNumber', 'niftyBracket', 'niftyJackpot', 'btcJackpot', 'btcNumber'];
+      const counts = await Promise.all(allGameIds.map(id => countPendingBetsForGame(id)));
+      const gamesWithPending = allGameIds.filter((_, i) => counts[i] > 0);
+      const totalPending = counts.reduce((s, c) => s + c, 0);
+      if (totalPending > 0) {
+        return res.status(400).json({
+          message: `Cannot disable all games — ${totalPending} unsettled ticket(s) across ${gamesWithPending.length} game(s) (${gamesWithPending.join(', ')}). Please wait until all results are settled.`
+        });
+      }
+    }
 
     settings.gamesEnabled = !settings.gamesEnabled;
 
@@ -13490,18 +13642,6 @@ router.delete('/admins/:id', protectAdmin, async (req, res) => {
 
 
 
-    if (activeTrades > 0) {
-
-      return res.status(400).json({
-
-        message: `Cannot archive ${adminToArchive.role}. There are ${activeTrades} active trade(s) under this admin. Please close all trades before archiving.`
-
-      });
-
-    }
-
-
-
     // Check for pending games for any users under this admin
 
     const GameTransactionSlip = require('../models/GameTransactionSlip');
@@ -13516,11 +13656,101 @@ router.delete('/admins/:id', protectAdmin, async (req, res) => {
 
 
 
+    // Check for open positions in all wallets for users under this admin
+
+    const usersWithOpenPositions = await User.find({
+
+      admin: { $in: adminIdList }
+
+    }).select('_id username wallet gamesWallet mcxWallet cryptoWallet forexWallet');
+
+
+
+    const usersWithIssues = [];
+
+    for (const u of usersWithOpenPositions) {
+
+      const positions = [];
+
+      if (u.wallet?.usedMargin > 0) {
+
+        positions.push(`Main Wallet: ₹${u.wallet.usedMargin.toLocaleString()} used margin`);
+
+      }
+
+      if (u.gamesWallet?.usedMargin > 0) {
+
+        positions.push(`Games Wallet: ₹${u.gamesWallet.usedMargin.toLocaleString()} used margin`);
+
+      }
+
+      if (u.mcxWallet?.usedMargin > 0) {
+
+        positions.push(`MCX Wallet: ₹${u.mcxWallet.usedMargin.toLocaleString()} used margin`);
+
+      }
+
+      if (u.cryptoWallet?.usedMargin > 0) {
+
+        positions.push(`Crypto Wallet: ₹${u.cryptoWallet.usedMargin.toLocaleString()} used margin`);
+
+      }
+
+      if (u.forexWallet?.usedMargin > 0) {
+
+        positions.push(`Forex Wallet: ₹${u.forexWallet.usedMargin.toLocaleString()} used margin`);
+
+      }
+
+
+
+      if (positions.length > 0) {
+
+        usersWithIssues.push({
+
+          username: u.username || u.email,
+
+          positions: positions.join(', ')
+
+        });
+
+      }
+
+    }
+
+
+
+    // Build detailed error message
+
+    const blockReasons = [];
+
+    if (activeTrades > 0) {
+
+      blockReasons.push(`${activeTrades} active trade(s) open under this admin`);
+
+    }
+
     if (pendingGames > 0) {
+
+      blockReasons.push(`${pendingGames} pending game(s) with results yet to come under this admin`);
+
+    }
+
+    if (usersWithIssues.length > 0) {
+
+      const userList = usersWithIssues.map(u => `${u.username} has ${u.positions}`).join('; ');
+
+      blockReasons.push(`users with open positions: ${userList}`);
+
+    }
+
+
+
+    if (blockReasons.length > 0) {
 
       return res.status(400).json({
 
-        message: `Cannot archive ${adminToArchive.role}. There are ${pendingGames} pending game(s) with results yet to come under this admin. Please wait for game results before archiving.`
+        message: `Cannot archive ${adminToArchive.role}. ${blockReasons.join(' and ')}. Please close all positions before archiving.`
 
       });
 
@@ -13596,18 +13826,6 @@ router.delete('/users/:id', protectAdmin, async (req, res) => {
 
 
 
-    if (activeTrades > 0) {
-
-      return res.status(400).json({
-
-        message: `Cannot archive user. User has ${activeTrades} active trade(s). Please close all trades before archiving.`
-
-      });
-
-    }
-
-
-
     // Check for pending games (PENDING or PARTIALLY_SETTLED status)
 
     const pendingGames = await GameTransactionSlip.countDocuments({
@@ -13620,11 +13838,75 @@ router.delete('/users/:id', protectAdmin, async (req, res) => {
 
 
 
+    // Check for open positions in all wallets
+
+    const openPositions = [];
+
+    const userName = user.username || user.email;
+
+
+
+    if (user.wallet?.usedMargin > 0) {
+
+      openPositions.push(`Main Wallet: ₹${user.wallet.usedMargin.toLocaleString()} used margin`);
+
+    }
+
+    if (user.gamesWallet?.usedMargin > 0) {
+
+      openPositions.push(`Games Wallet: ₹${user.gamesWallet.usedMargin.toLocaleString()} used margin`);
+
+    }
+
+    if (user.mcxWallet?.usedMargin > 0) {
+
+      openPositions.push(`MCX Wallet: ₹${user.mcxWallet.usedMargin.toLocaleString()} used margin`);
+
+    }
+
+    if (user.cryptoWallet?.usedMargin > 0) {
+
+      openPositions.push(`Crypto Wallet: ₹${user.cryptoWallet.usedMargin.toLocaleString()} used margin`);
+
+    }
+
+    if (user.forexWallet?.usedMargin > 0) {
+
+      openPositions.push(`Forex Wallet: ₹${user.forexWallet.usedMargin.toLocaleString()} used margin`);
+
+    }
+
+
+
+    // Build detailed error message
+
+    const blockReasons = [];
+
+    if (activeTrades > 0) {
+
+      blockReasons.push(`${activeTrades} active trade(s) open`);
+
+    }
+
     if (pendingGames > 0) {
+
+      blockReasons.push(`${pendingGames} pending game(s) with results yet to come`);
+
+    }
+
+    if (openPositions.length > 0) {
+
+      blockReasons.push(`open positions:\n${openPositions.join('\n')}`);
+
+    }
+
+
+
+    if (blockReasons.length > 0) {
 
       return res.status(400).json({
 
-        message: `Cannot archive user. User has ${pendingGames} pending game(s) with results yet to come. Please wait for game results before archiving.`
+        message: `Cannot archive user ${userName}. ${blockReasons.join(' and ')}. Please close all positions before archiving.`
 
       });
 

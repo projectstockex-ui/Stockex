@@ -257,7 +257,7 @@ function mergeLegacyForexWatchlistBuckets(merged) {
   return next;
 }
 
-/** Forex ticks/candles are spot units; UI shows ₹ via usdRate — scale chart so it matches header/watchlist. */
+/** Forex ticks/candles are spot units; UI shows numeric values via usdRate — scale chart so it matches header/watchlist. */
 function forexChartInrMultiplier(rate) {
   const n = Number(rate);
   return n > 0 && Number.isFinite(n) ? n : 1;
@@ -284,7 +284,7 @@ function scaleForexChartCandle(c, rate, pairUpper) {
   };
 }
 
-/** Binance OHLC: USDT candles as-is for chart; forex OHLC scaled to ₹ via spotPxToDisplayedInr. */
+/** Binance OHLC: USDT candles as-is for chart; forex OHLC scaled to numeric values via spotPxToDisplayedInr. */
 function scaleUsdSpotChartCandle(c, inst, usdRate) {
   if (isForexInstrument(inst)) {
     return {
@@ -316,7 +316,7 @@ function scaleUsdSpotChartCandle(c, inst, usdRate) {
   };
 }
 
-/** Display price: Binance USD spot in USDT ($); forex/other paths use ₹ via spotPxToDisplayedInr. */
+/** Display price: Binance USD spot in USDT; forex/other paths use numeric values via spotPxToDisplayedInr. */
 function spotQuoteDisplayPrice(inst, spotPx, usdRate) {
   if (isUsdSpotInstrument(inst) && !isForexInstrument(inst)) {
     return Number(spotPx) || 0;
@@ -324,7 +324,7 @@ function spotQuoteDisplayPrice(inst, spotPx, usdRate) {
   return spotPxToDisplayedInr(inst, spotPx, usdRate);
 }
 
-/** ₹ column for crypto (USDT) & forex spot; USDINR is already INR per USD. */
+/** Numeric display for crypto (USDT) & forex spot; USDINR is already INR per USD. */
 function spotPxToDisplayedInr(inst, spotPx, usdRate) {
   const px = Number(spotPx) || 0;
   if (isForexInstrument(inst)) return px * forexInrDisplayFactor(String(inst.pair || inst.symbol || '').toUpperCase(), usdRate);
@@ -439,7 +439,7 @@ function getUsdSpotBidAsk(marketData, item, options) {
   return { bidPrice: bid, askPrice: ask };
 }
 
-/** Segment `cryptoSpreadInr` = total ₹ width per coin on quote; half widens bid/ask in USDT before FX display. */
+/** Segment `cryptoSpreadInr` = total numeric width per coin on quote; half widens bid/ask in USDT before FX display. */
 function adjustUsdSpotBidAskForSegmentSpread(bidUsd, askUsd, spreadInrTotal, inrPerUsd) {
   const fx = Number(inrPerUsd);
   const w = Number(spreadInrTotal);
@@ -513,6 +513,7 @@ const UserDashboard = () => {
   const forexOnly = searchParams.get('mode') === 'forex';
   
   const [selectedInstrument, setSelectedInstrument] = useState(null);
+  const hydratingInstrumentRef = useRef(false);
   const [walletData, setWalletData] = useState(null);
   const [activeTab, setActiveTab] = useState('positions');
   const [quickMode, setQuickMode] = useState(true); // Always use quick order system
@@ -620,7 +621,7 @@ const UserDashboard = () => {
       }
     };
     fetchUsdRate();
-    // Refresh often — rate drives crypto ₹ display (Binance USDTINR when available)
+    // Refresh often — rate drives crypto numeric display (Binance USDTINR when available)
     const interval = setInterval(fetchUsdRate, 120000);
     return () => clearInterval(interval);
   }, []);
@@ -638,7 +639,7 @@ const UserDashboard = () => {
     const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
     const socket = io(socketUrl);
     const pending = {};
-    const MARKET_TICK_FLUSH_MS = 40;
+    const MARKET_TICK_FLUSH_MS = 0; // IMMEDIATE - no batching for tick-to-tick speed
     let flushTimer = null;
     const flushBatchedTicks = () => {
       flushTimer = null;
@@ -788,6 +789,9 @@ const UserDashboard = () => {
    */
   const hydrateSelectedInstrumentSnapshot = useCallback(async () => {
     if (!mcxOnly || !user?.token || !selectedInstrument) return;
+    if (hydratingInstrumentRef.current) return;
+    hydratingInstrumentRef.current = true;
+
     const searchKey = String(
       selectedInstrument.tradingSymbol || selectedInstrument.symbol || ''
     ).trim();
@@ -875,13 +879,21 @@ const UserDashboard = () => {
 
       setSelectedInstrument((prev) => ({
         ...prev,
-        ...matched,
         ltp: px,
         lastPrice: px,
         close: Number.isFinite(close) && close > 0 ? close : px,
+        open: Number(matched.open) || px,
+        high: Number(matched.high) || px,
+        low: Number(matched.low) || px,
+        bid: Number(matched.lastBid) || px,
+        ask: Number(matched.lastAsk) || px,
+        change: Number(matched.change) || 0,
+        changePercent: Number(matched.changePercent) || 0,
       }));
     } catch {
       // keep existing live/socket values
+    } finally {
+      hydratingInstrumentRef.current = false;
     }
   }, [mcxOnly, user?.token, selectedInstrument]);
 
@@ -1174,20 +1186,20 @@ const UserDashboard = () => {
             />
             {forexOnly ? (
               <span className="text-cyan-400 font-medium">
-                ₹{(walletData?.forexWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                {(walletData?.forexWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </span>
             ) : cryptoOnly ? (
-              <span className="text-orange-400 font-medium" title="Balances are stored in ₹; US$ is approximate">
-                ₹{(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              <span className="text-orange-400 font-medium">
+                {(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                 <span className="text-gray-500 text-xs ml-1 font-normal">
-                  (≈ $
+                  (≈
                   {((walletData?.cryptoWallet?.balance || 0) / usdRate).toLocaleString('en-US', { maximumFractionDigits: 0 })})
                 </span>
               </span>
             ) : mcxOnly ? (
-              <span className="text-yellow-400 font-medium">₹{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
+              <span className="text-yellow-400 font-medium">{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
             ) : (
-              <span className="text-green-400 font-medium">₹{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
+              <span className="text-green-400 font-medium">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
             )}
             <button
               onClick={() => setShowWalletTransferModal(true)}
@@ -1223,19 +1235,19 @@ const UserDashboard = () => {
             />
             {forexOnly ? (
               <span className="text-cyan-400 font-medium text-sm">
-                ₹{(walletData?.forexWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                {(walletData?.forexWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </span>
             ) : cryptoOnly ? (
-              <span className="text-orange-400 font-medium text-sm" title="Stored in ₹">
-                ₹{(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              <span className="text-orange-400 font-medium text-sm">
+                {(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                 <span className="text-gray-500 text-[10px] ml-0.5">
-                  (~${((walletData?.cryptoWallet?.balance || 0) / usdRate).toFixed(0)})
+                  (~{((walletData?.cryptoWallet?.balance || 0) / usdRate).toFixed(0)})
                 </span>
               </span>
             ) : mcxOnly ? (
-              <span className="text-yellow-400 font-medium text-sm">₹{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
+              <span className="text-yellow-400 font-medium text-sm">{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
             ) : (
-              <span className="text-green-400 font-medium text-sm">₹{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
+              <span className="text-green-400 font-medium text-sm">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
             )}
             <button
               onClick={() => setShowWalletTransferModal(true)}
@@ -1266,7 +1278,7 @@ const UserDashboard = () => {
           </div>
           <div className="px-4 py-2 border-b border-dark-600">
             <p className="text-sm text-gray-400">Trading Balance</p>
-            <p className="font-medium text-green-400">₹{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</p>
+            <p className="font-medium text-green-400">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</p>
           </div>
           <button 
             onClick={() => { setShowWalletModal(true); setShowMobileMenu(false); }}
@@ -2361,11 +2373,11 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                       </div>
                       <div className="text-right mr-2">
                         <div className="text-sm font-medium text-gray-300">
-                          {`$${spotQuoteDisplayPrice(
+                          {spotQuoteDisplayPrice(
                             { ...crypto, segment: 'CRYPTO' },
                             priceData.ltp || 0,
                             usdRate
-                          ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className={`text-xs ${parseFloat(priceData.changePercent || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           {parseFloat(priceData.changePercent || 0) >= 0 ? '+' : ''}{parseFloat(priceData.changePercent || 0).toFixed(2)}%
@@ -2438,7 +2450,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </div>
                         <div className="text-right mr-2 shrink-0">
                           <div className="text-sm font-medium text-gray-300">
-                            ₹{displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
@@ -2492,7 +2504,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                       </div>
                       <div className="text-right mr-2">
                         <div className="text-sm font-medium text-gray-300">
-                          ₹{spotPxToDisplayedInr(fx, ltpUsd, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {spotPxToDisplayedInr(fx, ltpUsd, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
@@ -2553,23 +2565,18 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         inst.optionType === 'PE' ? 'text-red-400' :
                         inst.isCrypto ? 'text-orange-400' : inst.isForex ? 'text-cyan-400' : 'text-white'
                       }`}>
-                        {inst.tradingSymbol || inst.symbol?.replace(/"/g, '') || inst.symbol}
+                        {inst.tradingSymbol || inst.symbol}
                       </div>
                       <div className="text-sm font-medium text-gray-300 ml-2">
                         {isUsdSpotInstrument(inst)
-                          ? `${isForexInstrument(inst) ? '₹' : '$'}${
-                              displayLtp != null && !isNaN(displayLtp)
-                                ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                : '--'
-                            }`
-                          : (inst.isCrypto || inst.isForex)
-                            ? `₹${displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}`
-                            : displayLtp != null && !isNaN(displayLtp)
+                          ? displayLtp != null && !isNaN(displayLtp)
                               ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                              : '--'}
+                              : '--'
+                          : displayLtp != null && !isNaN(displayLtp)
+                            ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            : '--'}
                       </div>
                     </div>
-                    
                     {/* Bottom row: Category, Expiry, Change %, and Buttons */}
                     <div className="flex items-center justify-between w-full mt-1">
                       <div className="flex items-center gap-2">
@@ -2661,10 +2668,9 @@ const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFutu
     return 'text-white';
   };
 
-  // Format price - use $ for crypto, ₹ for others
+  // Format price - no currency symbols
   const formatPrice = (price) => {
     if (!price || price <= 0) return '-';
-    if (isCrypto || instrument.isCrypto) return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
@@ -2780,7 +2786,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
       ? getCryptoMarketQuote(marketData, selectedInstrument)
       : null;
 
-  // Update live price from marketData (Socket.IO) — deps narrow to this symbol’s slice so unrelated ticks do not re-run chart logic
+  // Update live price from marketData (Socket.IO) — deps narrow to this symbol's slice so unrelated ticks do not re-run chart logic
   useEffect(() => {
     const isUsdSpot = isUsdSpotInstrument(selectedInstrument);
     let data = null;
@@ -3109,7 +3115,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
     return () => {
       cancelled = true;
     };
-  }, [selectedInstrument, chartInterval, usdRate, onChartLtp]);
+  }, [chartInstrumentKey, chartInterval, usdRate, onChartLtp]);
 
   const intervals = [
     { label: '1m', value: 'ONE_MINUTE' },
@@ -3146,7 +3152,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
                   <span className={`font-mono font-bold ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {isUsdSpotInstrument(selectedInstrument)
                       ? livePrice.ltp != null && !isNaN(livePrice.ltp)
-                        ? `${isForexInstrument(selectedInstrument) ? '₹' : '$'}${spotQuoteDisplayPrice(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        ? `${spotQuoteDisplayPrice(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         : '--'
                       : livePrice.ltp != null && !isNaN(livePrice.ltp)
                         ? livePrice.ltp.toLocaleString(undefined, {})
@@ -3167,28 +3173,24 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
               <>
                 <span>
                   O:{' '}
-                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
                   {livePrice.open != null && !isNaN(livePrice.open)
                     ? spotQuoteDisplayPrice(selectedInstrument, livePrice.open || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
                 </span>
                 <span>
                   H:{' '}
-                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
                   {livePrice.high != null && !isNaN(livePrice.high)
                     ? spotQuoteDisplayPrice(selectedInstrument, livePrice.high || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
                 </span>
                 <span>
                   L:{' '}
-                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
                   {livePrice.low != null && !isNaN(livePrice.low)
                     ? spotQuoteDisplayPrice(selectedInstrument, livePrice.low || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
                 </span>
                 <span>
                   C:{' '}
-                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
                   {livePrice.close != null && !isNaN(livePrice.close)
                     ? spotQuoteDisplayPrice(selectedInstrument, livePrice.close || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
@@ -3196,10 +3198,10 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
               </>
             ) : (
               <>
-                <span>O: ₹{livePrice.open != null && !isNaN(livePrice.open) ? livePrice.open.toLocaleString() : '--'}</span>
-                <span>H: ₹{livePrice.high != null && !isNaN(livePrice.high) ? livePrice.high.toLocaleString() : '--'}</span>
-                <span>L: ₹{livePrice.low != null && !isNaN(livePrice.low) ? livePrice.low.toLocaleString() : '--'}</span>
-                <span>C: ₹{livePrice.close != null && !isNaN(livePrice.close) ? livePrice.close.toLocaleString() : '--'}</span>
+                <span>O: {livePrice.open != null && !isNaN(livePrice.open) ? livePrice.open.toLocaleString() : '--'}</span>
+                <span>H: {livePrice.high != null && !isNaN(livePrice.high) ? livePrice.high.toLocaleString() : '--'}</span>
+                <span>L: {livePrice.low != null && !isNaN(livePrice.low) ? livePrice.low.toLocaleString() : '--'}</span>
+                <span>C: {livePrice.close != null && !isNaN(livePrice.close) ? livePrice.close.toLocaleString() : '--'}</span>
               </>
             )}
           </div>
@@ -3245,6 +3247,8 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
   const [quickQty, setQuickQty] = useState('1');
   const [quickTrading, setQuickTrading] = useState(false);
   const [quickError, setQuickError] = useState('');
+  const [instrumentDropdownOpen, setInstrumentDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     if (user?.token) {
@@ -3276,7 +3280,8 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         isForexInstrument(item);
       
       // Filter by mode - crypto, forex, mcx, or regular (excluding spot wallets)
-      const filterByMode = (items) => {
+      // For history, show all trades including MCX regardless of mode
+      const filterByMode = (items, isHistory = false) => {
         if (cryptoOnly) {
           return (items || []).filter(item => item.isCrypto === true);
         }
@@ -3286,6 +3291,10 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         if (mcxOnly) {
           return (items || []).filter(item => isMcxTrade(item));
         }
+        // For history, show all trades including MCX, crypto, and forex
+        if (isHistory) {
+          return items || [];
+        }
         return (items || []).filter(
           item => item.isCrypto !== true && !isMcxTrade(item) && !isForexTrade(item)
         );
@@ -3293,7 +3302,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       
       const filteredPositions = filterByMode(positionsRes.data);
       const filteredPending = filterByMode(pendingRes.data);
-      const filteredHistory = filterByMode(historyRes.data);
+      const filteredHistory = filterByMode(historyRes.data, true);
       
       // Apply netting logic - aggregate positions by symbol and net BUY vs SELL
       const netPositions = (positions) => {
@@ -3522,6 +3531,77 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     }
   };
 
+  // Group positions by instrument/symbol
+  const getPositionsByInstrument = () => {
+    const grouped = {};
+    positions.forEach(pos => {
+      const key = pos.symbol;
+      if (!grouped[key]) {
+        grouped[key] = {
+          symbol: pos.symbol,
+          exchange: pos.exchange,
+          positions: [],
+          totalQty: 0
+        };
+      }
+      grouped[key].positions.push(pos);
+      grouped[key].totalQty += pos.quantity;
+    });
+    return Object.values(grouped);
+  };
+
+  // Close all positions for a specific instrument
+  const handleCloseInstrument = async (symbol) => {
+    const instrumentPositions = positions.filter(pos => pos.symbol === symbol);
+    if (instrumentPositions.length === 0) {
+      alert(`No positions found for ${symbol}`);
+      return;
+    }
+
+    if (!confirm(`Close all positions for ${symbol}? (${instrumentPositions.length} position(s))`)) return;
+
+    setLoading(true);
+    try {
+      for (const pos of instrumentPositions) {
+        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos);
+        const ids = pos._ids || [pos._id];
+        for (const id of ids) {
+          await axios.post(`/api/trading/close/${id}`, {
+            bidPrice,
+            askPrice,
+            isCrypto: !!(pos?.isCrypto || pos?.exchange === 'BINANCE'),
+            isForex: !!isForexInstrument(pos)
+          }, {
+            headers: { Authorization: `Bearer ${user.token}` }
+          });
+        }
+      }
+      fetchPositions();
+      setInstrumentDropdownOpen(false);
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error closing positions');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setInstrumentDropdownOpen(false);
+      }
+    };
+
+    if (instrumentDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [instrumentDropdownOpen]);
+
   // Quick Trade - Execute market order directly
   const executeQuickTrade = async (side) => {
     const lots = parseFloat(quickQty);
@@ -3544,7 +3624,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       // Determine if MCX or lot-based segment
       const isMCX = selectedInstrument.exchange === 'MCX' || selectedInstrument.segment === 'MCX' || selectedInstrument.displaySegment === 'MCX';
       const isFnO = selectedInstrument.instrumentType === 'FUTURES' || selectedInstrument.instrumentType === 'OPTIONS' || isMCX;
-      
+
       // Always use lotSize from database (no hardcoded fallbacks)
       const lotSize = isUsdSpot ? 1 : (selectedInstrument.lotSize || 1);
       if (!isUsdSpot && !selectedInstrument.lotSize) {
@@ -3552,7 +3632,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         setTimeout(() => setQuickError(''), 3000);
         return;
       }
-      const quantity = isFnO ? lots * lotSize : lots;
+      const quantity = isUsdSpot ? parseFloat(lots || 0) : (isFnO ? lots * lotSize : lots);
       const inrNotional = isUsdSpot ? quantity * spotPxToDisplayedInr(selectedInstrument, ltp, usdRate) : 0;
       
       await axios.post('/api/trading/order', {
@@ -3577,9 +3657,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         productType: 'MIS',
         bidPrice,
         askPrice,
-        leverage: 1,
-        cryptoAmount: isCryptoOnly ? inrNotional : null,
-        forexAmount: isForex ? inrNotional : null
+        leverage: 1
       }, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
@@ -3594,14 +3672,18 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     }
   };
 
+  // Filter history to show only manually squared off positions
+  const squaredOffHistory = history.filter(item => item.closeReason === 'MANUAL');
+
   const tabs = [
     { id: 'positions', label: 'Positions', count: positions.length },
     { id: 'pending', label: 'Pending', count: pendingOrders.length },
     { id: 'history', label: 'History', count: history.length },
+    { id: 'squareOff', label: 'Square Off', count: squaredOffHistory.length },
     { id: 'referral', label: 'Referral Amounts', count: 0 },
   ];
 
-  // Mark in INR: crypto quotes are USDT; server stores entry/current in INR for crypto.
+  // For PnL calculation: return price in same unit as entryPrice (USD for crypto, INR for others)
   const getCurrentPrice = (position) => {
     const side = position.side;
     const isC = isUsdSpotInstrument(position);
@@ -3612,7 +3694,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         side === 'BUY'
           ? Number(q.bid || q.ltp || q.close || 0)
           : Number(q.ask || q.ltp || q.close || 0);
-      return spotPxToDisplayedInr(position, raw, usdRate);
+      return raw;
     }
 
     const token = position.token;
@@ -3704,7 +3786,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               {selectedInstrument?.symbol || 'No Symbol'}
             </span>
             <span className="text-xs text-gray-400">
-              ₹{(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
+              {(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
             </span>
             <button 
               onClick={() => executeQuickTrade('sell')}
@@ -3743,13 +3825,52 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           <div className="text-sm">
             <span className="text-gray-400">P/L: </span>
             <span className={`font-medium ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {totalPnL >= 0 ? '+' : '-'}₹{Math.abs(parseFloat(totalPnL) || 0).toFixed(2)}
+              {totalPnL >= 0 ? '+' : '-'}{Math.abs(parseFloat(totalPnL) || 0).toFixed(2)}
             </span>
           </div>
           
           {/* Bulk Close Buttons */}
           {activeTab === 'positions' && positions.length > 0 && (
             <div className="flex items-center gap-2 ml-4">
+              {/* Instrument-specific close dropdown */}
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setInstrumentDropdownOpen(!instrumentDropdownOpen)}
+                  disabled={loading}
+                  className="px-2 py-1 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded text-xs font-medium flex items-center gap-1"
+                  title="Close specific instrument"
+                >
+                  Close Instrument
+                  <ArrowDownCircle size={12} />
+                </button>
+                {instrumentDropdownOpen && (
+                  <div className="absolute right-0 top-full mt-2 bg-dark-800 border border-dark-600 rounded-lg shadow-xl z-50 min-w-[200px] max-h-[300px] overflow-y-auto">
+                    {getPositionsByInstrument().map((instrument) => (
+                      <div
+                        key={instrument.symbol}
+                        className="flex items-center justify-between px-3 py-2 hover:bg-dark-700 border-b border-dark-700 last:border-b-0"
+                      >
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium text-gray-200">{instrument.symbol}</span>
+                          <span className="text-xs text-gray-500">{instrument.positions.length} position(s)</span>
+                        </div>
+                        <button
+                          onClick={() => handleCloseInstrument(instrument.symbol)}
+                          disabled={loading}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded text-xs font-medium"
+                          title={`Close all ${instrument.symbol} positions`}
+                        >
+                          Close
+                        </button>
+                      </div>
+                    ))}
+                    {getPositionsByInstrument().length === 0 && (
+                      <div className="px-3 py-2 text-sm text-gray-500">No positions</div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={handleCloseLoss}
                 disabled={loading}
@@ -3819,16 +3940,17 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
             : (pos.entryPrice - ltp) * pos.quantity;
           const isCryptoRow = pos.isCrypto || pos.exchange === 'BINANCE';
           const isForexRow = isForexInstrument(pos);
-          const currencySymbol = '₹';
-          const cryptoPx = (inr) => {
-            const n = parseFloat(inr);
-            return Number.isFinite(n) && n !== 0 ? (n / usdRate).toFixed(2) : '0.00';
+          const currencySymbol = '';
+          const cryptoPx = (raw) => {
+            const n = parseFloat(raw);
+            if (!Number.isFinite(n)) return '—';
+            return n.toFixed(2);
           };
           const fmtSlTp = (raw) => {
             if (raw == null || raw === '') return '—';
             const n = parseFloat(raw);
             if (!Number.isFinite(n)) return '—';
-            if (isCryptoRow) return `$${cryptoPx(n)}`;
+            if (isCryptoRow) return cryptoPx(n);
             return `${currencySymbol}${n.toFixed(2)}`;
           };
           return (
@@ -3837,15 +3959,15 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{pos.symbol}</div>
               <div className={pos.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{pos.side}</div>
               <div className="text-right">{pos.quantity}</div>
-              <div className="text-right">{isCryptoRow ? `$${cryptoPx(parseFloat(pos.entryPrice))}` : `${currencySymbol}${(parseFloat(pos.entryPrice) || 0).toFixed(2)}`}</div>
-              <div className="text-right">{isCryptoRow ? `$${cryptoPx(parseFloat(ltp))}` : `${currencySymbol}${(parseFloat(ltp) || 0).toFixed(2)}`}</div>
+              <div className="text-right">{isCryptoRow ? `${cryptoPx(parseFloat(pos.entryPrice))}` : `${currencySymbol}${(parseFloat(pos.entryPrice) || 0).toFixed(2)}`}</div>
+              <div className="text-right">{isCryptoRow ? `${cryptoPx(parseFloat(ltp))}` : `${currencySymbol}${(parseFloat(ltp) || 0).toFixed(2)}`}</div>
               <div className="text-right text-red-300/90">{fmtSlTp(pos.stopLoss)}</div>
               <div className="text-right text-emerald-300/90">{fmtSlTp(pos.target)}</div>
-              <div className="text-right text-yellow-400" title={`Spread: ${pos.spread || 0} pts, Comm: ${currencySymbol}${pos.commission || 0}`}>
-                {currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
+              <div className="text-right text-yellow-400" title={`Spread: ${pos.spread || 0} pts, Comm: ${isCryptoRow || isForexRow ? '' : currencySymbol}${pos.commission || 0}`}>
+                {isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
               </div>
               <div className={`text-right font-medium ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {pnl >= 0 ? '+' : '-'}₹{Math.abs(parseFloat(pnl) || 0).toFixed(2)}
+                {pnl >= 0 ? '+' : '-'}{isCryptoRow || isForexRow ? '' : ''}{Math.abs(parseFloat(pnl) || 0).toFixed(2)}
               </div>
               <div className="text-center">
                 <button 
@@ -3866,7 +3988,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         {activeTab === 'pending' && pendingOrders.map(order => {
           const isCryptoRow = order.isCrypto || order.exchange === 'BINANCE';
           const isForexRow = isForexInstrument(order);
-          const currencySymbol = '₹';
+          const currencySymbol = '';
           const displayPx = getPendingDisplayPrice(order);
           const livePx = getPendingLivePrice(order);
           const livePxInr =
@@ -3878,9 +4000,9 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
                 )
               : livePx;
           const pendingEntryLabel =
-            isCryptoRow && !isForexRow && displayPx != null ? `$${(displayPx / usdRate).toFixed(2)}` : null;
+            isCryptoRow && !isForexRow && displayPx != null ? `${(displayPx / usdRate).toFixed(2)}` : null;
           const pendingLiveLabel =
-            isCryptoRow && !isForexRow && livePx > 0 ? `$${Number(livePx).toFixed(2)}` : null;
+            isCryptoRow && !isForexRow && livePx > 0 ? `${Number(livePx).toFixed(2)}` : null;
 
           return (
             <div key={order._id} className="grid grid-cols-9 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
@@ -3892,16 +4014,16 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
                 {pendingEntryLabel != null
                   ? pendingEntryLabel
                   : displayPx != null
-                    ? `${currencySymbol}${displayPx.toFixed(2)}`
+                    ? `${isCryptoRow || isForexRow ? '' : currencySymbol}${displayPx.toFixed(2)}`
                     : '—'}
               </div>
               <div className="text-right">
-                {pendingLiveLabel != null ? pendingLiveLabel : livePxInr > 0 ? `${currencySymbol}${Number(livePxInr).toFixed(2)}` : '—'}
+                {pendingLiveLabel != null ? pendingLiveLabel : livePxInr > 0 ? `${isCryptoRow || isForexRow ? '' : currencySymbol}${Number(livePxInr).toFixed(2)}` : '—'}
               </div>
-              <div className="text-right text-yellow-400">{currencySymbol}{(parseFloat(order.commission) || 0).toFixed(2)}</div>
+              <div className="text-right text-yellow-400">{isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(order.commission) || 0).toFixed(2)}</div>
               <div className="text-right text-gray-400">{order.orderType}</div>
               <div className="text-center">
-                <button 
+                <button
                   onClick={() => handleCancelOrder(order._id)}
                   className="px-2 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-xs"
                 >
@@ -3915,13 +4037,16 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         {activeTab === 'history' && history.length === 0 && (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">No trade history</div>
         )}
-        {activeTab === 'history' && history.map(trade => {
+        {activeTab === 'squareOff' && squaredOffHistory.length === 0 && (
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">No squared off positions</div>
+        )}
+        {activeTab === 'squareOff' && squaredOffHistory.map(trade => {
           const isCryptoRow = trade.isCrypto || trade.exchange === 'BINANCE';
           const isForexRow = isForexInstrument(trade);
-          const currencySymbol = '₹';
+          const currencySymbol = '';
           const histCryptoPx = (inr) => {
             const n = parseFloat(inr);
-            return Number.isFinite(n) && n !== 0 ? (n / usdRate).toFixed(2) : '0.00';
+            return Number.isFinite(n) && n !== 0 ? n.toFixed(2) : '0.00';
           };
           // Calculate trade duration
           const getDuration = () => {
@@ -3943,11 +4068,51 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{trade.symbol}</div>
               <div className={trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{trade.side}</div>
               <div className="text-right">{trade.quantity}</div>
-              <div className="text-right">{isCryptoRow ? `$${histCryptoPx(parseFloat(trade.entryPrice))}` : `${currencySymbol}${(parseFloat(trade.entryPrice) || 0).toFixed(2)}`}</div>
-              <div className="text-right">{isCryptoRow ? (trade.exitPrice ? `$${histCryptoPx(parseFloat(trade.exitPrice))}` : '-') : `${currencySymbol}${trade.exitPrice ? (parseFloat(trade.exitPrice) || 0).toFixed(2) : '-'}`}</div>
-              <div className="text-right text-yellow-400">{currencySymbol}{(parseFloat(trade.commission) || 0).toFixed(2)}</div>
+              <div className="text-right">{isCryptoRow ? `${histCryptoPx(parseFloat(trade.entryPrice))}` : `${currencySymbol}${(parseFloat(trade.entryPrice) || 0).toFixed(2)}`}</div>
+              <div className="text-right">{isCryptoRow ? (trade.exitPrice ? `${histCryptoPx(parseFloat(trade.exitPrice))}` : '-') : `${currencySymbol}${trade.exitPrice ? (parseFloat(trade.exitPrice) || 0).toFixed(2) : '-'}`}</div>
+              <div className="text-right text-yellow-400">{isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(trade.commission) || 0).toFixed(2)}</div>
               <div className={`text-right font-medium ${(trade.netPnL || trade.realizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {(trade.netPnL || trade.realizedPnL || 0) >= 0 ? '+' : ''}{currencySymbol}{(parseFloat(trade.netPnL || trade.realizedPnL) || 0).toFixed(2)}
+                {(trade.netPnL || trade.realizedPnL || 0) >= 0 ? '+' : ''}{isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(trade.netPnL || trade.realizedPnL) || 0).toFixed(2)}
+              </div>
+              <div className="text-center text-xs text-blue-400" title={`Opened: ${trade.openedAt ? new Date(trade.openedAt).toLocaleString() : '-'}`}>{getDuration()}</div>
+              <div className="text-center text-xs text-gray-400">{trade.closeReason || 'MANUAL'}</div>
+            </div>
+          );
+        })}
+
+        {activeTab === 'history' && history.map(trade => {
+          const isCryptoRow = trade.isCrypto || trade.exchange === 'BINANCE';
+          const isForexRow = isForexInstrument(trade);
+          const currencySymbol = '';
+          const histCryptoPx = (inr) => {
+            const n = parseFloat(inr);
+            return Number.isFinite(n) && n !== 0 ? n.toFixed(2) : '0.00';
+          };
+          // Calculate trade duration
+          const getDuration = () => {
+            if (!trade.openedAt || !trade.closedAt) return '-';
+            const start = new Date(trade.openedAt);
+            const end = new Date(trade.closedAt);
+            const diffMs = end - start;
+            if (diffMs < 0) return '-';
+            const diffSecs = Math.floor(diffMs / 1000);
+            if (diffSecs < 60) return `${diffSecs}s`;
+            const diffMins = Math.floor(diffSecs / 60);
+            if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s`;
+            const diffHrs = Math.floor(diffMins / 60);
+            return `${diffHrs}h ${diffMins % 60}m`;
+          };
+          return (
+            <div key={trade._id} className="grid grid-cols-10 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
+              <div className="truncate text-purple-400 font-mono text-xs">{trade.userId || user?.userId || '-'}</div>
+              <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{trade.symbol}</div>
+              <div className={trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{trade.side}</div>
+              <div className="text-right">{trade.quantity}</div>
+              <div className="text-right">{isCryptoRow ? `${histCryptoPx(parseFloat(trade.entryPrice))}` : `${currencySymbol}${(parseFloat(trade.entryPrice) || 0).toFixed(2)}`}</div>
+              <div className="text-right">{isCryptoRow ? (trade.exitPrice ? `${histCryptoPx(parseFloat(trade.exitPrice))}` : '-') : `${currencySymbol}${trade.exitPrice ? (parseFloat(trade.exitPrice) || 0).toFixed(2) : '-'}`}</div>
+              <div className="text-right text-yellow-400">{isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(trade.commission) || 0).toFixed(2)}</div>
+              <div className={`text-right font-medium ${(trade.netPnL || trade.realizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {(trade.netPnL || trade.realizedPnL || 0) >= 0 ? '+' : ''}{isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(trade.netPnL || trade.realizedPnL) || 0).toFixed(2)}
               </div>
               <div className="text-center text-xs text-blue-400" title={`Opened: ${trade.openedAt ? new Date(trade.openedAt).toLocaleString() : '-'}`}>{getDuration()}</div>
               <div className="text-center text-xs text-gray-400">{trade.closeReason || 'CLOSED'}</div>
@@ -3996,6 +4161,7 @@ const TradingPanel = ({
   segmentPermissionsGate = {},
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
+  const [cryptoQuantity, setCryptoQuantity] = useState('1'); // Default for crypto/forex
   const [price, setPrice] = useState('');
   const [limitPrice, setLimitPrice] = useState('');
   const [stopLoss, setStopLoss] = useState('');
@@ -4011,9 +4177,7 @@ const TradingPanel = ({
   const [showSettingsInfo, setShowSettingsInfo] = useState(false);
   const [tradeConfirmOpen, setTradeConfirmOpen] = useState(false);
   
-  // Crypto: amount-mode = USD notional (converted to ₹ for wallet/API); units = base qty; lots = stepped lots
-  const [cryptoAmount, setCryptoAmount] = useState('150');
-  const [cryptoInputMode, setCryptoInputMode] = useState('amount'); // 'amount' | 'units'
+  // Crypto: lots-mode for USD spot trading
   
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.exchange === 'BINANCE');
   const isForex = isForexInstrument(instrument);
@@ -4045,18 +4209,6 @@ const TradingPanel = ({
       : marginPreview?.lotSize != null && Number(marginPreview.lotSize) > 0
         ? Number(marginPreview.lotSize)
         : 1;
-  const cryptoUnits =
-    cryptoInputMode === 'amount'
-      ? cryptoUnitNotionalInr > 0
-        ? ((parseFloat(cryptoAmount) || 0) * (isCryptoOnly ? usdRate : 1)) / cryptoUnitNotionalInr
-        : 0
-      : parseFloat(cryptoAmount) || 0;
-  const cryptoTotalCost =
-    cryptoInputMode === 'amount'
-      ? (isCryptoOnly ? (parseFloat(cryptoAmount) || 0) * usdRate : parseFloat(cryptoAmount) || 0)
-      : cryptoUnitNotionalInr > 0
-        ? (parseFloat(cryptoAmount) || 0) * cryptoUnitNotionalInr
-        : 0;
 
   const cryptoSpreadInrClient =
     usdSpotClientSpreads.cryptoInr ?? usdSpotClientSpreads.crypto ?? 0;
@@ -4079,8 +4231,7 @@ const TradingPanel = ({
       ? spotQuoteDisplayPrice(instrument, Number(displayBidAsk.askUsd), usdRate)
       : liveAsk;
 
-  const priceSymbol =
-    isCryptoOnly ? '$' : '₹';
+  const priceSymbol = '';
 
   // Market status (Indian book); USD spot is 24/7
   useEffect(() => {
@@ -4102,7 +4253,7 @@ const TradingPanel = ({
     if (user?.token) fetchSettings();
   }, [user?.token, instrument?.exchange, isUsdSpot, isForex]);
 
-  // When instrument changes, seed price + limit (crypto spot = USDT; forex/US₹ spot = ₹)
+  // When instrument changes, seed price + limit (crypto spot = USDT; forex/US spot = numeric)
   useEffect(() => {
     if (!livePrice || !instrument) return;
     if (isUsdSpot) {
@@ -4112,10 +4263,10 @@ const TradingPanel = ({
       setPrice(p);
       setLimitPrice(p);
     } else {
-      setPrice(livePrice.toString());
-      setLimitPrice(livePrice.toString());
+      setPrice(prev => (!prev || prev === '' || prev === '0') ? livePrice.toString() : prev);
+      setLimitPrice(prev => (!prev || prev === '' || prev === '0') ? livePrice.toString() : prev);
     }
-  }, [instrument?.token, instrument?.pair, instrument?.symbol, isUsdSpot, isCryptoOnly]);
+  }, [instrument?.token, instrument?.pair, instrument?.symbol, isUsdSpot, isCryptoOnly, livePrice]);
 
   useEffect(() => {
     if (!isUsdSpot || !livePrice || !instrument) return;
@@ -4195,18 +4346,18 @@ const TradingPanel = ({
     setError(`Lot size missing for ${instrument?.symbol || 'instrument'}`);
     return null;
   }
-  // For crypto: use calculated units
+  // For USD spot: use direct quantity (no lots conversion)
   // For MCX: handle lots vs quantity modes
   // For other segments: existing logic
-  const totalQuantity = isUsdSpot 
-    ? cryptoUnits 
+  const totalQuantity = isUsdSpot
+    ? parseFloat(cryptoQuantity || 0)
     : isMCX
-        ? (inputMode === 'quantity' 
+        ? (inputMode === 'quantity'
             ? parseInt(lots || 0)  // MCX quantity mode: direct quantity
             : parseInt(lots || 0) * lotSize)  // MCX lots mode: lots * lotSize
         : (allowsQuantityMode && inputMode === 'quantity')
             ? parseInt(lots || 0)  // Other segments quantity mode: direct quantity
-            : (isFnO 
+            : (isFnO
                 ? parseInt(lots || 0) * lotSize  // Other FnO lots mode: lots * lotSize
                 : parseInt(lots || 0));  // Other segments: direct quantity
 
@@ -4229,13 +4380,15 @@ const TradingPanel = ({
       side: String(sideLower || orderType).toUpperCase(),
       quantity: totalQuantity,
       lotSize: isUsdSpot ? cryptoStep : lotSize,
-      price: isUsdSpot ? Number(livePrice) : parseFloat(price),
+      price: isUsdSpot ? Number(livePrice) : (parseFloat(price) || Number(livePrice) || 0),
       leverage: 1,
       isCrypto: isCryptoOnly,
       isForex: isForex
     };
     if (!isUsdSpot) {
       body.lots = parseInt(lots, 10);
+    } else {
+      body.lots = 1; // For crypto/forex, lots is not used
     }
     return body;
   };
@@ -4246,25 +4399,40 @@ const TradingPanel = ({
       if (!instrument) return;
       if (!isUsdSpot && !lots) return;
       if (isUsdSpot) {
-        if (!livePrice) return;
-      } else if (!price) {
+        if (!livePrice || !cryptoQuantity) return;
+      } else if (!price && !livePrice) {
         return;
       }
 
       try {
         const body = buildMarginPreviewBody(orderType);
+        // Use livePrice as fallback if price state is empty
+        if (!body.price && livePrice) body.price = Number(livePrice);
         const { data } = await axios.post('/api/trading/margin-preview', body, {
           headers: { Authorization: `Bearer ${user?.token}` }
         });
         setMarginPreview(data);
       } catch (err) {
         console.error('Margin preview error:', err);
+        // On error, ALWAYS set a fallback so the slip never stays blank
+        setMarginPreview(prev => {
+          const fallback = {
+            marginRequired: 0,
+            canPlace: false,
+            lotSize: lotSize || 1,
+            maxLots: 50,
+            minLots: 1,
+            lotsError: err?.response?.data?.message || 'Unable to load margin preview',
+          };
+          // Preserve previous valid data if available, only override with fallback if null
+          return prev && prev.marginRequired != null ? prev : fallback;
+        });
       }
     };
 
     const debounce = setTimeout(fetchMarginPreview, 300);
     return () => clearTimeout(debounce);
-  }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, cryptoInputMode, cryptoAmount]);
+  }, [instrument, lots, cryptoQuantity, price, productType, orderType, user, totalQuantity, lotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice]);
 
   // Place order (optional explicitSide when confirming from modal with opposite side vs current stripe highlight)
   const handlePlaceOrder = async (explicitSide) => {
@@ -4302,7 +4470,7 @@ const TradingPanel = ({
     }
 
     if (previewGate && !previewGate.canPlace) {
-      setError(`Insufficient funds. Need ₹${previewGate.shortfall?.toLocaleString()} more`);
+      setError(`Insufficient funds. Need ${previewGate.shortfall?.toLocaleString()} more`);
       return;
     }
 
@@ -4332,7 +4500,7 @@ const TradingPanel = ({
         productType,
         orderType: orderMode,
         side: sideLower.toUpperCase(),
-        quantity: isUsdSpot ? cryptoUnits : totalQuantity,
+        quantity: isUsdSpot ? parseFloat(cryptoQuantity || 0) : totalQuantity,
         lotSize: isUsdSpot ? (instrument?.lotSize > 0 ? Number(instrument.lotSize) : baseQtyPerCryptoLot) : lotSize,
         price: isUsdSpot ? livePrice : parseFloat(price),
         bidPrice: liveBid,
@@ -4352,8 +4520,6 @@ const TradingPanel = ({
               : parseFloat(target) / usdRate
             : parseFloat(target)
           : null,
-        cryptoAmount: isUsdSpot ? cryptoTotalCost : null,
-        forexAmount: isForex ? cryptoTotalCost : null,
       };
       if (!isUsdSpot) {
         orderData.lots = parseInt(lots, 10);
@@ -4386,11 +4552,11 @@ const TradingPanel = ({
         headers: { Authorization: `Bearer ${user?.token}` }
       });
 
-      const statusMsg = data.trade?.status === 'PENDING' 
-        ? `Order placed! Waiting for price to reach ${priceSymbol}${limitPrice}` 
-        : isUsdSpot 
-          ? `✅ ${instrument.symbol}: ${cryptoUnits.toFixed(6)} units, ₹${cryptoTotalCost.toFixed(2)}`
-          : `Order executed! Margin: ₹${data.marginBlocked?.toLocaleString()}`;
+      const statusMsg = data.trade?.status === 'PENDING'
+        ? `Order placed! Waiting for price to reach ${limitPrice}`
+        : isUsdSpot
+          ? `✅ ${instrument.symbol}: ${totalQuantity.toFixed(6)} units`
+          : `Order executed! Margin: ${data.marginBlocked?.toLocaleString()}`;
       
       setSuccess(statusMsg);
       // Refresh wallet and positions after successful order
@@ -4473,20 +4639,24 @@ const TradingPanel = ({
   const confirmMinVolumeLabel =
     !isUsdSpot && marginPreview?.minLots != null && Number(lotSize) > 0
       ? `${marginPreview.minLots * Number(lotSize)} qty (min ${marginPreview.minLots} lot)`
-      : isUsdSpot && isCryptoOnly && Number(baseQtyPerCryptoLot) > 0
-        ? `Exchange step ${baseQtyPerCryptoLot}`
-        : !isUsdSpot && marginPreview?.minLots != null
-          ? `${marginPreview.minLots} lot(s)`
-          : '—';
+      : isUsdSpot && marginPreview?.minQuantity != null
+        ? `${marginPreview.minQuantity} units (min)`
+        : isUsdSpot
+          ? 'Exchange min quantity'
+          : !isUsdSpot && marginPreview?.minLots != null
+            ? `${marginPreview.minLots} lot(s)`
+            : '—';
 
   const confirmVolumeStepLabel =
-    isUsdSpot && isCryptoOnly && Number(baseQtyPerCryptoLot) > 0
-      ? `Step ${baseQtyPerCryptoLot}`
-      : !isUsdSpot && inputMode === 'quantity'
-        ? '1 qty'
-        : !isUsdSpot
-          ? '1 lot'
-          : '—';
+    isUsdSpot && marginPreview?.quantityStep != null
+      ? `Step ${marginPreview.quantityStep}`
+      : isUsdSpot
+        ? '1 unit'
+        : !isUsdSpot && inputMode === 'quantity'
+          ? '1 qty'
+          : !isUsdSpot
+            ? '1 lot'
+            : '1 unit';
 
   const confirmVolumeDisp =
     liveData?.volume != null && liveData.volume !== ''
@@ -4503,7 +4673,7 @@ const TradingPanel = ({
 
   const fmtPx = (v) =>
     v != null && v !== '' && !Number.isNaN(Number(v))
-      ? `${priceSymbol}${Number(v).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', {
+      ? `${Number(v).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })}`
@@ -4587,20 +4757,12 @@ const TradingPanel = ({
             <div className="text-xs text-gray-500 uppercase mb-2">Script: {instrument?.symbol}</div>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="bg-dark-800 p-2 rounded">
-                <span className="text-gray-400">Exposure Intraday:</span>
-                <span className="float-right text-white">{marginPreview?.exposureIntraday || '--'}x</span>
-              </div>
-              <div className="bg-dark-800 p-2 rounded">
-                <span className="text-gray-400">Exposure CF:</span>
-                <span className="float-right text-white">{marginPreview?.exposureCarryForward || '--'}x</span>
-              </div>
-              <div className="bg-dark-800 p-2 rounded">
                 <span className="text-gray-400">Commission:</span>
-                <span className="float-right text-white">₹{marginPreview?.commission || 0}</span>
+                <span className="float-right text-white">{marginPreview?.commission || 0}</span>
               </div>
               <div className="bg-dark-800 p-2 rounded">
                 <span className="text-gray-400">Brokerage:</span>
-                <span className="float-right text-white">₹{marginPreview?.brokerage || 0}</span>
+                <span className="float-right text-white">{marginPreview?.brokerage || 0}</span>
               </div>
             </div>
           </div>
@@ -4644,8 +4806,8 @@ const TradingPanel = ({
             orderType === 'sell' ? 'bg-red-600 text-white' : 'bg-dark-700 text-gray-400'
           }`}
         >
-          <div className="text-xs opacity-70">{isUsdSpot ? (isCryptoOnly ? 'Bid ($)' : 'Bid (₹)') : 'Bid'}</div>
-          <div className="text-lg">{priceSymbol}{stripeBidPx != null && !isNaN(stripeBidPx) ? stripeBidPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
+          <div className="text-xs opacity-70">{isUsdSpot ? 'Bid' : 'Bid'}</div>
+          <div className="text-lg">{stripeBidPx != null && !isNaN(stripeBidPx) ? stripeBidPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
           <div className="text-xs">SELL</div>
         </button>
         <button
@@ -4658,8 +4820,8 @@ const TradingPanel = ({
             orderType === 'buy' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400'
           }`}
         >
-          <div className="text-xs opacity-70">{isUsdSpot ? (isCryptoOnly ? 'Ask ($)' : 'Ask (₹)') : 'Ask'}</div>
-          <div className="text-lg">{priceSymbol}{stripeAskPx != null && !isNaN(stripeAskPx) ? stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
+          <div className="text-xs opacity-70">{isUsdSpot ? 'Ask' : 'Ask'}</div>
+          <div className="text-lg">{stripeAskPx != null && !isNaN(stripeAskPx) ? stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
           <div className="text-xs">BUY</div>
         </button>
       </div>
@@ -4723,102 +4885,28 @@ const TradingPanel = ({
           </div>
         </div>
 
-        {!isUsdSpot && marginPreview?.exposureIntraday != null && (
-          <div className="text-xs text-cyan-400/95 mb-2">
-            Segment exposure (MIS ×{marginPreview.exposureIntraday ?? '—'} · CF ×{marginPreview.exposureCarryForward ?? '—'}) drives margin below
-          </div>
-        )}
-        {isUsdSpot && isForex && marginPreview?.exposureIntraday != null && (
-          <div className="text-xs text-cyan-400/95 mb-2">
-            Segment exposure MIS ×{marginPreview.exposureIntraday ?? '—'}
-            {marginPreview?.exposureCarryForward != null && ` · CF ×${marginPreview.exposureCarryForward}`}; margin follows broker hierarchy + instrument rules only
-          </div>
-        )}
-
-        {/* Crypto / Forex: USD-quote, INR notional */}
+        {/* Crypto / Forex: Quantity-based trading */}
         {isUsdSpot ? (
           <div>
-            {/* Crypto / forex: amount or base units (exchange step enforced server-side for Binance crypto). */}
-            <div className="grid gap-2 mb-3 grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setCryptoInputMode('amount')}
-                className={`py-2 rounded text-sm font-medium transition ${
-                  cryptoInputMode === 'amount' ? (isForex ? 'bg-cyan-600 text-white' : 'bg-orange-600 text-white') : 'bg-dark-700 text-gray-400'
-                }`}
-              >
-                {isCryptoOnly ? '$ Amount' : '₹ Amount'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setCryptoInputMode('units')}
-                className={`py-2 rounded text-sm font-medium transition ${
-                  cryptoInputMode === 'units' ? (isForex ? 'bg-cyan-600 text-white' : 'bg-orange-600 text-white') : 'bg-dark-700 text-gray-400'
-                }`}
-              >
-                {isForex ? '◆' : '₿'} Units
-              </button>
-            </div>
-            
             <label className="block text-xs text-gray-400 mb-2">
-              {cryptoInputMode === 'amount'
-                ? isCryptoOnly
-                  ? 'Amount (USD)'
-                  : 'Amount (INR)'
-                : `${instrument?.symbol} Units`}
+              {instrument?.symbol} Quantity
             </label>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                {cryptoInputMode === 'amount' ? (isCryptoOnly ? '$' : '₹') : ''}
-              </span>
               <input
                 type="number"
-                value={cryptoAmount}
-                onChange={(e) => setCryptoAmount(e.target.value)}
-                placeholder={cryptoInputMode === 'amount' ? (isCryptoOnly ? 'USD notional' : 'Enter INR amount') : 'Enter units'}
-                className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500 ${cryptoInputMode === 'amount' ? 'pl-8' : ''}`}
+                value={cryptoQuantity}
+                onChange={(e) => setCryptoQuantity(e.target.value)}
+                placeholder="Enter quantity"
+                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500"
                 step="any"
+                min="0"
               />
             </div>
-            
-            {/* Quick notional presets: USD for crypto wallet path, ₹ for forex */}
-            <div className="flex gap-1 mt-2 flex-wrap">
-              {(isCryptoOnly ? [100, 250, 500, 1000, 2500, 5000] : [5000, 10000, 25000, 50000, 100000]).map((amt) => (
-                <button
-                  type="button"
-                  key={amt}
-                  onClick={() => { setCryptoInputMode('amount'); setCryptoAmount(amt.toString()); }}
-                  className={`flex-1 min-w-[52px] py-1 text-xs rounded ${
-                    cryptoAmount === amt.toString() && cryptoInputMode === 'amount'
-                      ? isForex
-                        ? 'bg-cyan-600'
-                        : 'bg-orange-600'
-                      : 'bg-dark-600 hover:bg-dark-500'
-                  }`}
-                >
-                  {isCryptoOnly ? (amt >= 1000 ? `$${amt / 1000}k` : `$${amt}`) : `₹${amt / 1000}k`}
-                </button>
-              ))}
-            </div>
-            
-            {/* Show conversion */}
-            <div className="bg-dark-600 rounded p-3 mt-3 space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">You {orderType === 'buy' ? 'Buy' : 'Sell'}</span>
-                <span className="text-orange-400 font-bold">{cryptoUnits.toFixed(6)} {instrument?.symbol}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">{isCryptoOnly ? '@ Price (USD)' : '@ Price (₹)'}</span>
-                <span className="text-white">
-                  {isCryptoOnly
-                    ? `$${Number(cryptoUnitPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : `₹${cryptoUnitNotionalInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm border-t border-dark-500 pt-1">
-                <span className="text-gray-400">Total (₹)</span>
-                <span className="text-green-400 font-bold">₹{cryptoTotalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
+            <div className="flex justify-between text-sm mt-2">
+              <span className="text-gray-400">@ Price</span>
+              <span className="text-white">
+                {Number(cryptoUnitPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
             </div>
           </div>
         ) : (
@@ -4877,7 +4965,7 @@ const TradingPanel = ({
             {isFnO && inputMode === 'quantity' && (
               <div className="flex justify-between text-xs mt-2">
                 <span className="text-gray-500">Total Qty: <span className="text-white font-medium">{totalQuantity}</span></span>
-                <span className="text-gray-500">Value: <span className="text-white">{priceSymbol}{(totalQuantity * parseFloat(price || 0)).toLocaleString()}</span></span>
+                <span className="text-gray-500">Value: <span className="text-white">{(totalQuantity * parseFloat(price || 0)).toLocaleString()}</span></span>
               </div>
             )}
             {/* Quick lot/qty buttons */}
@@ -4919,7 +5007,7 @@ const TradingPanel = ({
               {isUsdSpot && (
                 <span className="text-orange-400/90">
                   {' '}
-                  {isCryptoOnly ? '(USDT per unit)' : '(₹ per unit)'}
+                  (per unit)
                 </span>
               )}
             </label>
@@ -4930,22 +5018,18 @@ const TradingPanel = ({
               placeholder={
                 orderMode === 'LIMIT'
                   ? isUsdSpot
-                    ? isCryptoOnly
-                      ? 'Limit (USDT per unit)'
-                      : 'Limit in INR per unit'
+                    ? 'Limit price per unit'
                     : 'Enter limit price'
                   : isUsdSpot
-                    ? isCryptoOnly
-                      ? 'Trigger (USDT per unit)'
-                      : 'Trigger in INR per unit'
+                    ? 'Trigger price per unit'
                     : 'Enter trigger price'
               }
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 focus:outline-none focus:border-green-500"
             />
             <div className="text-xs text-gray-500 mt-1">
-              {orderMode === 'LIMIT' 
-                ? `Order executes when price ${orderType === 'buy' ? 'falls to' : 'rises to'} ${priceSymbol}${limitPrice || '...'}`
-                : `Order triggers when price ${orderType === 'buy' ? 'rises to' : 'falls to'} ${priceSymbol}${limitPrice || '...'}`
+              {orderMode === 'LIMIT'
+                ? `Order executes when price ${orderType === 'buy' ? 'falls to' : 'rises to'} ${limitPrice || '...'}`
+                : `Order triggers when price ${orderType === 'buy' ? 'rises to' : 'falls to'} ${limitPrice || '...'}`
               }
             </div>
           </div>
@@ -4955,34 +5039,34 @@ const TradingPanel = ({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs text-gray-400 mb-2">
-              Stop Loss (Optional){isUsdSpot && <span className="text-orange-400/90">{isCryptoOnly ? ' $' : ' ₹'}</span>}
+              Stop Loss (Optional)
             </label>
             <input
               type="number"
               value={stopLoss}
               onChange={(e) => setStopLoss(e.target.value)}
-              placeholder={isUsdSpot ? (isCryptoOnly ? 'SL in USD' : 'SL in INR') : 'SL Price'}
+              placeholder={isUsdSpot ? 'SL Price' : 'SL Price'}
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-red-500"
             />
           </div>
           <div>
             <label className="block text-xs text-gray-400 mb-2">
-              Target (Optional){isUsdSpot && <span className="text-orange-400/90">{isCryptoOnly ? ' $' : ' ₹'}</span>}
+              Target (Optional)
             </label>
             <input
               type="number"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              placeholder={isUsdSpot ? (isCryptoOnly ? 'Target in USD' : 'Target in INR') : 'Target Price'}
+              placeholder={isUsdSpot ? 'Target Price' : 'Target Price'}
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500"
             />
           </div>
         </div>
         {(stopLoss || target) && (
           <div className="text-xs text-gray-500">
-            {stopLoss && <span className="text-red-400">SL: {priceSymbol}{stopLoss}</span>}
+            {stopLoss && <span className="text-red-400">SL: {stopLoss}</span>}
             {stopLoss && target && ' | '}
-            {target && <span className="text-green-400">Target: {priceSymbol}{target}</span>}
+            {target && <span className="text-green-400">Target: {target}</span>}
             {' - Auto exit when price hits'}
           </div>
         )}
@@ -5004,28 +5088,23 @@ const TradingPanel = ({
           {isUsdSpot ? (
             <>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">{isForex ? 'Forex Wallet' : 'Crypto Wallet'}</span>
-                <span className={`font-medium ${isForex ? 'text-cyan-400' : 'text-orange-400'}`}>
-                  ₹{((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-gray-400">Available Margin</span>
+                <span className="text-green-400 font-medium">
+                  {(((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
-                <span className="text-gray-400">Available</span>
-                <span className="text-green-400 font-medium">
-                  ₹{((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-gray-400">Used Margin</span>
+                <span className="text-yellow-400 font-medium">
+                  {((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Trade Cost</span>
-                <span className={cryptoTotalCost > ((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) ? 'text-red-400' : 'text-white'}>
-                  ₹{cryptoTotalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-gray-400">Required Margin</span>
+                <span className={Number(marginPreview?.marginRequired || 0) > Number((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - Number((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0) ? 'text-red-400' : 'text-green-400'}>
+                  {marginPreview?.marginRequired?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '--'}
                 </span>
               </div>
-              {cryptoTotalCost > ((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) && (
-                <div className="text-xs text-red-400">
-                  ⚠️ Insufficient balance. Need ₹{(cryptoTotalCost - ((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} more
-                </div>
-              )}
             </>
           ) : (
             /* Indian/MCX Trading - Margin based system */
@@ -5033,58 +5112,23 @@ const TradingPanel = ({
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
                 <span className={isMCX ? 'text-yellow-400' : 'text-green-400'}>
-                  ₹{activeWallet.balance.toLocaleString()}
+                  {activeWallet.balance.toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Used Margin</span>
                 <span className="text-yellow-400">
-                  ₹{activeWallet.usedMargin.toLocaleString()}
-                </span>
-              </div>
-              {(marginPreview?.exposureIntraday != null || marginPreview?.exposureCarryForward != null) && (
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Segment exposure</span>
-                <span className="text-cyan-400 font-medium text-xs text-right">
-                  MIS ×{marginPreview.exposureIntraday ?? '—'} · CF ×{marginPreview.exposureCarryForward ?? '—'}
-                </span>
-              </div>
-              )}
-              <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
-                <span className="text-gray-400">Available</span>
-                <span className="text-green-400 font-medium">
-                  ₹{activeWallet.available.toLocaleString()}
+                  {activeWallet.usedMargin.toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Required Margin</span>
-                <span className={marginPreview?.canPlace === false ? 'text-red-400' : ''}>
-                  ₹{marginPreview?.marginRequired?.toLocaleString() || '--'}
+                <span className={Number(marginPreview?.marginRequired || 0) > Number(activeWallet.available || 0) ? 'text-red-400' : 'text-green-400'}>
+                  {marginPreview?.marginRequired?.toLocaleString() || '--'}
                 </span>
               </div>
             </>
           )}
-          {marginPreview?.lotsError && (
-            <div className="text-xs text-red-400 mt-2">
-              ⚠️ {marginPreview.lotsError}
-            </div>
-          )}
-          {marginPreview && !marginPreview.canPlace && !marginPreview.lotsError && marginPreview.shortfall > 0 && (
-            <div className="text-xs text-red-400 mt-2">
-              ⚠️ Insufficient funds. Need ₹{Number(marginPreview.shortfall || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} more
-            </div>
-          )}
-          {marginPreview?.maxLots && (
-            <div className="text-xs text-gray-500 mt-1">
-              Lot limit: {marginPreview.minLots} - {marginPreview.maxLots}
-            </div>
-          )}
-          {isOptions && orderType === 'sell' && (
-            <div className="text-xs text-yellow-400 mt-2">
-              ⚠️ Option selling requires higher margin (SPAN + Exposure)
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Submit Button — opens confirm modal (breakup, bid/ask, limits) like stripe tap */}
@@ -5137,22 +5181,22 @@ const TradingPanel = ({
               <div className="flex rounded-lg overflow-hidden border border-dark-600 mb-3 text-center">
                 <div className="flex-1 py-2 px-2 bg-dark-700/90 border-r border-dark-600">
                   <div className="text-[10px] text-gray-400 uppercase tracking-wide">
-                    {isUsdSpot ? (isCryptoOnly ? 'Bid ($)' : 'Bid (₹)') : 'Bid'}
+                    Bid
                   </div>
                   <div className="text-base font-semibold text-white tabular-nums">
                     {stripeBidPx != null && !isNaN(stripeBidPx)
-                      ? `${priceSymbol}${stripeBidPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      ? `${stripeBidPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                       : '—'}
                   </div>
                   <div className="text-[10px] text-red-400 font-medium">SELL</div>
                 </div>
                 <div className="flex-1 py-2 px-2 bg-green-900/25">
                   <div className="text-[10px] text-gray-400 uppercase tracking-wide">
-                    {isUsdSpot ? (isCryptoOnly ? 'Ask ($)' : 'Ask (₹)') : 'Ask'}
+                    Ask
                   </div>
                   <div className="text-base font-semibold text-white tabular-nums">
                     {stripeAskPx != null && !isNaN(stripeAskPx)
-                      ? `${priceSymbol}${stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      ? `${stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                       : '—'}
                   </div>
                   <div className="text-[10px] text-green-400 font-medium">BUY</div>
@@ -5162,15 +5206,15 @@ const TradingPanel = ({
                 <div className="text-xs text-amber-400/95 mb-2">Loading margin preview…</div>
               )}
               {[
-                ['Breakup / order lots', confirmBreakupCapLabel],
-                ['Max lot', marginPreview?.maxLots != null ? String(marginPreview.maxLots) : '—'],
-                ['Lot size', marginPreview?.lotSize != null ? String(marginPreview.lotSize) : String(lotSize ?? '—')],
+                [isCryptoOnly ? 'Break/order qty' : 'Breakup / order lots', confirmBreakupCapLabel],
+                [isCryptoOnly ? 'Max qty' : 'Max lot', marginPreview?.maxLots != null ? String(marginPreview.maxLots) : '—'],
+                [isCryptoOnly ? 'Qty step' : 'Lot size', marginPreview?.lotSize != null ? String(marginPreview.lotSize) : String(lotSize ?? '—')],
                 ['Time', confirmTickTimeLabel],
                 ['Volume', confirmVolumeDisp],
                 [
                   'Avg. price',
                   confirmAvgPriceNum != null
-                    ? `${priceSymbol}${confirmAvgPriceNum.toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', {
+                    ? `${confirmAvgPriceNum.toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}`
@@ -5181,7 +5225,7 @@ const TradingPanel = ({
                 [
                   'Trade margin',
                   marginPreview?.marginRequired != null
-                    ? `₹${Number(marginPreview.marginRequired).toLocaleString('en-IN', {
+                    ? `${Number(marginPreview.marginRequired).toLocaleString('en-IN', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}`
@@ -5221,6 +5265,7 @@ const TradingPanel = ({
           </div>
         </div>
       )}
+      </div>
     </aside>
   );
 };
@@ -5818,7 +5863,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                     <div className="text-xs text-gray-500 truncate">{inst.category || inst.name} • {inst.exchange}</div>
                     {cannotTradeSearchRow && (
                       <div className="text-[10px] text-amber-300/95 mt-0.5 leading-tight">
-                        Closed by broker — enable &quot;List trading&quot; in Super Admin Market Watch to allow trading
+                        Closed by broker — contact your broker to enable trading
                       </div>
                     )}
                   </div>
@@ -5922,11 +5967,11 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                     </div>
                     <div className="text-right mr-2">
                       <div className="text-sm font-medium text-gray-300">
-                        {`$${spotQuoteDisplayPrice(
+                        {spotQuoteDisplayPrice(
                           { ...crypto, segment: 'CRYPTO' },
                           priceData.ltp || 0,
                           usdRate
-                        ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                        ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -5982,7 +6027,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                         <div className="text-[10px] text-gray-500 truncate">Lot {inst.lotSize ?? '—'}</div>
                       </div>
                       <div className="text-right mr-1 text-xs text-gray-300 shrink-0">
-                        ₹{displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '--'}
+                        {displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '--'}
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
                         {isInWatchlist(inst) ? (
@@ -6019,7 +6064,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                     </div>
                     <div className="text-right mr-2">
                       <div className="text-sm font-medium text-gray-300">
-                        ₹{spotPxToDisplayedInr(fx, ltpUsd, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {spotPxToDisplayedInr(fx, ltpUsd, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -6059,7 +6104,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
               const priceData = getPrice(inst.token);
               const pxNum = Number(priceData.ltp || 0);
               const priceLine = isUsdSpotInstrument(inst)
-                ? `${isForexInstrument(inst) ? '₹' : '$'}${spotQuoteDisplayPrice(inst, pxNum, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                ? `${spotQuoteDisplayPrice(inst, pxNum, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                 : pxNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
               return (
                 <div
@@ -6119,11 +6164,10 @@ const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, on
     return 'text-white';
   };
   
-  // Format price - use $ for crypto, ₹ for others (matching desktop)
+  // Format price - no currency symbols
   const formatPrice = (price) => {
     if (!price || price <= 0) return '--';
-    if (isCryptoInstrument) return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    return `₹${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
   return (
@@ -6133,7 +6177,7 @@ const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, on
           {instrument.symbol}
         </div>
         <div className="text-xs text-gray-500">
-          {instrument.exchange} {instrument.strike ? `• ₹${instrument.strike}` : ''}
+          {instrument.exchange} {instrument.strike ? `• ${instrument.strike}` : ''}
         </div>
       </div>
       <div className="text-right mr-3" onClick={onSelect}>
@@ -6168,6 +6212,14 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
   const lastCandleRef = useRef(null);
+
+  const mobileInstrumentKey = selectedInstrument
+    ? selectedInstrument.isCrypto || selectedInstrument.exchange === 'BINANCE'
+      ? binanceCandleSymbol(selectedInstrument)
+      : isForexInstrument(selectedInstrument)
+        ? String(selectedInstrument.pair || selectedInstrument.symbol || '')
+        : String(selectedInstrument.token || selectedInstrument.symbol || '')
+    : '';
 
   const isCryptoInstr = selectedInstrument?.isCrypto || selectedInstrument?.exchange === 'BINANCE';
   const tokenStr =
@@ -6238,7 +6290,7 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [selectedInstrument, usdRate, onChartLtp]);
+  }, [mobileInstrumentKey, usdRate, onChartLtp]);
 
   // Update chart with real-time price
   useEffect(() => {
@@ -6290,7 +6342,7 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
         console.warn('Chart update error:', err.message);
       }
     }
-  }, [livePrice, selectedInstrument, usdRate, onChartLtp]);
+  }, [livePrice, mobileInstrumentKey, usdRate, onChartLtp]);
 
   return (
     <div className="flex-1 flex flex-col bg-dark-800">
@@ -6309,10 +6361,10 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
                   <span className={`font-mono font-bold ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {selectedInstrument && isUsdSpotInstrument(selectedInstrument)
                       ? livePrice.ltp != null && !isNaN(livePrice.ltp)
-                        ? `${isForexInstrument(selectedInstrument) ? '₹' : '$'}${spotQuoteDisplayPrice(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                        ? `${formatPrice(livePrice.ltp)}`
                         : '--'
                       : livePrice.ltp != null && !isNaN(livePrice.ltp)
-                        ? livePrice.ltp.toLocaleString()
+                        ? formatPrice(livePrice.ltp)
                         : '--'}
                   </span>
                   <span className={`${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -6570,7 +6622,7 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
         side === 'BUY'
           ? Number(q.bid || q.ltp || q.close || 0)
           : Number(q.ask || q.ltp || q.close || 0);
-      return spotPxToDisplayedInr(position, raw, usdRate);
+      return raw;
     }
 
     const token = position.token;
@@ -6598,16 +6650,19 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
     return data.ask || data.ltp || data.last_price || 0;
   };
 
+  // Filter history to show only manually squared off positions
+  const squaredOffHistory = history.filter(item => item.closeReason === 'MANUAL');
+
   const tabs = [
     { id: 'positions', label: 'Positions', count: positions.length, icon: '📊' },
     { id: 'pending', label: 'Pending', count: pendingOrders.length, icon: '⏳' },
     { id: 'history', label: 'History', count: history.length, icon: '📜' },
-    { id: 'cancelled', label: 'Cancelled', count: cancelledOrders.length, icon: '❌' }
+    { id: 'squareOff', label: 'Square Off', count: squaredOffHistory.length, icon: '📤' }
   ];
 
-  const currentData = tab === 'positions' ? positions 
-    : tab === 'pending' ? pendingOrders 
-    : tab === 'cancelled' ? cancelledOrders 
+  const currentData = tab === 'positions' ? positions
+    : tab === 'pending' ? pendingOrders
+    : tab === 'squareOff' ? squaredOffHistory
     : history;
 
   const totalPnL = todayPnL.realized + todayPnL.unrealized;
@@ -6619,20 +6674,20 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
         <div className="flex justify-between items-center mb-2">
           <span className="text-gray-400 text-sm font-medium">Today's P&L</span>
           <span className={`text-xl font-bold ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toFixed(2)}
+            {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}
           </span>
         </div>
         <div className="flex justify-between text-xs">
           <div>
             <span className="text-gray-500">Realized: </span>
             <span className={todayPnL.realized >= 0 ? 'text-green-400' : 'text-red-400'}>
-              {todayPnL.realized >= 0 ? '+' : ''}₹{todayPnL.realized.toFixed(2)}
+              {todayPnL.realized >= 0 ? '+' : ''}{todayPnL.realized.toFixed(2)}
             </span>
           </div>
           <div>
             <span className="text-gray-500">Unrealized: </span>
             <span className={todayPnL.unrealized >= 0 ? 'text-green-400' : 'text-red-400'}>
-              {todayPnL.unrealized >= 0 ? '+' : ''}₹{todayPnL.unrealized.toFixed(2)}
+              {todayPnL.unrealized >= 0 ? '+' : ''}{todayPnL.unrealized.toFixed(2)}
             </span>
           </div>
           <div>
@@ -6671,11 +6726,12 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
           <div className="flex-1 flex items-center justify-center text-gray-400 h-64">
             <div className="text-center py-8">
               <div className="text-4xl mb-4 opacity-50">
-                {tab === 'positions' ? '📊' : tab === 'pending' ? '⏳' : tab === 'cancelled' ? '❌' : '📜'}
+                {tab === 'positions' ? '📊' : tab === 'pending' ? '⏳' : tab === 'squareOff' ? '📤' : tab === 'cancelled' ? '❌' : '📜'}
               </div>
               <p className="text-gray-500">
-                {tab === 'positions' ? 'No open positions' 
-                  : tab === 'pending' ? 'No pending orders' 
+                {tab === 'positions' ? 'No open positions'
+                  : tab === 'pending' ? 'No pending orders'
+                  : tab === 'squareOff' ? 'No squared off positions'
                   : tab === 'cancelled' ? 'No cancelled orders'
                   : 'No trade history'}
               </p>
@@ -6690,19 +6746,19 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
                 : (item.entryPrice - ltp) * item.quantity;
               const isCrypto = item.isCrypto;
               const isCryptoRow = item.isCrypto || item.exchange === 'BINANCE';
-              const currencySymbol = '₹';
-              const displayPnL = tab === 'history' || tab === 'cancelled' 
-                ? (item.realizedPnL || item.netPnL || 0) 
+              const currencySymbol = '';
+              const displayPnL = tab === 'history' || tab === 'cancelled' || tab === 'squareOff'
+                ? (item.realizedPnL || item.netPnL || 0)
                 : pnl;
               const cryptoPxMobile = (inr) => {
                 const n = parseFloat(inr);
-                return Number.isFinite(n) && n !== 0 ? (n / usdRate).toFixed(2) : '0.00';
+                return Number.isFinite(n) && n !== 0 ? n.toFixed(2) : '0.00';
               };
               const fmtSlTpMobile = (raw) => {
                 if (raw == null || raw === '') return '—';
                 const n = parseFloat(raw);
                 if (!Number.isFinite(n)) return '—';
-                if (isCryptoRow) return `$${cryptoPxMobile(n)}`;
+                if (isCryptoRow) return cryptoPxMobile(n);
                 return `${currencySymbol}${n.toFixed(2)}`;
               };
               
@@ -6737,21 +6793,26 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
                             {item.closeReason || 'CANCELLED'}
                           </span>
                         )}
+                        {tab === 'squareOff' && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-green-900/30 text-green-400">
+                            {item.closeReason || 'MANUAL'}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-gray-400 mt-1">
                         {item.lots || Math.floor(item.quantity / (item.lotSize || 1))} lots • {item.quantity} qty
-                        {(tab === 'history' || tab === 'cancelled') && getDuration() && (
+                        {(tab === 'history' || tab === 'cancelled' || tab === 'squareOff') && getDuration() && (
                           <span className="text-blue-400 ml-2">⏱ {getDuration()}</span>
                         )}
                       </div>
                     </div>
                     <div className="text-right">
                       <div className={`font-bold text-lg ${displayPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {displayPnL >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(displayPnL).toFixed(2)}
+                        {displayPnL >= 0 ? '+' : '-'}{isCryptoRow ? '' : currencySymbol}{Math.abs(displayPnL).toFixed(2)}
                       </div>
                       {tab === 'positions' && (
                         <div className="text-xs text-gray-500">
-                          LTP: {currencySymbol}{(parseFloat(ltp) || 0).toFixed(2)}
+                          LTP: {isCryptoRow ? '' : currencySymbol}{(parseFloat(ltp) || 0).toFixed(2)}
                         </div>
                       )}
                     </div>
@@ -6761,16 +6822,16 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
                   <div className="flex justify-between items-center text-xs mb-2">
                     <div className="flex gap-3">
                       <span className="text-gray-400">
-                        Entry: <span className="text-white">{currencySymbol}{(item.entryPrice || 0).toFixed(2)}</span>
+                        Entry: <span className="text-white">{isCryptoRow ? '' : currencySymbol}{(item.entryPrice || 0).toFixed(2)}</span>
                       </span>
-                      {(tab === 'history' || tab === 'cancelled') && item.exitPrice && (
+                      {(tab === 'history' || tab === 'cancelled' || tab === 'squareOff') && item.exitPrice && (
                         <span className="text-gray-400">
-                          Exit: <span className="text-white">{currencySymbol}{(item.exitPrice || 0).toFixed(2)}</span>
+                          Exit: <span className="text-white">{isCryptoRow ? '' : currencySymbol}{(item.exitPrice || 0).toFixed(2)}</span>
                         </span>
                       )}
                     </div>
                     <span className="text-yellow-400">
-                      Charges: {currencySymbol}{(item.commission || 0).toFixed(2)}
+                      Charges: {isCryptoRow ? '' : currencySymbol}{(item.commission || 0).toFixed(2)}
                     </span>
                   </div>
                   
@@ -6843,7 +6904,7 @@ const MobileNotificationsContent = ({ user }) => {
         id: trade._id,
         type: 'trade',
         title: `${trade.side} ${trade.symbol}`,
-        message: `${trade.quantity} qty @ ₹${trade.entryPrice?.toLocaleString()}`,
+        message: `${trade.quantity} qty @ ${trade.entryPrice?.toLocaleString()}`,
         pnl: trade.realizedPnL || 0,
         status: trade.closeReason || 'CLOSED',
         time: new Date(trade.closedAt || trade.createdAt),
@@ -6854,7 +6915,7 @@ const MobileNotificationsContent = ({ user }) => {
         id: fund._id,
         type: 'fund',
         title: fund.type === 'DEPOSIT' ? 'Deposit Request' : 'Withdrawal Request',
-        message: `₹${fund.amount?.toLocaleString()}`,
+        message: `${fund.amount?.toLocaleString()}`,
         status: fund.status,
         time: new Date(fund.updatedAt || fund.createdAt),
         icon: fund.type === 'DEPOSIT' ? '💰' : '💸'
@@ -6906,7 +6967,7 @@ const MobileNotificationsContent = ({ user }) => {
                   <p className="text-sm text-gray-400">{notif.message}</p>
                   {notif.type === 'trade' ? (
                     <span className={`text-sm ${notif.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      P&L: {notif.pnl >= 0 ? '+' : ''}₹{notif.pnl.toFixed(2)}
+                      P&L: {notif.pnl >= 0 ? '+' : ''}{notif.pnl.toFixed(2)}
                     </span>
                   ) : (
                     <span className={`text-xs px-2 py-0.5 rounded ${
@@ -7057,7 +7118,7 @@ const MobileProfilePanel = ({ user, walletData, onLogout }) => {
                       </div>
                       <div className="text-right">
                         <p className={`font-medium ${tx.type === 'DEPOSIT' ? 'text-green-400' : 'text-red-400'}`}>
-                          {tx.type === 'DEPOSIT' ? '+' : '-'}₹{tx.amount?.toLocaleString()}
+                          {tx.type === 'DEPOSIT' ? '+' : '-'}{tx.amount?.toLocaleString()}
                         </p>
                         <p className={`text-xs ${tx.status === 'APPROVED' ? 'text-green-400' : tx.status === 'REJECTED' ? 'text-red-400' : 'text-yellow-400'}`}>
                           {tx.status}
@@ -7098,7 +7159,7 @@ const MobileProfilePanel = ({ user, walletData, onLogout }) => {
                       </div>
                       <div className="text-right">
                         <p className={`font-medium ${(trade.realizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {(trade.realizedPnL || 0) >= 0 ? '+' : ''}₹{(trade.realizedPnL || 0).toFixed(2)}
+                          {(trade.realizedPnL || 0) >= 0 ? '+' : ''}{(trade.realizedPnL || 0).toFixed(2)}
                         </p>
                         <p className="text-xs text-gray-400">{trade.closeReason || 'CLOSED'}</p>
                       </div>
@@ -7313,15 +7374,15 @@ const MobileProfilePanel = ({ user, walletData, onLogout }) => {
         <div className="bg-dark-700 rounded-xl p-4">
           <p className="text-gray-400 text-sm mb-1">Trading Balance</p>
           <p className="text-2xl font-bold text-green-400">
-            ₹{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}
+            {(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}
           </p>
           <div className="flex justify-between mt-2 text-sm">
             <span className="text-gray-400">Available Margin</span>
-            <span className="text-green-400">₹{walletData?.availableMargin?.toLocaleString() || '0.00'}</span>
+            <span className="text-green-400">{walletData?.availableMargin?.toLocaleString() || '0.00'}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Used Margin</span>
-            <span className="text-yellow-400">₹{walletData?.usedMargin?.toLocaleString() || '0.00'}</span>
+            <span className="text-yellow-400">{walletData?.usedMargin?.toLocaleString() || '0.00'}</span>
           </div>
         </div>
       </div>
@@ -7403,7 +7464,7 @@ const NotificationsModal = ({ onClose, user }) => {
         id: trade._id,
         type: 'trade',
         title: `${trade.side} ${trade.symbol}`,
-        message: `${trade.quantity} qty @ ₹${trade.entryPrice?.toLocaleString()} → ₹${trade.exitPrice?.toLocaleString()}`,
+        message: `${trade.quantity} qty @ ${trade.entryPrice?.toLocaleString()} → ${trade.exitPrice?.toLocaleString()}`,
         pnl: trade.realizedPnL || 0,
         status: trade.closeReason || 'CLOSED',
         time: new Date(trade.closedAt || trade.createdAt),
@@ -7414,7 +7475,7 @@ const NotificationsModal = ({ onClose, user }) => {
         id: fund._id,
         type: 'fund',
         title: fund.type === 'DEPOSIT' ? 'Deposit Request' : 'Withdrawal Request',
-        message: `₹${fund.amount?.toLocaleString()}`,
+        message: `${fund.amount?.toLocaleString()}`,
         status: fund.status,
         time: new Date(fund.updatedAt || fund.createdAt),
         icon: fund.type === 'DEPOSIT' ? '💰' : '💸',
@@ -7559,7 +7620,7 @@ const NotificationsModal = ({ onClose, user }) => {
                       <div className="flex items-center justify-between mt-1">
                         {notif.type === 'trade' ? (
                           <span className={`text-sm font-medium ${notif.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            P&L: {notif.pnl >= 0 ? '+' : ''}₹{notif.pnl.toFixed(2)}
+                            P&L: {notif.pnl >= 0 ? '+' : ''}{notif.pnl.toFixed(2)}
                           </span>
                         ) : notif.type === 'fund' ? (
                           <span className={`text-xs px-2 py-0.5 rounded ${getStatusColor(notif.status)} bg-dark-600`}>
@@ -7589,7 +7650,7 @@ const NotificationsModal = ({ onClose, user }) => {
 };
 
 const SettingsModal = ({ onClose, user }) => {
-  const [activeSection, setActiveSection] = useState('account'); // 'account', 'password', 'margin', 'transfer'
+  const [activeSection, setActiveSection] = useState('account'); // 'account', 'password', 'margin', 'transfer', 'segments'
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -7614,6 +7675,9 @@ const SettingsModal = ({ onClose, user }) => {
     if (activeSection === 'transfer') {
       fetchAvailableBrokers();
       fetchBrokerRequests();
+    }
+    if (activeSection === 'segments') {
+      fetchMarginSettings();
     }
   }, [activeSection]);
   
@@ -7744,6 +7808,12 @@ const SettingsModal = ({ onClose, user }) => {
             Account
           </button>
           <button
+            onClick={() => setActiveSection('segments')}
+            className={`flex-1 py-3 text-xs font-medium whitespace-nowrap ${activeSection === 'segments' ? 'text-green-400 border-b-2 border-green-400' : 'text-gray-400'}`}
+          >
+            Segments
+          </button>
+          <button
             onClick={() => setActiveSection('margin')}
             className={`flex-1 py-3 text-xs font-medium whitespace-nowrap ${activeSection === 'margin' ? 'text-green-400 border-b-2 border-green-400' : 'text-gray-400'}`}
           >
@@ -7816,6 +7886,100 @@ const SettingsModal = ({ onClose, user }) => {
             </div>
           )}
 
+          {activeSection === 'segments' && (
+            <div className="space-y-4">
+              {loadingMargin ? (
+                <div className="p-4 text-center text-gray-400">
+                  <RefreshCw className="animate-spin inline mr-2" size={16} />
+                  Loading segment permissions...
+                </div>
+              ) : marginData?.segmentPermissions ? (
+                <>
+                  {Object.entries(
+                    typeof marginData.segmentPermissions === 'object' && marginData.segmentPermissions !== null
+                      ? (marginData.segmentPermissions instanceof Map 
+                          ? Object.fromEntries(marginData.segmentPermissions) 
+                          : marginData.segmentPermissions)
+                      : {}
+                  ).map(([segment, settings]) => (
+                    <div key={segment} className="bg-dark-700 rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-white">{segment}</h3>
+                        <span className={settings?.enabled ? 'px-2 py-1 bg-green-600/20 text-green-400 text-xs rounded' : 'px-2 py-1 bg-red-600/20 text-red-400 text-xs rounded'}>
+                          {settings?.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      {settings?.enabled && (
+                        <div className="space-y-3 text-sm">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Max Lots</span>
+                              <span className="text-yellow-400 font-medium">{settings?.maxLots || 50}</span>
+                            </div>
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Order Lots</span>
+                              <span className="text-purple-400 font-medium">{settings?.orderLots || 10}</span>
+                            </div>
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Intraday Leverage</span>
+                              <span className="text-green-400 font-medium">{settings?.exposureIntraday || 1}x</span>
+                            </div>
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Carry Forward Leverage</span>
+                              <span className="text-blue-400 font-medium">{settings?.exposureCarryForward || 1}x</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Commission Type</span>
+                              <span className="text-orange-400 font-medium">{settings?.commissionType || 'PER_LOT'}</span>
+                            </div>
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Commission Value</span>
+                              <span className="text-orange-400 font-medium">{settings?.commissionLot || 0}</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Fraction</span>
+                              <span className={settings?.fraction ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                                {settings?.fraction ? 'Enabled' : 'Disabled'}
+                              </span>
+                            </div>
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Option Buy</span>
+                              <span className={settings?.optionBuy !== false ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                                {settings?.optionBuy !== false ? 'Enabled' : 'Disabled'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Option Sell</span>
+                              <span className={settings?.optionSell !== false ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                                {settings?.optionSell !== false ? 'Enabled' : 'Disabled'}
+                              </span>
+                            </div>
+                            <div className="bg-dark-800 p-2 rounded">
+                              <span className="text-gray-400 text-xs block mb-1">Auto Square</span>
+                              <span className={settings?.autoSquare !== false ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                                {settings?.autoSquare !== false ? 'Enabled' : 'Disabled'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div className="p-4 text-center text-gray-400">
+                  No segment permissions found
+                </div>
+              )}
+            </div>
+          )}
+
           {activeSection === 'margin' && (
             <div className="space-y-4">
               {loadingMargin ? (
@@ -7858,9 +8022,9 @@ const SettingsModal = ({ onClose, user }) => {
                     </div>
                   </div>
 
-                  {/* Segment Exposure Settings */}
+                  {/* Segment Settings */}
                   <div className="bg-dark-700 rounded-lg p-4">
-                    <h3 className="font-medium mb-3">Segment Exposure</h3>
+                    <h3 className="font-medium mb-3">Segment Settings</h3>
                     <div className="space-y-3 text-sm">
                       {marginData.segmentPermissions && Object.entries(
                         typeof marginData.segmentPermissions === 'object' && marginData.segmentPermissions !== null
@@ -7878,8 +8042,6 @@ const SettingsModal = ({ onClose, user }) => {
                           </div>
                           {settings?.enabled && (
                             <div className="grid grid-cols-2 gap-2 text-xs text-gray-400">
-                              <div>Intraday: <span className="text-green-400">{settings?.exposureIntraday || 1}x</span></div>
-                              <div>Carry Fwd: <span className="text-blue-400">{settings?.exposureCarryForward || 1}x</span></div>
                               <div>Max Lots: <span className="text-yellow-400">{settings?.maxLots || 50}</span></div>
                               <div>Order Lots: <span className="text-purple-400">{settings?.orderLots || 10}</span></div>
                             </div>
@@ -8212,7 +8374,7 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
             <Wallet className="text-green-400" size={24} />
             <div>
               <h3 className="font-bold text-lg">Wallet</h3>
-              <p className="text-sm text-gray-400">Balance: <span className="text-green-400 font-medium">₹{walletData?.wallet?.balance?.toLocaleString() || '0'}</span></p>
+              <p className="text-sm text-gray-400">Balance: <span className="text-green-400 font-medium">{walletData?.wallet?.balance?.toLocaleString() || '0'}</span></p>
             </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white p-1">
@@ -8338,7 +8500,7 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
 
             {/* Amount Input */}
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Amount (₹)</label>
+              <label className="block text-sm text-gray-400 mb-2">Amount ()</label>
               <input
                 type="number"
                 value={amount}
@@ -8353,7 +8515,7 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
                     onClick={() => setAmount(amt.toString())}
                     className="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm"
                   >
-                    ₹{amt.toLocaleString()}
+                    {amt.toLocaleString()}
                   </button>
                 ))}
               </div>
@@ -8389,12 +8551,12 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
             {/* Available Balance */}
             <div className="bg-dark-700 rounded-lg p-4 text-center">
               <p className="text-sm text-gray-400">Available for Withdrawal</p>
-              <p className="text-3xl font-bold text-green-400 mt-1">₹{walletData?.wallet?.balance?.toLocaleString() || '0'}</p>
+              <p className="text-3xl font-bold text-green-400 mt-1">{walletData?.wallet?.balance?.toLocaleString() || '0'}</p>
             </div>
 
             {/* Amount Input */}
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Withdrawal Amount (₹)</label>
+              <label className="block text-sm text-gray-400 mb-2">Withdrawal Amount ()</label>
               <input
                 type="number"
                 value={amount}
@@ -8409,7 +8571,7 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
                     onClick={() => setAmount(amt.toString())}
                     className="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm"
                   >
-                    ₹{amt.toLocaleString()}
+                    {amt.toLocaleString()}
                   </button>
                 ))}
                 <button
@@ -8588,7 +8750,7 @@ const BuySellModal = ({
   // For MCX: quantity is direct (no lot multiplication)
   // For F&O: quantity = lots * lotSize (if lot mode) or direct quantity (if qty mode for FUT)
   const totalQuantity = isUsdSpot
-    ? parseFloat(quantity || 0.01)
+    ? parseFloat(quantity || 0.001)
     : (isMCX ? parseFloat(quantity || 1) : (isLotBased && (quantityMode === 'lot' || isOptions) ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1)));
   const orderValue = ltp * totalQuantity;
   const marginRequired = orderValue;
@@ -8601,7 +8763,7 @@ const BuySellModal = ({
     : totalCommission * (isUsdSpot ? usdRate : 1);
   const estMarginInr = Number.isFinite(Number(marginPreview?.marginRequired))
     ? Number(marginPreview.marginRequired)
-    : marginRequired * (isUsdSpot ? usdRate : 1);
+    : 0;
 
   // Fetch margin preview when inputs change
   useEffect(() => {
@@ -8616,7 +8778,9 @@ const BuySellModal = ({
           token: instrument.token != null ? String(instrument.token) : undefined,
           segment: isForex
             ? (instrument.displaySegment || forexWatchlistSegmentFromInstrument(instrument))
-            : (instrument.displaySegment || instrument.segment),
+            : (instrument.exchange === 'BINANCE' && (instrument.segment === 'CRYPTO' || !instrument.segment) 
+                ? (instrument.instrumentType === 'OPTIONS' ? 'CRYPTOOPT' : 'CRYPTOFUT')
+                : (instrument.displaySegment || instrument.segment)),
           instrumentType: instrument.instrumentType,
           optionType: instrument.optionType || null,
           strikePrice: instrument.strike || null,
@@ -8690,8 +8854,6 @@ const BuySellModal = ({
 
   const inrNotionalCalc =
     inputMode === 'inr' ? parseFloat(quantity) || 0 : (parseFloat(quantity) || 0) * ltpInr;
-  const cryptoUnitsCalc =
-    inputMode === 'inr' ? (ltpInr > 0 ? inrNotionalCalc / ltpInr : 0) : parseFloat(quantity) || 0;
 
   // Place order handler
   const handlePlaceOrder = async () => {
@@ -8705,8 +8867,8 @@ const BuySellModal = ({
     setSuccess('');
 
     try {
-      // For USD spot: use cryptoUnits calculated from INR notional or direct units
-      const cryptoQuantity = isUsdSpot ? cryptoUnitsCalc : totalQuantity;
+      // For USD spot: use direct quantity
+      const cryptoQuantity = isUsdSpot ? parseFloat(quantity || 0) : totalQuantity;
       
       const orderData = {
         symbol: instrument.symbol,
@@ -8750,8 +8912,6 @@ const BuySellModal = ({
               : parseFloat(stopLoss) / usdRate
             : parseFloat(stopLoss)
           : null,
-        cryptoAmount: isCryptoOnly ? inrNotionalCalc : null,
-        forexAmount: isForex ? inrNotionalCalc : null
       };
 
       if (orderPriceType === 'LIMIT') {
@@ -8773,10 +8933,10 @@ const BuySellModal = ({
       });
 
       const trade = data.trade;
-      const priceSymbol = '₹';
-      const statusMsg = trade?.status === 'PENDING' 
-        ? `📋 LIMIT ORDER PLACED - ${instrument.symbol} @ ${priceSymbol}${limitPrice}` 
-        : `✅ TRADE EXECUTED - ${trade?.side} ${instrument.symbol} @ ${priceSymbol}${trade?.entryPrice?.toLocaleString()} | Qty: ${trade?.quantity}`;
+      const priceSymbol = '';
+      const statusMsg = trade?.status === 'PENDING'
+        ? `📋 LIMIT ORDER PLACED - ${instrument.symbol} @ ${limitPrice}`
+        : `✅ TRADE EXECUTED - ${trade?.side} ${instrument.symbol} @ ${trade?.entryPrice?.toLocaleString()} | Qty: ${trade?.quantity}`;
       
       setSuccess(statusMsg);
       if (onRefreshWallet) onRefreshWallet();
@@ -8847,10 +9007,9 @@ const BuySellModal = ({
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide opacity-70">
-                SELL @ Bid {isCryptoOnly ? '($)' : '(₹)'}
+                SELL @ Bid
               </div>
               <div className="text-xl font-mono">
-                {isCryptoOnly ? '$' : '₹'}
                 {(bidDisp != null && !isNaN(bidDisp) ? bidDisp : 0).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </button>
@@ -8863,10 +9022,9 @@ const BuySellModal = ({
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide opacity-70">
-                BUY @ Ask {isCryptoOnly ? '($)' : '(₹)'}
+                BUY @ Ask
               </div>
               <div className="text-xl font-mono">
-                {isCryptoOnly ? '$' : '₹'}
                 {(askDisp != null && !isNaN(askDisp) ? askDisp : 0).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </button>
@@ -8899,8 +9057,8 @@ const BuySellModal = ({
           {/* Volume Input */}
           <div className="px-3 pb-2">
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm text-gray-400">Volume</label>
-              {isFutures && (
+              <label className="block text-sm text-gray-400">{isUsdSpot ? 'Quantity' : 'Volume'}</label>
+              {!isUsdSpot && isFutures && (
                 <div className="flex bg-[#1a1a1a] rounded-lg border border-gray-700">
                   <button
                     onClick={() => setQuantityMode('lot')}
@@ -8926,8 +9084,8 @@ const BuySellModal = ({
               )}
             </div>
             <div className="flex items-center bg-[#1a1a1a] rounded-lg border border-gray-700">
-              <button 
-                onClick={() => setQuantity((Math.max(0.01, parseFloat(quantity) - 0.01)).toFixed(2))}
+              <button
+                onClick={() => setQuantity((Math.max(isUsdSpot ? 0.001 : 0.01, parseFloat(quantity) - (isUsdSpot ? 0.001 : 0.01))).toFixed(isUsdSpot ? 6 : 2))}
                 className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl border-r border-gray-700"
               >
                 −
@@ -8937,34 +9095,54 @@ const BuySellModal = ({
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 className="flex-1 bg-transparent text-center text-lg font-bold text-white focus:outline-none py-3"
+                step={isUsdSpot ? 0.001 : 0.01}
               />
-              <button 
-                onClick={() => setQuantity((parseFloat(quantity) + 0.01).toFixed(2))}
+              <button
+                onClick={() => setQuantity((parseFloat(quantity) + (isUsdSpot ? 0.001 : 0.01)).toFixed(isUsdSpot ? 6 : 2))}
                 className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl border-l border-gray-700"
               >
                 +
               </button>
             </div>
             <div className="text-right text-xs text-gray-500 mt-1">
-              {quantityMode === 'lot' || isOptions ? `${quantity} lot` : `${quantity} qty`}
+              {isUsdSpot ? `${quantity} units` : quantityMode === 'lot' || isOptions ? `${quantity} lot` : `${quantity} qty`}
             </div>
           </div>
 
-          {!isCryptoOnly && (
-            <div className="px-3 pb-3">
-              {(marginPreview?.exposureIntraday != null || marginPreview?.exposureCarryForward != null) && (
-                <div className="text-xs text-cyan-400/90 mb-2">
-                  Segment exposure: MIS ×{marginPreview?.exposureIntraday ?? '—'}
-                  {marginPreview?.exposureCarryForward != null && ` · CF ×${marginPreview.exposureCarryForward}`}; margin follows broker hierarchy + instrument rules only
-                </div>
-              )}
+          {(isUsdSpot || isCryptoOnly) ? (
+            <div className="px-3 pb-3 space-y-2">
               <div className="flex gap-2 items-stretch">
                 <div className="flex-1 bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium text-center">
-                  Est. margin ₹{estMarginInr.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                  Available: {activeWallet.available.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                </div>
+              </div>
+              <div className="flex gap-2 items-stretch">
+                <div className="flex-1 bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-yellow-400 font-medium text-center">
+                  Used: {activeWallet.usedMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                </div>
+              </div>
+              {(() => {
+                const requiredMargin = Number(marginPreview?.marginRequired || 0);
+                const available = Number(activeWallet.available || 0);
+                const isSufficient = requiredMargin <= available;
+                return (
+                  <div className="flex gap-2 items-stretch">
+                    <div className={`flex-1 bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 ${isSufficient ? 'text-green-400' : 'text-red-400'} font-medium text-center`}>
+                      Required: {requiredMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
+            <div className="px-3 pb-3">
+              <div className="flex gap-2 items-stretch">
+                <div className="flex-1 bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium text-center">
+                  Est. margin {estMarginInr.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </div>
               </div>
               <div className="text-xs text-gray-500 mt-2">
-                Wallet: ₹{activeWallet.available.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                Wallet: {activeWallet.available.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </div>
             </div>
           )}
@@ -9018,7 +9196,7 @@ const BuySellModal = ({
             <div className="text-sm text-white font-medium mb-2">Trading Charges</div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Commission</span>
-              <span className="text-white">₹{estBrokerageInr.toFixed(2)} (est.)</span>
+              <span className="text-white">{estBrokerageInr.toFixed(2)} (est.)</span>
             </div>
           </div>
 
@@ -9026,7 +9204,7 @@ const BuySellModal = ({
           <div className="px-3 pb-3">
             <div className="flex justify-between items-center">
               <span className="text-gray-400 text-sm">Margin Required</span>
-              <span className="text-2xl font-bold text-green-400">₹{estMarginInr.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+              <span className="text-2xl font-bold text-green-400">{estMarginInr.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
             </div>
           </div>
 
@@ -9095,7 +9273,7 @@ const BuySellModal = ({
             }`}
           >
             <div className="text-xs opacity-70">Bid Price</div>
-            <div className="text-xl">₹{liveBid != null && !isNaN(liveBid) ? liveBid.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
+            <div className="text-xl">{liveBid != null && !isNaN(liveBid) ? liveBid.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
             <div className="text-sm">SELL</div>
           </button>
           <button
@@ -9107,7 +9285,7 @@ const BuySellModal = ({
             }`}
           >
             <div className="text-xs opacity-70">Ask Price</div>
-            <div className="text-xl">₹{liveAsk != null && !isNaN(liveAsk) ? liveAsk.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
+            <div className="text-xl">{liveAsk != null && !isNaN(liveAsk) ? liveAsk.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
             <div className="text-sm">BUY</div>
           </button>
         </div>
@@ -9239,8 +9417,7 @@ const BuySellModal = ({
             <div className="flex justify-between items-center">
               <span className="text-gray-400 text-sm">Last Traded Price</span>
               <span className="text-xl font-bold">
-                ₹
-                {Number(ltp || 0).toLocaleString(undefined, {
+                                {Number(ltp || 0).toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}
@@ -9255,31 +9432,31 @@ const BuySellModal = ({
           <div className="bg-dark-700 rounded-lg p-3 space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
-              <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>₹{activeWallet.balance.toLocaleString()}</span>
+              <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>{activeWallet.balance.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Used Margin</span>
-              <span className="text-yellow-400">₹{activeWallet.usedMargin.toLocaleString()}</span>
+              <span className="text-yellow-400">{activeWallet.usedMargin.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Available</span>
-              <span className="text-green-400 font-medium">₹{activeWallet.available.toLocaleString()}</span>
+              <span className="text-green-400 font-medium">{activeWallet.available.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Required Margin</span>
-              <span className={`font-medium ${marginPreview?.canPlace === false ? 'text-red-400' : ''}`}>
-                ₹{marginPreview?.marginRequired?.toLocaleString() || '--'}
+              <span className={`font-medium ${Number(marginPreview?.marginRequired || 0) > Number(activeWallet.available || 0) ? 'text-red-400' : 'text-green-400'}`}>
+                {marginPreview?.marginRequired?.toLocaleString() || '--'}
               </span>
             </div>
-            {marginPreview?.canPlace === false && (
+            {Number(marginPreview?.marginRequired || 0) > Number(activeWallet.available || 0) && (
               <div className="text-xs text-red-400 flex items-center gap-1">
                 <span>⚠</span>
-                <span>Insufficient funds. Need ₹{((marginPreview?.marginRequired || 0) - activeWallet.available).toLocaleString()} more</span>
+                <span>Insufficient funds. Need {(Number(marginPreview?.marginRequired || 0) - Number(activeWallet.available || 0)).toLocaleString()} more</span>
               </div>
             )}
             <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
               <span className="text-gray-400">Order Value</span>
-              <span className="font-medium">₹{orderValue.toLocaleString()}</span>
+              <span className="font-medium">{orderValue.toLocaleString()}</span>
             </div>
           </div>
 
@@ -9352,7 +9529,7 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess(`Successfully transferred ₹${Number(amount).toLocaleString()} from ${getWalletDisplayName(sourceWallet)} to ${getWalletDisplayName(targetWallet)}`);
+      setSuccess(`Successfully transferred ${Number(amount).toLocaleString()} from ${getWalletDisplayName(sourceWallet)} to ${getWalletDisplayName(targetWallet)}`);
       setAmount('');
       setRemarks('');
       setTimeout(() => {
@@ -9426,7 +9603,7 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-xs text-gray-400 mb-1">Amount ()</label>
             <input 
               type="number" 
               placeholder="Enter amount" 
@@ -9555,7 +9732,7 @@ const ReferralAmountModal = ({ onClose, user }) => {
           <div className="bg-dark-700 rounded-lg p-4">
             <div className="text-gray-400 text-sm mb-1">Total Earnings</div>
             <div className="text-2xl font-bold text-green-400">
-              ₹{(referralData?.totalEarnings || 0).toLocaleString('en-IN')}
+              {(referralData?.totalEarnings || 0).toLocaleString('en-IN')}
             </div>
           </div>
           <div className="bg-dark-700 rounded-lg p-4">
@@ -9592,7 +9769,7 @@ const ReferralAmountModal = ({ onClose, user }) => {
                     </div>
                     <div className="text-right">
                       <div className="text-lg font-bold text-green-400">
-                        ₹{referral.earnings.toLocaleString('en-IN')}
+                        {referral.earnings.toLocaleString('en-IN')}
                       </div>
                       <div className="text-xs text-gray-400">Total Earnings</div>
                     </div>
@@ -9607,7 +9784,7 @@ const ReferralAmountModal = ({ onClose, user }) => {
                           <div className="flex justify-between items-center mb-1">
                             <span className="text-sm font-medium text-cyan-400">{gameName}</span>
                             <span className="text-sm font-bold text-green-400">
-                              ₹{gameData.totalAmount.toLocaleString('en-IN')}
+                              {gameData.totalAmount.toLocaleString('en-IN')}
                             </span>
                           </div>
                           {gameData.entries && gameData.entries.length > 0 && (
@@ -9615,7 +9792,7 @@ const ReferralAmountModal = ({ onClose, user }) => {
                               {gameData.entries.slice(0, 3).map((entry, idx) => (
                                 <div key={idx} className="flex justify-between text-xs text-gray-400">
                                   <span className="truncate flex-1 mr-2">{entry.description}</span>
-                                  <span>₹{entry.amount.toLocaleString('en-IN')}</span>
+                                  <span>{entry.amount.toLocaleString('en-IN')}</span>
                                 </div>
                               ))}
                               {gameData.entries.length > 3 && (
@@ -9639,7 +9816,7 @@ const ReferralAmountModal = ({ onClose, user }) => {
                             First Game Win ({referral.firstGameWin.gameName}):
                           </span>
                           <div className="text-right">
-                            <span className="text-green-400">₹{referral.firstGameWin.amount.toLocaleString('en-IN')}</span>
+                            <span className="text-green-400">{referral.firstGameWin.amount.toLocaleString('en-IN')}</span>
                             <span className="text-gray-500 ml-2">{formatDate(referral.firstGameWin.creditedAt)}</span>
                           </div>
                         </div>
@@ -9648,7 +9825,7 @@ const ReferralAmountModal = ({ onClose, user }) => {
                         <div className="flex justify-between text-xs">
                           <span className="text-gray-400">First Trading Win:</span>
                           <div className="text-right">
-                            <span className="text-green-400">₹{referral.firstTradingWin.amount.toLocaleString('en-IN')}</span>
+                            <span className="text-green-400">{referral.firstTradingWin.amount.toLocaleString('en-IN')}</span>
                             <span className="text-gray-500 ml-2">{formatDate(referral.firstTradingWin.creditedAt)}</span>
                           </div>
                         </div>

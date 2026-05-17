@@ -288,41 +288,89 @@ router.post('/margin-preview', protectUser, async (req, res) => {
     
     const admin = await Admin.findOne({ adminCode: req.user.adminCode });
     
+    // Use the same merge logic as order placement (system → admin hierarchy → user)
+    const segmentSettings = await TradeService.getUserSegmentSettings(req.user, segment, instrumentType);
+    
     // Option buy = no leverage (full premium required as per SEBI)
     const isOptionBuy = instrumentType === 'OPTIONS' && side === 'BUY';
+    const isIntraday = productType === 'MIS' || productType === 'INTRADAY';
+    const isCrypto = exchange === 'BINANCE';
     let leverage = 1;
-    if (!isOptionBuy && productType === 'MIS') {
-      if (segment === 'EQUITY') {
-        leverage = admin?.charges?.intradayLeverage || 5;
-      } else if (instrumentType === 'FUTURES') {
-        leverage = admin?.charges?.futuresLeverage || 1;
-      } else if (instrumentType === 'OPTIONS') {
-        leverage = admin?.charges?.optionSellLeverage || 1;
+    if (!isOptionBuy) {
+      // Dynamically resolve leverage from all possible sources
+      const candidates = isIntraday
+        ? [
+            segmentSettings.quantityModeSettings?.intradayLeverage,
+            segmentSettings.lotSettings?.intradayLeverage,
+            segmentSettings.exposureIntraday,
+            segmentSettings.intradayLeverage,
+            admin?.charges?.intradayLeverage,
+            admin?.charges?.futuresLeverage
+          ]
+        : [
+            segmentSettings.quantityModeSettings?.carryForwardLeverage,
+            segmentSettings.lotSettings?.carryForwardLeverage,
+            segmentSettings.exposureCarryForward,
+            segmentSettings.carryForwardLeverage,
+            admin?.charges?.carryForwardLeverage,
+            admin?.charges?.futuresLeverage
+          ];
+      for (const v of candidates) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 1) { leverage = n; break; }
       }
     }
     
     const requiredMargin = TradeService.calculateMargin(price, quantity, lotSize, leverage, productType);
     
     // Use correct wallet based on trade type (triple wallet system)
-    const isCrypto = exchange === 'BINANCE';
     const isMCX = segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || 
                   segment === 'COMMODITY' || exchange === 'MCX';
     
     let availableMargin;
     if (isCrypto) {
       availableMargin = req.user.cryptoWallet?.balance || 0;
+      console.log('[MarginPreview] Crypto trade - cryptoWallet.balance:', availableMargin, 'requiredMargin:', requiredMargin);
     } else if (isMCX) {
       availableMargin = (req.user.mcxWallet?.balance || 0) - (req.user.mcxWallet?.usedMargin || 0);
     } else {
       const walletBalance = req.user.wallet?.tradingBalance || req.user.wallet?.cashBalance || 0;
       availableMargin = walletBalance - (req.user.wallet?.usedMargin || 0) + (req.user.wallet?.collateralValue || 0);
     }
+
+    console.log('[MarginPreview] Final - availableMargin:', availableMargin, 'requiredMargin:', requiredMargin, 'canPlace:', availableMargin >= requiredMargin);
+    const canPlace = availableMargin >= requiredMargin;
     
+    // Resolve exposure values for response (use leverage fields as fallback)
+    const exposureIntraday = segmentSettings.exposureIntraday > 1
+      ? segmentSettings.exposureIntraday
+      : (segmentSettings.intradayLeverage > 1 ? segmentSettings.intradayLeverage : null);
+    const exposureCarryForward = segmentSettings.exposureCarryForward > 1
+      ? segmentSettings.exposureCarryForward
+      : (segmentSettings.carryForwardLeverage > 1 ? segmentSettings.carryForwardLeverage : null);
+    
+    // For crypto, prefer quantityModeSettings over lot-based settings
+    const qtyMode = segmentSettings.quantityModeSettings;
+    const resolvedMaxQty = (isCrypto && qtyMode?.maxQuantity > 0) ? qtyMode.maxQuantity : (segmentSettings.maxLots || 50);
+    const resolvedMinQty = (isCrypto && qtyMode?.minQuantity > 0) ? qtyMode.minQuantity : (segmentSettings.minLots || 1);
+    const resolvedBreakupQty = (isCrypto && qtyMode?.breakupQuantity > 0)
+      ? qtyMode.breakupQuantity
+      : (segmentSettings.quantitySettings?.breakupQuantity || 0);
+
     res.json({
       requiredMargin,
       availableMargin,
       leverage,
-      canTrade: availableMargin >= requiredMargin
+      canTrade: canPlace,
+      canPlace,
+      marginRequired: requiredMargin,
+      maxLots: resolvedMaxQty,
+      minLots: resolvedMinQty,
+      breakupQuantity: resolvedBreakupQty,
+      maxBid: segmentSettings.quantitySettings?.maxBid || 0,
+      lotSize: lotSize,
+      exposureIntraday,
+      exposureCarryForward
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

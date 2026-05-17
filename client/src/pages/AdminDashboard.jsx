@@ -30,8 +30,6 @@ import {
 
 import { computeSegmentExplicitKeys } from '../utils/segmentExplicitKeys.js';
 
-import { groupNseFoMarketWatch } from '../utils/nseFnOSectors.js';
-
 import io from 'socket.io-client';
 
 import { WALLET_LEDGER_GAME_OPTIONS } from '../constants/walletLedgerGames.js';
@@ -39,6 +37,8 @@ import { WALLET_LEDGER_GAME_OPTIONS } from '../constants/walletLedgerGames.js';
 import AdminFundTransfer from '../components/AdminFundTransfer';
 
 import BtcJackpotAdminPanel from '../components/admin/BtcJackpotAdminPanel.jsx';
+
+import AdminTradingTransactions from '../components/admin/AdminTradingTransactions.jsx';
 
 import {
 
@@ -858,8 +858,6 @@ const AdminDashboard = () => {
 
         { path: `${basePath}/archive`, icon: Archive, label: 'Archive Management' },
 
-        { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
-
         { path: `${basePath}/all-trades`, icon: FileText, label: 'All Trades' },
 
         { path: `${basePath}/net-positions`, icon: Layers, label: 'Net Positions' },
@@ -930,8 +928,6 @@ const AdminDashboard = () => {
 
         { path: `${basePath}/brokerage-tracking`, icon: History, label: 'Brokerage Tracking' },
 
-        { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
-
         { path: `${basePath}/trades`, icon: FileText, label: 'Position' },
 
         { path: `${basePath}/net-positions`, icon: Layers, label: 'Net Positions' },
@@ -980,8 +976,6 @@ const AdminDashboard = () => {
 
         { path: `${basePath}/brokerage-tracking`, icon: History, label: 'Brokerage Tracking' },
 
-        { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
-
         { path: `${basePath}/trades`, icon: FileText, label: isDemo ? 'Demo Position' : 'Position' },
 
         { path: `${basePath}/net-positions`, icon: Layers, label: isDemo ? 'Demo Net Positions' : 'Net Positions' },
@@ -1021,8 +1015,6 @@ const AdminDashboard = () => {
       { path: `${basePath}/create-user`, icon: UserPlus, label: 'Create User' },
 
       { path: `${basePath}/brokerage-tracking`, icon: History, label: 'Brokerage Tracking' },
-
-      { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
 
       { path: `${basePath}/trades`, icon: FileText, label: 'Position' },
 
@@ -1190,7 +1182,9 @@ const AdminDashboard = () => {
 
           <div className={`px-4 py-3 border-b border-dark-600 flex-shrink-0 ${admin?.isDemo ? 'bg-green-900/20' : 'bg-dark-700/50'}`}>
 
-            <div className="text-xs text-gray-400">{admin?.isDemo ? 'Your Demo Broker Code' : 'Your Admin Code'}</div>
+            <div className="text-xs text-gray-400">
+              {admin?.isDemo ? 'Your Demo Broker Code' : admin?.role === 'SUB_BROKER' ? 'Your Subbroker Code' : 'Your Admin Code'}
+            </div>
 
             <div className={`text-lg font-mono font-bold ${admin?.isDemo ? 'text-green-400' : 'text-purple-400'}`}>{admin.adminCode}</div>
 
@@ -1202,7 +1196,7 @@ const AdminDashboard = () => {
 
             <div className="text-xs text-gray-500 mt-1">
 
-              Wallet: ₹{walletBalance.toLocaleString()}
+              Wallet: {walletBalance.toLocaleString()}
 
             </div>
 
@@ -1330,6 +1324,8 @@ const AdminDashboard = () => {
 
           {isSuperAdmin && <Route path="all-transactions" element={<AllTransactions />} />}
 
+          {isSuperAdmin && <Route path="trading-transactions" element={<AdminTradingTransactions />} />}
+
           {isSuperAdmin && <Route path="control-hierarchy-wallet" element={<ControlHierarchyWallet />} />}
 
           {isSuperAdmin && <Route path="broker-certificates" element={<BrokerCertificatesManagement />} />}
@@ -1385,8 +1381,6 @@ const AdminDashboard = () => {
           {!isSuperAdmin && <Route path="my-settings" element={<MySegmentSettings />} />}
 
           {/* Common Routes - Both Super Admin and Admin */}
-
-          <Route path="trading" element={<TradingPanel />} />
 
           <Route path="net-positions" element={<NetPositions />} />
 
@@ -1731,13 +1725,13 @@ const SuperAdminDashboard = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
 
-        <StatCard title="Admin Wallets" value={`₹${(stats?.adminWalletBalance || 0).toLocaleString()}`} subtitle="Total balance" color="yellow" />
+        <StatCard title="Admin Wallets" value={`${(stats?.adminWalletBalance || 0).toLocaleString()}`} subtitle="Total balance" color="yellow" />
 
-        <StatCard title="Broker Wallets" value={`₹${(stats?.brokerWalletBalance || 0).toLocaleString()}`} subtitle="Total balance" color="orange" />
+        <StatCard title="Broker Wallets" value={`${(stats?.brokerWalletBalance || 0).toLocaleString()}`} subtitle="Total balance" color="orange" />
 
-        <StatCard title="Sub Broker Wallets" value={`₹${(stats?.subBrokerWalletBalance || 0).toLocaleString()}`} subtitle="Total balance" color="pink" />
+        <StatCard title="Sub Broker Wallets" value={`${(stats?.subBrokerWalletBalance || 0).toLocaleString()}`} subtitle="Total balance" color="pink" />
 
-        <StatCard title="User Wallets" value={`₹${(stats?.totalUserBalance || 0).toLocaleString()}`} subtitle="Total balance" color="blue" />
+        <StatCard title="User Wallets" value={`${(stats?.totalUserBalance || 0).toLocaleString()}`} subtitle="Total balance" color="blue" />
 
       </div>
 
@@ -1753,7 +1747,7 @@ const SuperAdminDashboard = () => {
 
           <div className={`text-2xl font-bold ${(stats?.totalM2M || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-            {(stats?.totalM2M || 0) >= 0 ? '+' : ''}₹{(stats?.totalM2M || 0).toLocaleString()}
+            {(stats?.totalM2M || 0) >= 0 ? '+' : ''}{(stats?.totalM2M || 0).toLocaleString()}
 
           </div>
 
@@ -1767,7 +1761,7 @@ const SuperAdminDashboard = () => {
 
           <div className="text-2xl font-bold text-blue-400">
 
-            ₹{(stats?.totalOpenValue || 0).toLocaleString()}
+            {(stats?.totalOpenValue || 0).toLocaleString()}
 
           </div>
 
@@ -1781,7 +1775,7 @@ const SuperAdminDashboard = () => {
 
           <div className={`text-2xl font-bold ${(stats?.todayRealizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-            {(stats?.todayRealizedPnL || 0) >= 0 ? '+' : ''}₹{(stats?.todayRealizedPnL || 0).toLocaleString()}
+            {(stats?.todayRealizedPnL || 0) >= 0 ? '+' : ''}{(stats?.todayRealizedPnL || 0).toLocaleString()}
 
           </div>
 
@@ -1803,7 +1797,7 @@ const SuperAdminDashboard = () => {
 
                 <span className={data.m2m >= 0 ? 'text-green-400' : 'text-red-400'}>
 
-                  {data.m2m >= 0 ? '+' : ''}₹{data.m2m.toLocaleString()}
+                  {data.m2m >= 0 ? '+' : ''}{data.m2m.toLocaleString()}
 
                 </span>
 
@@ -1903,11 +1897,21 @@ const SuperAdminDashboard = () => {
 
                   <th className="pb-3 font-medium">Games</th>
 
+                  <th className="pb-3 font-medium">Forex</th>
+
+                  <th className="pb-3 font-medium">NSE</th>
+
+                  <th className="pb-3 font-medium">BSE</th>
+
+                  <th className="pb-3 font-medium">SumOfAllWallets</th>
+
                   <th className="pb-3 font-medium">Net Position</th>
 
                   <th className="pb-3 font-medium">Open Trades</th>
 
                   <th className="pb-3 font-medium">isLogin</th>
+
+                  <th className="pb-3 font-medium">Settings</th>
 
                 </tr>
 
@@ -1941,7 +1945,7 @@ const SuperAdminDashboard = () => {
 
                       <div className="space-y-1">
 
-                        <div className="text-green-400 font-medium">₹{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                        <div className="text-green-400 font-medium">{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
 
                         <div className="text-xs text-gray-500">Main Wallet (Cash Balance)</div>
 
@@ -1965,7 +1969,7 @@ const SuperAdminDashboard = () => {
 
                       <div className="space-y-1">
 
-                        <div className="text-blue-400">₹{(user.wallet?.equity || 0).toLocaleString()}</div>
+                        <div className="text-blue-400">{(user.wallet?.equity || 0).toLocaleString()}</div>
 
                         <div className="text-xs text-gray-500">Equity</div>
 
@@ -1977,7 +1981,7 @@ const SuperAdminDashboard = () => {
 
                       <div className="space-y-1">
 
-                        <div className="text-purple-400">₹{(user.wallet?.freeMargin || 0).toLocaleString()}</div>
+                        <div className="text-purple-400">{(user.wallet?.freeMargin || 0).toLocaleString()}</div>
 
                         <div className="text-xs text-gray-500">Free Margin</div>
 
@@ -1989,7 +1993,7 @@ const SuperAdminDashboard = () => {
 
                       <div className="space-y-1">
 
-                        <div className="text-yellow-400">₹{(user.cryptoWallet?.balance || 0).toLocaleString()}</div>
+                        <div className="text-yellow-400">{(user.cryptoWallet?.balance || 0).toLocaleString()}</div>
 
                         <div className="text-xs text-gray-500">Crypto Wallet</div>
 
@@ -2001,7 +2005,7 @@ const SuperAdminDashboard = () => {
 
                       <div className="space-y-1">
 
-                        <div className="text-orange-400">₹{(user.mcxWallet?.balance || 0).toLocaleString()}</div>
+                        <div className="text-orange-400">{(user.mcxWallet?.balance || 0).toLocaleString()}</div>
 
                         <div className="text-xs text-gray-500">MCX Wallet</div>
 
@@ -2013,7 +2017,7 @@ const SuperAdminDashboard = () => {
 
                       <div className="space-y-1">
 
-                        <div className="text-green-400 font-medium">₹{(user.gamesWallet?.balance || 0).toLocaleString()}</div>
+                        <div className="text-green-400 font-medium">{(user.gamesWallet?.balance || 0).toLocaleString()}</div>
 
                         <div className="text-xs text-gray-500">Games Wallet</div>
 
@@ -2035,9 +2039,57 @@ const SuperAdminDashboard = () => {
 
                     <td className="py-3">
 
+                      <div className="space-y-1">
+
+                        <div className="text-pink-400">{(user.forexWallet?.balance || 0).toLocaleString()}</div>
+
+                        <div className="text-xs text-gray-500">Forex Wallet</div>
+
+                      </div>
+
+                    </td>
+
+                    <td className="py-3">
+
+                      <div className="space-y-1">
+
+                        <div className="text-blue-400">{(user.nseWallet?.balance || 0).toLocaleString()}</div>
+
+                        <div className="text-xs text-gray-500">NSE Wallet</div>
+
+                      </div>
+
+                    </td>
+
+                    <td className="py-3">
+
+                      <div className="space-y-1">
+
+                        <div className="text-cyan-400">{(user.bseWallet?.balance || 0).toLocaleString()}</div>
+
+                        <div className="text-xs text-gray-500">BSE Wallet</div>
+
+                      </div>
+
+                    </td>
+
+                    <td className="py-3">
+
+                      <div className="space-y-1">
+
+                        <div className="text-amber-400 font-bold">{((user.gamesWallet?.balance || 0) + (user.mcxWallet?.balance || 0) + (user.cryptoWallet?.balance || 0) + (user.forexWallet?.balance || 0) + (user.nseWallet?.balance || 0) + (user.bseWallet?.balance || 0)).toLocaleString()}</div>
+
+                        <div className="text-xs text-gray-500">SumOfAllWallets</div>
+
+                      </div>
+
+                    </td>
+
+                    <td className="py-3">
+
                       <span className={`font-medium ${(user.netPosition || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                        {(user.netPosition || 0) >= 0 ? '+' : ''}₹{(user.netPosition || 0).toLocaleString()}
+                        {(user.netPosition || 0) >= 0 ? '+' : ''}{(user.netPosition || 0).toLocaleString()}
 
                       </span>
 
@@ -2066,6 +2118,24 @@ const SuperAdminDashboard = () => {
                         </span>
 
                       </span>
+
+                    </td>
+
+                    <td className="py-3">
+
+                      <button
+
+                        onClick={() => { setSelectedUser(user); setShowEditModal(true); }}
+
+                        className="p-2 bg-dark-600 rounded text-gray-400 hover:text-white hover:bg-dark-500 transition"
+
+                        title="User Settings"
+
+                      >
+
+                        <Settings size={16} />
+
+                      </button>
 
                     </td>
 
@@ -2359,9 +2429,9 @@ const AdminDashboardHome = () => {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-8">
 
-        <StatCard title="Your Wallet" value={`₹${walletBalance.toLocaleString()}`} subtitle="Available balance" color="green" />
+        <StatCard title="Your Wallet" value={`${walletBalance.toLocaleString()}`} subtitle="Available balance" color="green" />
 
-        <StatCard title="Total Brokerage" value={`₹${totalBrokerage.toLocaleString()}`} subtitle="Earned from trades" color="cyan" />
+        <StatCard title="Total Brokerage" value={`${totalBrokerage.toLocaleString()}`} subtitle="Earned from trades" color="cyan" />
 
         {admin?.role === 'ADMIN' && (
 
@@ -3959,7 +4029,7 @@ const AdminManagement = () => {
 
                     <div className="text-xs text-gray-400">Wallet</div>
 
-                    <div className="text-lg font-bold text-green-400">₹{(adm.wallet?.balance || 0).toLocaleString()}</div>
+                    <div className="text-lg font-bold text-green-400">{(adm.wallet?.balance || 0).toLocaleString()}</div>
 
                   </div>
 
@@ -3967,7 +4037,7 @@ const AdminManagement = () => {
 
                     <div className="text-xs text-gray-400">Total Added</div>
 
-                    <div className="text-lg font-bold text-yellow-400">₹{(adm.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                    <div className="text-lg font-bold text-yellow-400">{(adm.wallet?.totalDeposited || 0).toLocaleString()}</div>
 
                   </div>
 
@@ -4071,7 +4141,7 @@ const AdminManagement = () => {
 
                     <div>
 
-                      <label className="block text-xs text-gray-400 mb-1">SA Fixed ₹</label>
+                      <label className="block text-xs text-gray-400 mb-1">SA Fixed </label>
 
                       <input
 
@@ -4087,7 +4157,7 @@ const AdminManagement = () => {
 
                         className="w-24 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
 
-                        placeholder="₹"
+                        placeholder=""
 
                       />
 
@@ -4771,7 +4841,7 @@ const AdminManagement = () => {
 
                             <div className="text-xs text-gray-400">Cash Balance</div>
 
-                            <div className="text-green-400 font-bold">₹{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                            <div className="text-green-400 font-bold">{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
 
                           </div>
 
@@ -4781,7 +4851,7 @@ const AdminManagement = () => {
 
                             <div className={`font-bold ${(user.wallet?.totalPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                              ₹{(user.wallet?.totalPnL || 0).toLocaleString()}
+                              {(user.wallet?.totalPnL || 0).toLocaleString()}
 
                             </div>
 
@@ -5335,7 +5405,7 @@ const AdminManagement = () => {
 
                                 <td className="p-3 text-gray-400 text-sm">{user.email}</td>
 
-                                <td className="p-3 text-yellow-400">₹{(user.wallet?.balance || 0).toLocaleString()}</td>
+                                <td className="p-3 text-yellow-400">{(user.wallet?.balance || 0).toLocaleString()}</td>
 
                                 <td className="p-3">
 
@@ -5477,7 +5547,7 @@ const AdminManagement = () => {
 
                   <div className="text-sm text-green-400">Total Deposited</div>
 
-                  <div className="text-2xl font-bold text-green-300">₹{(selectedAdmin.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-green-300">{(selectedAdmin.wallet?.totalDeposited || 0).toLocaleString()}</div>
 
                 </div>
 
@@ -5485,7 +5555,7 @@ const AdminManagement = () => {
 
                   <div className="text-sm text-red-400">Total Withdrawn</div>
 
-                  <div className="text-2xl font-bold text-red-300">₹{(selectedAdmin.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-red-300">{(selectedAdmin.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
 
                 </div>
 
@@ -5493,7 +5563,7 @@ const AdminManagement = () => {
 
                   <div className="text-sm text-blue-400">Current Balance</div>
 
-                  <div className="text-2xl font-bold text-blue-300">₹{(selectedAdmin.wallet?.balance || 0).toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-blue-300">{(selectedAdmin.wallet?.balance || 0).toLocaleString()}</div>
 
                 </div>
 
@@ -5581,11 +5651,11 @@ const AdminManagement = () => {
 
                           <td className={`p-3 font-bold ${txn.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
 
-                            {txn.type === 'CREDIT' ? '+' : '-'}₹{(txn.amount || 0).toLocaleString()}
+                            {txn.type === 'CREDIT' ? '+' : '-'}{(txn.amount || 0).toLocaleString()}
 
                           </td>
 
-                          <td className="p-3 text-blue-400">₹{(txn.balanceAfter || 0).toLocaleString()}</td>
+                          <td className="p-3 text-blue-400">{(txn.balanceAfter || 0).toLocaleString()}</td>
 
                           <td className="p-3 text-sm text-gray-300">{txn.description || txn.reason || '-'}</td>
 
@@ -5699,7 +5769,7 @@ const AdminManagement = () => {
 
                       <div className="text-xl font-bold text-blue-300">{hierarchyData.stats?.totalBrokers || 0}</div>
 
-                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalBrokerBalance || 0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">{(hierarchyData.stats?.totalBrokerBalance || 0).toLocaleString()}</div>
 
                     </div>
 
@@ -5709,7 +5779,7 @@ const AdminManagement = () => {
 
                       <div className="text-xl font-bold text-green-300">{hierarchyData.stats?.totalSubBrokers || 0}</div>
 
-                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalSubBrokerBalance || 0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">{(hierarchyData.stats?.totalSubBrokerBalance || 0).toLocaleString()}</div>
 
                     </div>
 
@@ -5719,7 +5789,7 @@ const AdminManagement = () => {
 
                       <div className="text-xl font-bold text-yellow-300">{hierarchyData.stats?.totalUsers || 0}</div>
 
-                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalUserBalance || 0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">{(hierarchyData.stats?.totalUserBalance || 0).toLocaleString()}</div>
 
                     </div>
 
@@ -5727,7 +5797,7 @@ const AdminManagement = () => {
 
                       <div className="text-xs text-purple-400">Admin Balance</div>
 
-                      <div className="text-xl font-bold text-purple-300">₹{(hierarchyData.admin?.wallet?.balance || 0).toLocaleString()}</div>
+                      <div className="text-xl font-bold text-purple-300">{(hierarchyData.admin?.wallet?.balance || 0).toLocaleString()}</div>
 
                     </div>
 
@@ -5735,7 +5805,7 @@ const AdminManagement = () => {
 
                       <div className="text-xs text-teal-400">Total Deposited</div>
 
-                      <div className="text-xl font-bold text-teal-300">₹{(hierarchyData.admin?.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                      <div className="text-xl font-bold text-teal-300">{(hierarchyData.admin?.wallet?.totalDeposited || 0).toLocaleString()}</div>
 
                     </div>
 
@@ -5743,7 +5813,7 @@ const AdminManagement = () => {
 
                       <div className="text-xs text-red-400">Total Withdrawn</div>
 
-                      <div className="text-xl font-bold text-red-300">₹{(hierarchyData.admin?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+                      <div className="text-xl font-bold text-red-300">{(hierarchyData.admin?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
 
                     </div>
 
@@ -5797,7 +5867,7 @@ const AdminManagement = () => {
 
                                   <div className="text-xs text-gray-400">Balance</div>
 
-                                  <div className="text-yellow-400 font-medium">₹{(broker.wallet?.balance || 0).toLocaleString()}</div>
+                                  <div className="text-yellow-400 font-medium">{(broker.wallet?.balance || 0).toLocaleString()}</div>
 
                                 </div>
 
@@ -5821,7 +5891,7 @@ const AdminManagement = () => {
 
                                   <div className="text-xs text-gray-400">Client Balance</div>
 
-                                  <div className="text-purple-400">₹{(broker.totalUserBalance || 0).toLocaleString()}</div>
+                                  <div className="text-purple-400">{(broker.totalUserBalance || 0).toLocaleString()}</div>
 
                                 </div>
 
@@ -5869,11 +5939,11 @@ const AdminManagement = () => {
 
                                             <div className="flex items-center gap-3 text-xs">
 
-                                              <span className="text-yellow-400">₹{(sb.wallet?.balance || 0).toLocaleString()}</span>
+                                              <span className="text-yellow-400">{(sb.wallet?.balance || 0).toLocaleString()}</span>
 
                                               <span className="text-blue-400">{sb.userCount} clients</span>
 
-                                              <span className="text-purple-400">₹{(sb.totalUserBalance || 0).toLocaleString()}</span>
+                                              <span className="text-purple-400">{(sb.totalUserBalance || 0).toLocaleString()}</span>
 
                                             </div>
 
@@ -5889,7 +5959,7 @@ const AdminManagement = () => {
 
                                                   <span>{user.fullName || user.username}</span>
 
-                                                  <span className="text-yellow-400">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
+                                                  <span className="text-yellow-400">{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
 
                                                 </div>
 
@@ -5927,7 +5997,7 @@ const AdminManagement = () => {
 
                                           <span>{user.fullName || user.username}</span>
 
-                                          <span className="text-yellow-400">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
+                                          <span className="text-yellow-400">{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
 
                                         </div>
 
@@ -6009,7 +6079,7 @@ const AdminManagement = () => {
 
                                   <div className="text-xs text-gray-400">Balance</div>
 
-                                  <div className="text-yellow-400 font-medium">₹{(sb.wallet?.balance || 0).toLocaleString()}</div>
+                                  <div className="text-yellow-400 font-medium">{(sb.wallet?.balance || 0).toLocaleString()}</div>
 
                                 </div>
 
@@ -6025,7 +6095,7 @@ const AdminManagement = () => {
 
                                   <div className="text-xs text-gray-400">Client Balance</div>
 
-                                  <div className="text-purple-400">₹{(sb.totalUserBalance || 0).toLocaleString()}</div>
+                                  <div className="text-purple-400">{(sb.totalUserBalance || 0).toLocaleString()}</div>
 
                                 </div>
 
@@ -6047,7 +6117,7 @@ const AdminManagement = () => {
 
                                       <span>{user.fullName || user.username}</span>
 
-                                      <span className="text-yellow-400">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
+                                      <span className="text-yellow-400">{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
 
                                     </div>
 
@@ -6093,7 +6163,7 @@ const AdminManagement = () => {
 
                             <div className="text-xs text-gray-400">{user.adminCode}</div>
 
-                            <div className="text-yellow-400 font-medium mt-1">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                            <div className="text-yellow-400 font-medium mt-1">{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</div>
 
                           </div>
 
@@ -6833,7 +6903,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
       });
 
-      setSuccess(`Successfully took ₹${formData.amount} brokerage from ${targetAdmin.name || targetAdmin.username}`);
+      setSuccess(`Successfully took ${formData.amount} brokerage from ${targetAdmin.name || targetAdmin.username}`);
 
       setFormData((prev) => ({ ...prev, amount: '', description: '' }));
 
@@ -6889,7 +6959,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
       });
 
-      let msg = `Successfully gave ₹${formData.amount} incentive to ${targetAdmin.name || targetAdmin.username}`;
+      let msg = `Successfully gave ${formData.amount} incentive to ${targetAdmin.name || targetAdmin.username}`;
 
       const c = data?.creditsTo;
 
@@ -6897,9 +6967,9 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
         const parts = [];
 
-        if (Number(c.trading) > 0) parts.push(`main/trading wallet ₹${Number(c.trading).toFixed(2)}`);
+        if (Number(c.trading) > 0) parts.push(`main/trading wallet ${Number(c.trading).toFixed(2)}`);
 
-        if (Number(c.games) > 0) parts.push(`games (temp) wallet ₹${Number(c.games).toFixed(2)}`);
+        if (Number(c.games) > 0) parts.push(`games (temp) wallet ${Number(c.games).toFixed(2)}`);
 
         if (parts.length) msg += ` — ${parts.join(', ')}`;
 
@@ -7045,7 +7115,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                 <label className="block text-sm text-gray-400 mb-1">
 
-                  {partnerMode === 'EXTERNAL' ? 'Monthly Brokerage Charge (₹) — from Limits' : 'Amount to Take (₹)'}
+                  {partnerMode === 'EXTERNAL' ? 'Monthly Brokerage Charge () — from Limits' : 'Amount to Take ()'}
 
                 </label>
 
@@ -7071,7 +7141,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                   <p className="text-xs text-rose-400 mt-1">
 
-                    Preset from Limits: ₹{Number(targetAdmin.restrictMode.monthlyBrokerageCharge).toLocaleString()}
+                    Preset from Limits: {Number(targetAdmin.restrictMode.monthlyBrokerageCharge).toLocaleString()}
 
                   </p>
 
@@ -7173,7 +7243,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                 <label className="block text-sm text-green-400 mb-1">
 
-                  Monthly Incentive Amount (₹) — from Limits
+                  Monthly Incentive Amount () — from Limits
 
                 </label>
 
@@ -7199,7 +7269,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                   <p className="text-xs text-green-500 mt-1">
 
-                    Preset from Limits: ₹{Number(targetAdmin.restrictMode.monthlyIncentiveAmount).toLocaleString()}
+                    Preset from Limits: {Number(targetAdmin.restrictMode.monthlyIncentiveAmount).toLocaleString()}
 
                   </p>
 
@@ -7857,7 +7927,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
                     <label className="font-medium flex items-center gap-2 text-green-400">
 
-                      <DollarSign size={16} /> Monthly Incentive Amount (₹)
+                      <DollarSign size={16} /> Monthly Incentive Amount ()
 
                     </label>
 
@@ -8045,7 +8115,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
                     <label className="font-medium flex items-center gap-2 mb-2 text-rose-400">
 
-                      <DollarSign size={16} /> Monthly Brokerage Charge (₹)
+                      <DollarSign size={16} /> Monthly Brokerage Charge ()
 
                     </label>
 
@@ -8809,13 +8879,13 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
 
           <div className="text-xs text-purple-400 font-mono">{targetAdmin.adminCode}</div>
 
-          <div className="text-2xl font-bold text-green-400 mt-2">₹{targetAdmin.wallet?.balance?.toLocaleString() || '0'}</div>
+          <div className="text-2xl font-bold text-green-400 mt-2">{targetAdmin.wallet?.balance?.toLocaleString() || '0'}</div>
 
         </div>
 
         {error && <div className="bg-red-500/20 text-red-400 p-2 rounded mb-4">{error}</div>}
 
-        <input type="number" placeholder="Amount (₹)" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-3" />
+        <input type="number" placeholder="Amount ()" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-3" />
 
         <input type="text" placeholder="Description (optional)" value={description} onChange={e => setDescription(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-4" />
 
@@ -8899,7 +8969,7 @@ const WalletTransferModal = ({ admin: targetAdmin, token, onClose, onSuccess }) 
 
       });
 
-      setSuccess(`Successfully transferred ₹${Number(amount).toLocaleString()} from ${getWalletDisplayName(sourceWallet)} to ${getWalletDisplayName(targetWallet)}`);
+      setSuccess(`Successfully transferred ${Number(amount).toLocaleString()} from ${getWalletDisplayName(sourceWallet)} to ${getWalletDisplayName(targetWallet)}`);
 
       setAmount('');
 
@@ -9057,7 +9127,7 @@ const WalletTransferModal = ({ admin: targetAdmin, token, onClose, onSuccess }) 
 
           <div>
 
-            <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-xs text-gray-400 mb-1">Amount ()</label>
 
             <input 
 
@@ -9223,7 +9293,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
             <div className="text-xs text-gray-400">Wallet Balance</div>
 
-            <div className="text-lg font-bold text-green-400">₹{(targetAdmin.wallet?.balance || 0).toLocaleString()}</div>
+            <div className="text-lg font-bold text-green-400">{(targetAdmin.wallet?.balance || 0).toLocaleString()}</div>
 
           </div>
 
@@ -9239,7 +9309,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
             <div className="text-xs text-gray-400">Brokerage</div>
 
-            <div className="text-lg font-bold">₹{targetAdmin.charges?.brokerage || 20}</div>
+            <div className="text-lg font-bold">{targetAdmin.charges?.brokerage || 20}</div>
 
           </div>
 
@@ -9311,17 +9381,35 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
                     </div>
 
-                    <div className="text-right">
+                    <div className="text-right flex items-center gap-2">
 
-                      <div className="text-green-400 font-bold">₹{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                      <div>
 
-                      <div className="text-xs text-blue-400">Trading: ₹{(user.wallet?.tradingBalance || 0).toLocaleString()}</div>
+                        <div className="text-green-400 font-bold">{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
 
-                      <div className={`text-xs ${user.isActive ? 'text-green-400' : 'text-red-400'}`}>
+                        <div className="text-xs text-blue-400">Trading: {(user.wallet?.tradingBalance || 0).toLocaleString()}</div>
 
-                        {user.isActive ? 'Active' : 'Inactive'}
+                        <div className={`text-xs ${user.isActive ? 'text-green-400' : 'text-red-400'}`}>
+
+                          {user.isActive ? 'Active' : 'Inactive'}
+
+                        </div>
 
                       </div>
+
+                      <button
+
+                        onClick={() => { setSelectedUser(user); setShowEditModal(true); }}
+
+                        className="p-2 bg-dark-600 rounded text-gray-400 hover:text-white hover:bg-dark-500 transition"
+
+                        title="User Settings"
+
+                      >
+
+                        <Settings size={16} />
+
+                      </button>
 
                     </div>
 
@@ -9359,11 +9447,11 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
                       <div className={entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
 
-                        {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount?.toLocaleString()}
+                        {entry.type === 'CREDIT' ? '+' : '-'}{entry.amount?.toLocaleString()}
 
                       </div>
 
-                      <div className="text-xs text-gray-400">Bal: ₹{entry.balanceAfter?.toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">Bal: {entry.balanceAfter?.toLocaleString()}</div>
 
                     </div>
 
@@ -9383,7 +9471,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
                 <div className="text-xs text-gray-400">Brokerage</div>
 
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.brokerage || 20}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.brokerage || 20}</div>
 
               </div>
 
@@ -9415,7 +9503,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
                 <div className="text-xs text-gray-400">Withdrawal Fee</div>
 
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.withdrawalFee || 0}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.withdrawalFee || 0}</div>
 
               </div>
 
@@ -9431,7 +9519,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
                 <div className="text-xs text-gray-400">Min Withdrawal</div>
 
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.minWithdrawal || 100}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.minWithdrawal || 100}</div>
 
               </div>
 
@@ -9439,7 +9527,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
 
                 <div className="text-xs text-gray-400">Max Withdrawal</div>
 
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.maxWithdrawal || 100000}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.maxWithdrawal || 100000}</div>
 
               </div>
 
@@ -9629,6 +9717,10 @@ const ADMIN_HIERARCHY_PERMISSION_TOGGLES = [
 
   { key: 'canChangeQuantitySettings', label: 'Can Change Quantity Settings', desc: 'Allow modifying quantity limits' },
 
+  { key: 'canUseLotSettingsMode', label: 'Can Use Lot Settings Mode', desc: 'Allow switching to Lot Settings mode' },
+
+  { key: 'canUseQuantitySettingsMode', label: 'Can Use Quantity Settings Mode', desc: 'Allow switching to Quantity Settings mode' },
+
   { key: 'canCreateUsers', label: 'Can Create Users', desc: 'Allow creating new users' },
 
   { key: 'canManageFunds', label: 'Can Manage Funds', desc: 'Allow adding/withdrawing funds' },
@@ -9654,6 +9746,10 @@ const AdminPermissionsModal = ({ admin: targetAdmin, token, onClose, onSuccess }
     canChangeTradingSettings: targetAdmin.permissions?.canChangeTradingSettings ?? false,
 
     canChangeQuantitySettings: targetAdmin.permissions?.canChangeQuantitySettings ?? false,
+
+    canUseLotSettingsMode: targetAdmin.permissions?.canUseLotSettingsMode ?? true,
+
+    canUseQuantitySettingsMode: targetAdmin.permissions?.canUseQuantitySettingsMode ?? true,
 
     canCreateUsers: targetAdmin.permissions?.canCreateUsers !== false,
 
@@ -9909,6 +10005,10 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
     canChangeQuantitySettings: targetAdmin.permissions?.canChangeQuantitySettings ?? false,
 
+    canUseLotSettingsMode: targetAdmin.permissions?.canUseLotSettingsMode ?? true,
+
+    canUseQuantitySettingsMode: targetAdmin.permissions?.canUseQuantitySettingsMode ?? true,
+
     canCreateUsers: targetAdmin.permissions?.canCreateUsers !== false,
 
     canManageFunds: targetAdmin.permissions?.canManageFunds !== false
@@ -9924,6 +10024,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
   const [systemSegBaseline, setSystemSegBaseline] = useState({});
 
   const [expandedSeg, setExpandedSeg] = useState('NSEFUT');
+
+  const [settingsMode, setSettingsMode] = useState('lot'); // 'lot' or 'quantity'
 
 
 
@@ -10125,6 +10227,24 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
   const handleSegDefChange = (seg, field, value) => {
 
+    // Hierarchy check: if parent has disabled enableLotSettings, child cannot enable it
+    if (field === 'enableLotSettings' && value === true) {
+      const parentSetting = systemSegBaseline[seg]?.enableLotSettings;
+      if (parentSetting === false) {
+        setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
+        return; // Prevent child from enabling if parent has disabled
+      }
+    }
+
+    // Hierarchy check: if parent has disabled enableQuantitySettings, child cannot enable it
+    if (field === 'enableQuantitySettings' && value === true) {
+      const parentSetting = systemSegBaseline[seg]?.enableQuantitySettings;
+      if (parentSetting === false) {
+        setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
+        return; // Prevent child from enabling if parent has disabled
+      }
+    }
+
     setSegDefs(prev => {
 
       const segData = { ...prev[seg] };
@@ -10305,16 +10425,6 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
         <div className="flex gap-2 mb-5 border-b border-dark-600 pb-3">
 
-          {viewerRole !== 'SUPER_ADMIN' && (
-
-            <button type="button" onClick={() => setActiveTab('general')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'general' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
-
-              General Settings
-
-            </button>
-
-          )}
-
           <button type="button" onClick={() => setActiveTab('segments')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'segments' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
 
             Segment Permissions
@@ -10332,258 +10442,6 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
 
         <form onSubmit={handleSave}>
-
-
-
-          {/* ===== GENERAL SETTINGS TAB ===== */}
-
-          {viewerRole !== 'SUPER_ADMIN' && activeTab === 'general' && (
-
-            <div className="space-y-5">
-
-              {/* Brokerage Settings */}
-
-              <div className="bg-dark-700/50 rounded-lg p-4">
-
-                <h3 className="text-sm font-semibold text-green-400 mb-3 flex items-center gap-2"><DollarSign size={16} /> Brokerage Settings</h3>
-
-                <div className="grid grid-cols-3 gap-3">
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Per Lot (₹)</label>
-
-                    <input type="number" step="0.01" value={adminSettings.brokerage.perLot} onChange={e => updateField('brokerage', 'perLot', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Per Crore (₹)</label>
-
-                    <input type="number" step="0.01" value={adminSettings.brokerage.perCrore} onChange={e => updateField('brokerage', 'perCrore', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Per Trade (₹)</label>
-
-                    <input type="number" step="0.01" value={adminSettings.brokerage.perTrade} onChange={e => updateField('brokerage', 'perTrade', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                </div>
-
-              </div>
-
-
-
-              {/* Leverage Settings */}
-
-              <div className="bg-dark-700/50 rounded-lg p-4">
-
-                <h3 className="text-sm font-semibold text-blue-400 mb-3 flex items-center gap-2"><TrendingUp size={16} /> Leverage Settings</h3>
-
-                <div className="grid grid-cols-2 gap-3">
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
-
-                    <input type="number" min="1" value={adminSettings.leverage.intraday} onChange={e => updateField('leverage', 'intraday', parseFloat(e.target.value) || 1)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Carry Forward Leverage (x)</label>
-
-                    <input type="number" min="1" value={adminSettings.leverage.carryForward} onChange={e => updateField('leverage', 'carryForward', parseFloat(e.target.value) || 1)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                </div>
-
-              </div>
-
-
-
-              {/* Charges Settings */}
-
-              <div className="bg-dark-700/50 rounded-lg p-4">
-
-                <h3 className="text-sm font-semibold text-purple-400 mb-3 flex items-center gap-2"><CreditCard size={16} /> Charges Settings</h3>
-
-                <div className="grid grid-cols-3 gap-3">
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Deposit Fee (%)</label>
-
-                    <input type="number" step="0.01" value={adminSettings.charges.depositFee} onChange={e => updateField('charges', 'depositFee', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Withdrawal Fee (%)</label>
-
-                    <input type="number" step="0.01" value={adminSettings.charges.withdrawalFee} onChange={e => updateField('charges', 'withdrawalFee', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Trading Fee (%)</label>
-
-                    <input type="number" step="0.01" value={adminSettings.charges.tradingFee} onChange={e => updateField('charges', 'tradingFee', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                </div>
-
-              </div>
-
-
-
-              {/* Lot Settings */}
-
-              <div className="bg-dark-700/50 rounded-lg p-4">
-
-                <h3 className="text-sm font-semibold text-orange-400 mb-3 flex items-center gap-2"><Layers size={16} /> Lot Settings</h3>
-
-                <div className="grid grid-cols-2 gap-3">
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Max Lot Size</label>
-
-                    <input type="number" value={adminSettings.lotSettings.maxLotSize} onChange={e => updateField('lotSettings', 'maxLotSize', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Min Lot Size</label>
-
-                    <input type="number" value={adminSettings.lotSettings.minLotSize} onChange={e => updateField('lotSettings', 'minLotSize', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                </div>
-
-              </div>
-
-
-
-              {/* Quantity Settings */}
-
-              <div className="bg-dark-700/50 rounded-lg p-4">
-
-                <h3 className="text-sm font-semibold text-cyan-400 mb-3 flex items-center gap-2"><BarChart3 size={16} /> Quantity Settings</h3>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Max Quantity (Total)</label>
-
-                    <input type="number" value={adminSettings.quantitySettings.maxQuantity} onChange={e => updateField('quantitySettings', 'maxQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Breakup Qty (Per Order)</label>
-
-                    <input type="number" value={adminSettings.quantitySettings.breakupQuantity} onChange={e => updateField('quantitySettings', 'breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Max Lot Qty (Per Order)</label>
-
-                    <input type="number" value={adminSettings.quantitySettings.maxLotQuantity} onChange={e => updateField('quantitySettings', 'maxLotQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                  <div>
-
-                    <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-
-                    <input type="number" value={adminSettings.quantitySettings.maxBid} onChange={e => updateField('quantitySettings', 'maxBid', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  </div>
-
-                </div>
-
-              </div>
-
-
-
-              {/* Auto Square Settings */}
-
-              <div className="bg-dark-700/50 rounded-lg p-4">
-
-                <h3 className="text-sm font-semibold text-orange-400 mb-3 flex items-center gap-2"><Zap size={16} /> Auto Square</h3>
-
-                <div>
-
-                  <label className="block text-xs text-gray-400 mb-1">Auto Square at Loss (%)</label>
-
-                  <input type="number" step="0.1" min="0" max="100" value={adminSettings.autosquare} onChange={e => setAdminSettings({...adminSettings, autosquare: parseFloat(e.target.value) || 0})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                  <p className="text-xs text-gray-500 mt-1">Auto square position when loss reaches this percentage (0 = disabled)</p>
-
-                </div>
-
-              </div>
-
-
-
-              {viewerRole !== 'SUPER_ADMIN' && (
-
-              <div className="bg-dark-700/50 rounded-lg p-4">
-
-                <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2"><Shield size={16} /> Permissions</h3>
-
-                <div className="grid grid-cols-1 gap-2">
-
-                  {ADMIN_HIERARCHY_PERMISSION_TOGGLES.map(perm => (
-
-                    <div key={perm.key} className="flex items-center justify-between p-2 bg-dark-800 rounded">
-
-                      <div>
-
-                        <div className="text-sm font-medium">{perm.label}</div>
-
-                        <div className="text-xs text-gray-500">{perm.desc}</div>
-
-                      </div>
-
-                      <button type="button" onClick={() => setPermissions({...permissions, [perm.key]: !permissions[perm.key]})}
-
-                        className={`w-12 h-6 rounded-full transition ${permissions[perm.key] ? 'bg-green-600' : 'bg-dark-500'}`}>
-
-                        <div className={`w-5 h-5 bg-white rounded-full transition transform ${permissions[perm.key] ? 'translate-x-6' : 'translate-x-0.5'}`} />
-
-                      </button>
-
-                    </div>
-
-                  ))}
-
-                </div>
-
-              </div>
-
-              )}
-
-            </div>
-
-          )}
 
 
 
@@ -10639,7 +10497,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                     const s = segDefs[expandedSeg] || {};
 
-                    const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT'].includes(expandedSeg);
+                    const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT', 'FOREXOPT', 'CRYPTOOPT'].includes(expandedSeg);
 
                     return (
 
@@ -10656,32 +10514,6 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                             {s.enabled ? 'Enabled' : 'Disabled'}
 
                           </button>
-
-                        </div>
-
-
-
-                        {/* Leverage */}
-
-                        <h4 className="text-xs font-semibold text-yellow-400 mb-2">Leverage</h4>
-
-                        <div className="grid grid-cols-2 gap-3 mb-4">
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Intraday (x)</label>
-
-                            <input type="number" value={s.exposureIntraday || 0} onChange={e => handleSegDefChange(expandedSeg, 'exposureIntraday', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                          </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Carry Forward (x)</label>
-
-                            <input type="number" value={s.exposureCarryForward || 0} onChange={e => handleSegDefChange(expandedSeg, 'exposureCarryForward', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                          </div>
 
                         </div>
 
@@ -10724,6 +10556,41 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           </label>
 
                         </div>
+
+                        {s.defaultIntradayOnly === true && (
+                          <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-4">
+                            <h4 className="text-xs font-semibold text-cyan-400 mb-3">Intraday-Only Settings</h4>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Leverage in Intraday (x)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  value={s.intradayOnlyLeverage ?? 1}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    handleSegDefChange(expandedSeg, 'intradayOnlyLeverage', isNaN(val) ? 1 : val);
+                                  }}
+                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Max Qty</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={s.intradayOnlyMaxQty ?? 1000}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    handleSegDefChange(expandedSeg, 'intradayOnlyMaxQty', isNaN(val) ? 1000 : val);
+                                  }}
+                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
 
 
@@ -10771,156 +10638,284 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
 
 
-                        {/* Lot-based (non-crypto) vs quantity-only labels (CRYPTO / CRYPTOFUT / CRYPTOOPT) */}
+                        {/* Lot/Quantity Mode Settings */}
+                        <div className="flex gap-6 items-center mb-4">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleSegDefChange(expandedSeg, 'enableLotSettings', !s.enableLotSettings)}
+                              className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableLotSettings ? 'bg-yellow-600' : 'bg-dark-600'}`}
+                            >
+                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableLotSettings ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                            <span className="text-xs text-gray-400">Settings in Lot</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleSegDefChange(expandedSeg, 'enableQuantitySettings', !s.enableQuantitySettings)}
+                              className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableQuantitySettings ? 'bg-blue-600' : 'bg-dark-600'}`}
+                            >
+                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableQuantitySettings ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                            <span className="text-xs text-gray-400">Settings in Qty</span>
+                          </div>
+                        </div>
 
-                        {isCryptoQtyOnlySegment(expandedSeg) ? (
-
+                        {s.enableLotSettings && (
                           <>
-
-                            <h4 className="text-xs font-semibold text-blue-400 mb-2">Quantity</h4>
-
-                            <p className="text-[10px] text-gray-500 mb-3 max-w-2xl">
-
-                              Limits apply per order in <span className="text-gray-400">exchange step multiples</span> (see instrument step on Binance). Same stored fields as before; labels are qty-only for crypto.
-
-                            </p>
-
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Max Exchange Qty</label>
-
-                                <input type="number" value={s.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxExchangeLots', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Max Qty</label>
-
-                                <input type="number" value={s.maxLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxLots', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Min Qty</label>
-
-                                <input type="number" value={s.minLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'minLots', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Order Qty</label>
-
-                                <input type="number" value={s.orderLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'orderLots', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-
-                                <input type="number" value={s.quantitySettings?.breakupQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-
-                                <input type="number" value={s.quantitySettings?.maxBid || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
+                          <h4 className="text-xs font-semibold text-yellow-400 mb-3">Lot Settings</h4>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={s.lotSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'lotSettings.intradayLeverage', isNaN(val) ? 1 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
                             </div>
-
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={s.lotSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'lotSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={s.maxLots ?? 100}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  handleSegDefChange(expandedSeg, 'maxLots', isNaN(val) ? 100 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={s.minLots ?? 1}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  handleSegDefChange(expandedSeg, 'minLots', isNaN(val) ? 1 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Breakup Lots</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={s.lotSettings?.breakupLots ?? 0}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  handleSegDefChange(expandedSeg, 'lotSettings.breakupLots', isNaN(val) ? 0 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Notification in %</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={s.lotSettings?.notificationPercent ?? 70}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'lotSettings.notificationPercent', isNaN(val) ? 70 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Autosquare %</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={s.lotSettings?.autosquarePercent ?? 90}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'lotSettings.autosquarePercent', isNaN(val) ? 90 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </div>
                           </>
-
-                        ) : (
-
-                          <>
-
-                            <h4 className="text-xs font-semibold text-blue-400 mb-2">Lot & Quantity</h4>
-
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
-
-                                <input type="number" value={s.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxExchangeLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-
-                                <input type="number" value={s.maxLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
-
-                                <input type="number" value={s.minLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'minLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Order Lots</label>
-
-                                <input type="number" value={s.orderLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'orderLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                            </div>
-
-                            <h4 className="text-xs font-semibold text-cyan-400 mb-2">Quantity Settings</h4>
-
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-
-                                <input type="number" value={s.quantitySettings?.breakupQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-
-                                <input type="number" value={s.quantitySettings?.maxBid || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                              </div>
-
-                            </div>
-
-                          </>
-
                         )}
 
+                        {s.enableQuantitySettings && (
+                          <>
+                          <h4 className="text-xs font-semibold text-blue-400 mb-3">Quantity Settings</h4>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={s.quantityModeSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.intradayLeverage', isNaN(val) ? 1 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={s.quantityModeSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Max Quantity</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={s.quantityModeSettings?.maxQuantity ?? 1000}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.maxQuantity', isNaN(val) ? 1000 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Min Quantity</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={s.quantityModeSettings?.minQuantity ?? 1}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.minQuantity', isNaN(val) ? 1 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Breakup Quantity</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={s.quantityModeSettings?.breakupQuantity ?? 0}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.breakupQuantity', isNaN(val) ? 0 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Min Exchange Qty</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.000001"
+                                value={s.minExchangeQty ?? 0}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'minExchangeQty', isNaN(val) ? 0 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Max Exchange Qty Limit</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.000001"
+                                value={s.maxExchangeQty ?? 0}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'maxExchangeQty', isNaN(val) ? 0 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Notification in %</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={s.quantityModeSettings?.notificationPercent ?? 70}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.notificationPercent', isNaN(val) ? 70 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Autosquare %</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={s.quantityModeSettings?.autosquarePercent ?? 90}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.autosquarePercent', isNaN(val) ? 90 : val);
+                                }}
+                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </div>
+                          </>
+                        )}
 
-
-                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
-
+                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && viewerRole === 'SUPER_ADMIN' && (
                           <CryptoSegmentAdminExtras
-
                             slice={s}
-
                             onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
-
                           />
-
                         )}
-
 
 
                         {/* Brokerage */}
@@ -11067,7 +11062,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                             <p className="text-[11px] text-gray-500 mb-2">
 
-                              Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy ₹ total width per coin applies (half bid / half ask). 0 / 0 = exchange prices.
+                              Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy  total width per coin applies (half bid / half ask). 0 / 0 = exchange prices.
 
                             </p>
 
@@ -11109,7 +11104,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                               <div>
 
-                                <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin, legacy)</label>
+                                <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
 
                                 <input
 
@@ -11277,23 +11272,21 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                             </div>
 
-                          </>
+                        </>
 
                         )}
 
-                      </div>
+                  </div>
 
-                    );
-
-                  })()}
+                )})()}
 
                 </>
 
-              )}
+                )}
 
             </div>
 
-          )}
+            )}
 
 
 
@@ -12029,7 +12022,7 @@ const SuperAdminCreateUser = () => {
 
           {/* <div>
 
-            <label className="block text-sm text-gray-400 mb-2">Initial Balance (₹)</label>
+            <label className="block text-sm text-gray-400 mb-2">Initial Balance ()</label>
 
             <input
 
@@ -12957,7 +12950,7 @@ const SuperAdminFundRequests = () => {
 
           <div className="text-sm text-gray-400">Total Deposits</div>
 
-          <div className="text-xl font-bold text-green-400">₹{stats.totalDeposits?.toLocaleString() || 0}</div>
+          <div className="text-xl font-bold text-green-400">{stats.totalDeposits?.toLocaleString() || 0}</div>
 
         </div>
 
@@ -12965,7 +12958,7 @@ const SuperAdminFundRequests = () => {
 
           <div className="text-sm text-gray-400">Total Withdrawals</div>
 
-          <div className="text-xl font-bold text-red-400">₹{stats.totalWithdrawals?.toLocaleString() || 0}</div>
+          <div className="text-xl font-bold text-red-400">{stats.totalWithdrawals?.toLocaleString() || 0}</div>
 
         </div>
 
@@ -13099,7 +13092,7 @@ const SuperAdminFundRequests = () => {
 
                   <td className="px-4 py-3 text-right font-mono font-bold">
 
-                    ₹{req.amount?.toLocaleString()}
+                    {req.amount?.toLocaleString()}
 
                   </td>
 
@@ -13357,7 +13350,7 @@ const FundRequests = () => {
 
                     </span>
 
-                    <span className="font-bold">₹{req.amount.toLocaleString()}</span>
+                    <span className="font-bold">{req.amount.toLocaleString()}</span>
 
                   </div>
 
@@ -13853,7 +13846,7 @@ const TemporaryWallet = () => {
 
         </div>
 
-        <div className="text-4xl font-bold text-white mb-4">₹{tempBalance.toLocaleString()}</div>
+        <div className="text-4xl font-bold text-white mb-4">{tempBalance.toLocaleString()}</div>
 
         <div className="grid grid-cols-2 gap-4 text-sm">
 
@@ -13861,7 +13854,7 @@ const TemporaryWallet = () => {
 
             <div className="text-white/60">Total Earned</div>
 
-            <div className="text-white font-semibold">₹{totalEarned.toLocaleString()}</div>
+            <div className="text-white font-semibold">{totalEarned.toLocaleString()}</div>
 
           </div>
 
@@ -13869,7 +13862,7 @@ const TemporaryWallet = () => {
 
             <div className="text-white/60">Total Released</div>
 
-            <div className="text-white font-semibold">₹{totalReleased.toLocaleString()}</div>
+            <div className="text-white font-semibold">{totalReleased.toLocaleString()}</div>
 
           </div>
 
@@ -13941,7 +13934,7 @@ const TemporaryWallet = () => {
 
           <p className="text-sm text-gray-400 mt-2">
 
-            You have ₹{tempBalance.toLocaleString()} pending in your temporary wallet. 
+            You have {tempBalance.toLocaleString()} pending in your temporary wallet. 
 
             These funds will be released to your main wallet as per SuperAdmin's schedule.
 
@@ -14155,7 +14148,7 @@ const BrokerageTracking = () => {
 
           <div className="text-blue-200 text-sm mb-1">Pending</div>
 
-          <div className="text-2xl font-bold text-white">₹{(summary.PENDING?.totalAmount || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-white">{(summary.PENDING?.totalAmount || 0).toLocaleString()}</div>
 
           <div className="text-blue-200 text-xs mt-1">{summary.PENDING?.count || 0} records</div>
 
@@ -14165,7 +14158,7 @@ const BrokerageTracking = () => {
 
           <div className="text-green-200 text-sm mb-1">Distributed</div>
 
-          <div className="text-2xl font-bold text-white">₹{(summary.DISTRIBUTED?.totalAmount || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-white">{(summary.DISTRIBUTED?.totalAmount || 0).toLocaleString()}</div>
 
           <div className="text-green-200 text-xs mt-1">{summary.DISTRIBUTED?.count || 0} records</div>
 
@@ -14177,7 +14170,7 @@ const BrokerageTracking = () => {
 
           <div className="text-2xl font-bold text-white">
 
-            ₹{((summary.PENDING?.totalAmount || 0) + (summary.DISTRIBUTED?.totalAmount || 0)).toLocaleString()}
+            {((summary.PENDING?.totalAmount || 0) + (summary.DISTRIBUTED?.totalAmount || 0)).toLocaleString()}
 
           </div>
 
@@ -14335,7 +14328,7 @@ const BrokerageTracking = () => {
 
                     </td>
 
-                    <td className="px-4 py-3 font-semibold text-green-400">₹{record.amount.toLocaleString()}</td>
+                    <td className="px-4 py-3 font-semibold text-green-400">{record.amount.toLocaleString()}</td>
 
                     <td className="px-4 py-3">
 
@@ -14563,7 +14556,7 @@ const BrokerageTracking = () => {
 
                         <div className="text-sm text-gray-400">Brokerage Amount</div>
 
-                        <div className="text-green-400 font-semibold">₹{selectedRecord.amount.toLocaleString()}</div>
+                        <div className="text-green-400 font-semibold">{selectedRecord.amount.toLocaleString()}</div>
 
                       </div>
 
@@ -15047,7 +15040,7 @@ const AdminWallet = () => {
 
         <div className="text-white/80 text-sm mb-1">Available Balance</div>
 
-        <div className="text-4xl font-bold text-white mb-4">₹{(walletData?.wallet?.balance || 0).toLocaleString()}</div>
+        <div className="text-4xl font-bold text-white mb-4">{(walletData?.wallet?.balance || 0).toLocaleString()}</div>
 
         <div className="grid grid-cols-2 gap-4 text-sm">
 
@@ -15055,7 +15048,7 @@ const AdminWallet = () => {
 
             <div className="text-white/60">Total Deposited</div>
 
-            <div className="text-white font-semibold">₹{(walletData?.wallet?.totalDeposited || 0).toLocaleString()}</div>
+            <div className="text-white font-semibold">{(walletData?.wallet?.totalDeposited || 0).toLocaleString()}</div>
 
           </div>
 
@@ -15063,7 +15056,7 @@ const AdminWallet = () => {
 
             <div className="text-white/60">Total Withdrawn</div>
 
-            <div className="text-white font-semibold">₹{(walletData?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+            <div className="text-white font-semibold">{(walletData?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
 
           </div>
 
@@ -15089,7 +15082,7 @@ const AdminWallet = () => {
 
           <div className="text-sm text-gray-400">User Deposits</div>
 
-          <div className="text-2xl font-bold text-green-400">₹{(walletData?.summary?.totalUserDeposits || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-green-400">{(walletData?.summary?.totalUserDeposits || 0).toLocaleString()}</div>
 
         </div>
 
@@ -15097,7 +15090,7 @@ const AdminWallet = () => {
 
           <div className="text-sm text-gray-400">User Withdrawals</div>
 
-          <div className="text-2xl font-bold text-red-400">₹{(walletData?.summary?.totalUserWithdrawals || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-red-400">{(walletData?.summary?.totalUserWithdrawals || 0).toLocaleString()}</div>
 
         </div>
 
@@ -15105,7 +15098,7 @@ const AdminWallet = () => {
 
           <div className="text-sm text-gray-400">Distributed to Users</div>
 
-          <div className="text-2xl font-bold text-blue-400">₹{(walletData?.summary?.distributedToUsers || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-blue-400">{(walletData?.summary?.distributedToUsers || 0).toLocaleString()}</div>
 
         </div>
 
@@ -15121,7 +15114,7 @@ const AdminWallet = () => {
 
           <div className="text-sm text-gray-400">Total User Profits</div>
 
-          <div className="text-2xl font-bold text-green-400">₹{(walletData?.summary?.totalUserProfits || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-green-400">{(walletData?.summary?.totalUserProfits || 0).toLocaleString()}</div>
 
         </div>
 
@@ -15129,7 +15122,7 @@ const AdminWallet = () => {
 
           <div className="text-sm text-gray-400">Total User Losses</div>
 
-          <div className="text-2xl font-bold text-red-400">₹{(walletData?.summary?.totalUserLosses || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-red-400">{(walletData?.summary?.totalUserLosses || 0).toLocaleString()}</div>
 
         </div>
 
@@ -15177,7 +15170,7 @@ const AdminWallet = () => {
 
                 <div>
 
-                  <div className="font-medium">₹{req.amount.toLocaleString()}</div>
+                  <div className="font-medium">{req.amount.toLocaleString()}</div>
 
                   <div className="text-xs text-gray-400">{req.reason || 'No reason'}</div>
 
@@ -15243,11 +15236,11 @@ const AdminWallet = () => {
 
                   <div className={entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
 
-                    {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
+                    {entry.type === 'CREDIT' ? '+' : '-'}{entry.amount.toLocaleString()}
 
                   </div>
 
-                  <div className="text-xs text-gray-400">Bal: ₹{entry.balanceAfter.toLocaleString()}</div>
+                  <div className="text-xs text-gray-400">Bal: {entry.balanceAfter.toLocaleString()}</div>
 
                 </div>
 
@@ -15283,7 +15276,7 @@ const AdminWallet = () => {
 
               Request funds from your {admin?.role === 'ADMIN' ? 'Super Admin' : admin?.role === 'BROKER' ? 'Admin' : admin?.role === 'SUB_BROKER' ? 'Broker' : 'Superior'}. 
 
-              Your current balance is ₹{(walletData?.wallet?.balance || 0).toLocaleString()}
+              Your current balance is {(walletData?.wallet?.balance || 0).toLocaleString()}
 
             </p>
 
@@ -15291,7 +15284,7 @@ const AdminWallet = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
 
                 <input
 
@@ -15377,7 +15370,7 @@ const AdminWallet = () => {
 
             <p className="text-gray-400 text-sm mb-4">
 
-              Transfer funds from your wallet to another admin. Your balance: ₹{(walletData?.wallet?.balance || 0).toLocaleString()}
+              Transfer funds from your wallet to another admin. Your balance: {(walletData?.wallet?.balance || 0).toLocaleString()}
 
             </p>
 
@@ -15405,7 +15398,7 @@ const AdminWallet = () => {
 
                     <option key={t._id} value={t._id}>
 
-                      {t.name || t.username} ({t.role}) - ₹{(t.wallet?.balance || 0).toLocaleString()}
+                      {t.name || t.username} ({t.role}) - {(t.wallet?.balance || 0).toLocaleString()}
 
                     </option>
 
@@ -15417,7 +15410,7 @@ const AdminWallet = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
 
                 <input
 
@@ -16973,7 +16966,7 @@ const AdminFundRequestsManagement = () => {
 
                   <div className="text-sm text-gray-500 mt-1">
 
-                    Current Balance: ₹{(req.admin?.wallet?.balance || 0).toLocaleString()}
+                    Current Balance: {(req.admin?.wallet?.balance || 0).toLocaleString()}
 
                   </div>
 
@@ -16987,7 +16980,7 @@ const AdminFundRequestsManagement = () => {
 
                   <div className="text-sm text-gray-400">Requested Amount</div>
 
-                  <div className="text-2xl font-bold text-green-400">₹{req.amount.toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-green-400">{req.amount.toLocaleString()}</div>
 
                 </div>
 
@@ -17223,7 +17216,7 @@ const SubordinateFundRequests = () => {
 
         <div className="text-sm text-gray-400">
 
-          Your Wallet: <span className="text-green-400 font-bold">₹{(admin?.wallet?.balance || 0).toLocaleString()}</span>
+          Your Wallet: <span className="text-green-400 font-bold">{(admin?.wallet?.balance || 0).toLocaleString()}</span>
 
         </div>
 
@@ -17309,7 +17302,7 @@ const SubordinateFundRequests = () => {
 
                   <div className="text-sm text-gray-500 mt-1">
 
-                    Their Current Balance: ₹{(req.admin?.wallet?.balance || 0).toLocaleString()}
+                    Their Current Balance: {(req.admin?.wallet?.balance || 0).toLocaleString()}
 
                   </div>
 
@@ -17323,7 +17316,7 @@ const SubordinateFundRequests = () => {
 
                   <div className="text-sm text-gray-400">Requested Amount</div>
 
-                  <div className="text-2xl font-bold text-green-400">₹{req.amount.toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-green-400">{req.amount.toLocaleString()}</div>
 
                   {filter === 'PENDING' && admin?.wallet?.balance < req.amount && (
 
@@ -17787,13 +17780,13 @@ const LedgerView = () => {
 
                         <div className="flex justify-between text-[8px]">
 
-                          <span className="text-red-400">Debit: ₹{entry.transactionSlip.totalDebitAmount.toFixed(2)}</span>
+                          <span className="text-red-400">Debit: {entry.transactionSlip.totalDebitAmount.toFixed(2)}</span>
 
-                          <span className="text-green-400">Credit: ₹{entry.transactionSlip.totalCreditAmount.toFixed(2)}</span>
+                          <span className="text-green-400">Credit: {entry.transactionSlip.totalCreditAmount.toFixed(2)}</span>
 
                           <span className={`font-semibold ${entry.transactionSlip.netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                            Net: {entry.transactionSlip.netPnL >= 0 ? '+' : ''}₹{entry.transactionSlip.netPnL.toFixed(2)}
+                            Net: {entry.transactionSlip.netPnL >= 0 ? '+' : ''}{entry.transactionSlip.netPnL.toFixed(2)}
 
                           </span>
 
@@ -17813,7 +17806,7 @@ const LedgerView = () => {
 
                   <td className={`px-4 py-3 text-right ${entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
 
-                    {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
+                    {entry.type === 'CREDIT' ? '+' : '-'}{entry.amount.toLocaleString()}
 
                   </td>
 
@@ -17925,7 +17918,7 @@ const LedgerView = () => {
 
                         <div className={`font-semibold ${selectedEntry?.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {selectedEntry?.type === 'CREDIT' ? '+' : '-'}₹{selectedEntry?.amount?.toLocaleString() || '0'}
+                          {selectedEntry?.type === 'CREDIT' ? '+' : '-'}{selectedEntry?.amount?.toLocaleString() || '0'}
 
                         </div>
 
@@ -19221,7 +19214,7 @@ const EXTRA_CHARGE_TYPE_META = [
 
     step: '0.01',
 
-    suffix: '₹',
+    suffix: '',
 
     shortHint: 'Flat fee each time an order completes',
 
@@ -19239,7 +19232,7 @@ const EXTRA_CHARGE_TYPE_META = [
 
     step: '0.01',
 
-    suffix: '₹',
+    suffix: '',
 
     shortHint: 'Added for every lot in the trade',
 
@@ -19259,7 +19252,7 @@ const EXTRA_CHARGE_TYPE_META = [
 
     suffix: '%',
 
-    shortHint: 'Percent of total trade value (not ₹ per crore)',
+    shortHint: 'Percent of total trade value (not  per crore)',
 
   },
 
@@ -19267,7 +19260,7 @@ const EXTRA_CHARGE_TYPE_META = [
 
 
 
-/** Extra commission: three fixed lines — checkbox + amount only (units are fixed: ₹ / ₹ / %). */
+/** Extra commission: three fixed lines — checkbox + amount only (units are fixed:  /  / %). */
 
 function InstrumentExtraCommissionSection({ tradingForm, setTradingForm }) {
 
@@ -19323,7 +19316,7 @@ function InstrumentExtraCommissionSection({ tradingForm, setTradingForm }) {
 
         Tick a line to use it, enter the amount, then save. Trade and lot are always in{' '}
 
-        <span className="text-amber-200/90">₹</span>; turnover line is always{' '}
+        <span className="text-amber-200/90"></span>; turnover line is always{' '}
 
         <span className="text-amber-200/90">%</span> of trade value.
 
@@ -19463,8 +19456,6 @@ function InstrumentTradingRulesModal({
 
   saving,
 
-  marketWatchLayout = false,
-
   bulkSectorLabel = '',
 
   bulkContractCount = 0,
@@ -19535,11 +19526,7 @@ function InstrumentTradingRulesModal({
 
                 ? 'Saving applies the same rules to every contract in this category (per-instrument block trading and notes are preserved on each row).'
 
-                : marketWatchLayout
-
-                  ? 'These values apply for this contract before segment defaults. Leave a number blank to skip that field. Block trading and internal notes are managed from Instruments.'
-
-                  : 'When enabled, these values apply before segment defaults. User script settings still override the same field when set. Leave a number blank to skip that override.'}
+                : 'When enabled, these values apply before segment defaults. User script settings still override the same field when set. Leave a number blank to skip that override.'}
 
             </p>
 
@@ -19561,65 +19548,57 @@ function InstrumentTradingRulesModal({
 
           </div>
 
-          {!marketWatchLayout && (
+          <label className="flex items-center gap-2 cursor-pointer">
 
-            <>
+            <input
 
-              <label className="flex items-center gap-2 cursor-pointer">
+              type="checkbox"
 
-                <input
+              checked={tradingForm.enabled}
 
-                  type="checkbox"
+              onChange={(e) => setTradingForm((f) => ({ ...f, enabled: e.target.checked }))}
 
-                  checked={tradingForm.enabled}
+            />
 
-                  onChange={(e) => setTradingForm((f) => ({ ...f, enabled: e.target.checked }))}
+            <span>Enable per-instrument overrides</span>
 
-                />
+          </label>
 
-                <span>Enable per-instrument overrides</span>
+          <label className="flex items-center gap-2 cursor-pointer">
 
-              </label>
+            <input
 
-              <label className="flex items-center gap-2 cursor-pointer">
+              type="checkbox"
 
-                <input
+              checked={tradingForm.blockTrading}
 
-                  type="checkbox"
+              onChange={(e) => setTradingForm((f) => ({ ...f, blockTrading: e.target.checked }))}
 
-                  checked={tradingForm.blockTrading}
+            />
 
-                  onChange={(e) => setTradingForm((f) => ({ ...f, blockTrading: e.target.checked }))}
+            <span className="text-red-300">Block all trading on this contract</span>
 
-                />
+          </label>
 
-                <span className="text-red-300">Block all trading on this contract</span>
+          <div>
 
-              </label>
+            <label className="text-xs text-gray-500">Notes (internal)</label>
 
-              <div>
+            <input
 
-                <label className="text-xs text-gray-500">Notes (internal)</label>
+              type="text"
 
-                <input
+              value={tradingForm.notes}
 
-                  type="text"
+              onChange={(e) => setTradingForm((f) => ({ ...f, notes: e.target.value }))}
 
-                  value={tradingForm.notes}
+              className="w-full mt-1 bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
 
-                  onChange={(e) => setTradingForm((f) => ({ ...f, notes: e.target.value }))}
+              placeholder="e.g. Silver May roll"
 
-                  className="w-full mt-1 bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+            />
 
-                  placeholder="e.g. Silver May roll"
-
-                />
-
-              </div>
-
-            </>
-
-          )}
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
 
@@ -19723,7 +19702,7 @@ function InstrumentTradingRulesModal({
 
           <div>
 
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Brokerage ₹ per lot (futures / opts)</div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Brokerage  per lot (futures / opts)</div>
 
             <div className="grid grid-cols-2 gap-2">
 
@@ -19783,7 +19762,7 @@ function InstrumentTradingRulesModal({
 
           <div>
 
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Fixed margin ₹ per lot</div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Fixed margin  per lot</div>
 
             <div className="grid grid-cols-2 gap-2">
 
@@ -19847,7 +19826,7 @@ function InstrumentTradingRulesModal({
 
             <p className="text-[10px] text-gray-500 mb-2 leading-snug">
 
-              How many lots per order (count). Not the exchange contract lot size (units per 1 lot) shown in Market Watch.
+              How many lots per order (count). Not the exchange contract lot size (units per 1 lot).
 
             </p>
 
@@ -21042,13 +21021,13 @@ const InstrumentManagement = () => {
 
                     <td className="px-4 py-3 text-right font-mono text-gray-400">
 
-                      {inst.strike ? `₹${inst.strike.toLocaleString()}` : '-'}
+                      {inst.strike ? `${inst.strike.toLocaleString()}` : '-'}
 
                     </td>
 
                     <td className="px-4 py-3 text-right font-mono">
 
-                      {ltp > 0 ? `₹${ltp.toLocaleString()}` : '-'}
+                      {ltp > 0 ? `${ltp.toLocaleString()}` : '-'}
 
                     </td>
 
@@ -22777,7 +22756,7 @@ const NetPositions = () => {
 
           <div className={`text-2xl font-bold ${(summary.totalUnrealizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-            ₹{(summary.totalUnrealizedPnL || 0).toLocaleString()}
+            {(summary.totalUnrealizedPnL || 0).toLocaleString()}
 
           </div>
 
@@ -22925,13 +22904,13 @@ const NetPositions = () => {
 
                     </td>
 
-                    <td className="px-4 py-3 text-right">₹{pos.avgBuyPrice?.toLocaleString() || '-'}</td>
+                    <td className="px-4 py-3 text-right">{pos.avgBuyPrice?.toLocaleString() || '-'}</td>
 
-                    <td className="px-4 py-3 text-right">₹{pos.avgSellPrice?.toLocaleString() || '-'}</td>
+                    <td className="px-4 py-3 text-right">{pos.avgSellPrice?.toLocaleString() || '-'}</td>
 
                     <td className={`px-4 py-3 text-right font-medium ${pos.totalUnrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                      ₹{pos.totalUnrealizedPnL?.toLocaleString() || 0}
+                      {pos.totalUnrealizedPnL?.toLocaleString() || 0}
 
                     </td>
 
@@ -23045,7 +23024,7 @@ const NetPositions = () => {
 
                         <td className={`px-4 py-3 text-right ${item.unrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          ₹{item.unrealizedPnL?.toLocaleString() || 0}
+                          {item.unrealizedPnL?.toLocaleString() || 0}
 
                         </td>
 
@@ -23523,7 +23502,7 @@ const AllTrades = () => {
 
             <div className={`text-lg font-bold ${totalOpenPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-              {totalOpenPnL >= 0 ? '+' : ''}₹{totalOpenPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalOpenPnL >= 0 ? '+' : ''}{totalOpenPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -23547,7 +23526,7 @@ const AllTrades = () => {
 
             <div className={`text-lg font-bold ${totalClosedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-              {totalClosedPnL >= 0 ? '+' : ''}₹{totalClosedPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalClosedPnL >= 0 ? '+' : ''}{totalClosedPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -23561,7 +23540,7 @@ const AllTrades = () => {
 
             <div className="text-lg font-bold text-purple-400">
 
-              ₹{totalBrokerage.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalBrokerage.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -23771,13 +23750,13 @@ const AllTrades = () => {
 
                         <td className="px-3 py-3 text-xs">{formatDateTime(trade.openedAt)}</td>
 
-                        <td className="px-3 py-3 text-right">₹{trade.entryPrice?.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{trade.entryPrice?.toFixed(2)}</td>
 
-                        <td className="px-3 py-3 text-right">₹{(trade.currentPrice || trade.entryPrice)?.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{(trade.currentPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                         <td className={`px-3 py-3 text-right font-bold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {pnl >= 0 ? '+' : ''}₹{pnl.toFixed(2)}
+                          {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
 
                         </td>
 
@@ -23913,29 +23892,29 @@ const AllTrades = () => {
 
                         <td className="px-2 py-3 text-xs">{formatDateTime(trade.openedAt)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs">₹{trade.entryPrice?.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs">{trade.entryPrice?.toFixed(2)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs text-gray-400">₹{entryBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-gray-400">{entryBkg.toFixed(2)}</td>
 
                         <td className="px-2 py-3 text-xs">{formatDateTime(trade.closedAt)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs">₹{trade.exitPrice?.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs">{trade.exitPrice?.toFixed(2)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs text-gray-400">₹{exitBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-gray-400">{exitBkg.toFixed(2)}</td>
 
                         <td className={`px-2 py-3 text-right text-xs font-bold ${grossPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {grossPnL >= 0 ? '+' : ''}₹{grossPnL.toFixed(2)}
+                          {grossPnL >= 0 ? '+' : ''}{grossPnL.toFixed(2)}
 
                         </td>
 
                         <td className={`px-2 py-3 text-right text-xs font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {netPnL >= 0 ? '+' : ''}₹{netPnL.toFixed(2)}
+                          {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)}
 
                         </td>
 
-                        <td className="px-2 py-3 text-right text-xs text-purple-400">₹{totalBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-purple-400">{totalBkg.toFixed(2)}</td>
 
                         <td className="px-2 py-3 text-xs text-gray-400">{formatDuration(trade.openedAt, trade.closedAt)}</td>
 
@@ -24051,7 +24030,7 @@ const AllTrades = () => {
 
                       <td className="px-3 py-3 text-right">{trade.quantity}</td>
 
-                      <td className="px-3 py-3 text-right">₹{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right">{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                       <td className="px-3 py-3 text-center">
 
@@ -24165,7 +24144,7 @@ const AllTrades = () => {
 
                       <td className="px-3 py-3 text-right">{trade.quantity}</td>
 
-                      <td className="px-3 py-3 text-right">₹{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right">{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                       <td className="px-3 py-3 text-xs">
 
@@ -24781,7 +24760,7 @@ const TradeManagement = () => {
 
             <div className={`text-lg font-bold ${totalOpenPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-              {totalOpenPnL >= 0 ? '+' : ''}₹{totalOpenPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalOpenPnL >= 0 ? '+' : ''}{totalOpenPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -24805,7 +24784,7 @@ const TradeManagement = () => {
 
             <div className={`text-lg font-bold ${totalClosedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-              {totalClosedPnL >= 0 ? '+' : ''}₹{totalClosedPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalClosedPnL >= 0 ? '+' : ''}{totalClosedPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -24819,7 +24798,7 @@ const TradeManagement = () => {
 
             <div className="text-lg font-bold text-purple-400">
 
-              ₹{totalBrokerage.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalBrokerage.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -25029,13 +25008,13 @@ const TradeManagement = () => {
 
                         <td className="px-3 py-3 text-xs">{formatDateTime(trade.openedAt)}</td>
 
-                        <td className="px-3 py-3 text-right">₹{trade.entryPrice?.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{trade.entryPrice?.toFixed(2)}</td>
 
-                        <td className="px-3 py-3 text-right">₹{(trade.currentPrice || trade.entryPrice)?.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{(trade.currentPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                         <td className={`px-3 py-3 text-right font-bold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {pnl >= 0 ? '+' : ''}₹{pnl.toFixed(2)}
+                          {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
 
                         </td>
 
@@ -25171,29 +25150,29 @@ const TradeManagement = () => {
 
                         <td className="px-2 py-3 text-xs">{formatDateTime(trade.openedAt)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs">₹{trade.entryPrice?.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs">{trade.entryPrice?.toFixed(2)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs text-gray-400">₹{entryBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-gray-400">{entryBkg.toFixed(2)}</td>
 
                         <td className="px-2 py-3 text-xs">{formatDateTime(trade.closedAt)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs">₹{trade.exitPrice?.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs">{trade.exitPrice?.toFixed(2)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs text-gray-400">₹{exitBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-gray-400">{exitBkg.toFixed(2)}</td>
 
                         <td className={`px-2 py-3 text-right text-xs font-bold ${grossPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {grossPnL >= 0 ? '+' : ''}₹{grossPnL.toFixed(2)}
+                          {grossPnL >= 0 ? '+' : ''}{grossPnL.toFixed(2)}
 
                         </td>
 
                         <td className={`px-2 py-3 text-right text-xs font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {netPnL >= 0 ? '+' : ''}₹{netPnL.toFixed(2)}
+                          {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)}
 
                         </td>
 
-                        <td className="px-2 py-3 text-right text-xs text-purple-400">₹{totalBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-purple-400">{totalBkg.toFixed(2)}</td>
 
                         <td className="px-2 py-3 text-xs text-gray-400">{formatDuration(trade.openedAt, trade.closedAt)}</td>
 
@@ -25309,7 +25288,7 @@ const TradeManagement = () => {
 
                       <td className="px-3 py-3 text-right">{trade.quantity}</td>
 
-                      <td className="px-3 py-3 text-right">₹{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right">{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                       <td className="px-3 py-3 text-center">
 
@@ -25423,7 +25402,7 @@ const TradeManagement = () => {
 
                       <td className="px-3 py-3 text-right">{trade.quantity}</td>
 
-                      <td className="px-3 py-3 text-right">₹{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right">{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                       <td className="px-3 py-3 text-xs">
 
@@ -26165,7 +26144,7 @@ const SuperAdminAllTrades = () => {
 
             <div className={`text-lg font-bold ${totalOpenPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-              {totalOpenPnL >= 0 ? '+' : ''}₹{totalOpenPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalOpenPnL >= 0 ? '+' : ''}{totalOpenPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -26195,7 +26174,7 @@ const SuperAdminAllTrades = () => {
 
             <div className={`text-lg font-bold ${totalClosedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-              {totalClosedPnL >= 0 ? '+' : ''}₹{totalClosedPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalClosedPnL >= 0 ? '+' : ''}{totalClosedPnL.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -26211,7 +26190,7 @@ const SuperAdminAllTrades = () => {
 
             <div className="text-lg font-bold text-yellow-400">
 
-              ₹{totalBrokerage.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              {totalBrokerage.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
             </div>
 
@@ -26527,13 +26506,13 @@ const SuperAdminAllTrades = () => {
 
                         <td className="px-3 py-3 text-xs">{formatDateTime(trade.openedAt)}</td>
 
-                        <td className="px-3 py-3 text-right">₹{trade.entryPrice?.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{trade.entryPrice?.toFixed(2)}</td>
 
-                        <td className="px-3 py-3 text-right">₹{(trade.currentPrice || trade.entryPrice)?.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right">{(trade.currentPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                         <td className={`px-3 py-3 text-right font-bold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {pnl >= 0 ? '+' : ''}₹{pnl.toFixed(2)}
+                          {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
 
                         </td>
 
@@ -26705,29 +26684,29 @@ const SuperAdminAllTrades = () => {
 
                         <td className="px-2 py-3 text-xs">{formatDateTime(trade.openedAt)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs">₹{trade.entryPrice?.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs">{trade.entryPrice?.toFixed(2)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs text-gray-400">₹{entryBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-gray-400">{entryBkg.toFixed(2)}</td>
 
                         <td className="px-2 py-3 text-xs">{formatDateTime(trade.closedAt)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs">₹{trade.exitPrice?.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs">{trade.exitPrice?.toFixed(2)}</td>
 
-                        <td className="px-2 py-3 text-right text-xs text-gray-400">₹{exitBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-gray-400">{exitBkg.toFixed(2)}</td>
 
                         <td className={`px-2 py-3 text-right text-xs font-bold ${grossPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {grossPnL >= 0 ? '+' : ''}₹{grossPnL.toFixed(2)}
+                          {grossPnL >= 0 ? '+' : ''}{grossPnL.toFixed(2)}
 
                         </td>
 
                         <td className={`px-2 py-3 text-right text-xs font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                          {netPnL >= 0 ? '+' : ''}₹{netPnL.toFixed(2)}
+                          {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)}
 
                         </td>
 
-                        <td className="px-2 py-3 text-right text-xs text-purple-400">₹{totalBkg.toFixed(2)}</td>
+                        <td className="px-2 py-3 text-right text-xs text-purple-400">{totalBkg.toFixed(2)}</td>
 
                         <td className="px-2 py-3 text-xs text-gray-400">{formatDuration(trade.openedAt, trade.closedAt)}</td>
 
@@ -26877,7 +26856,7 @@ const SuperAdminAllTrades = () => {
 
                       <td className="px-3 py-3 text-right">{trade.quantity}</td>
 
-                      <td className="px-3 py-3 text-right">₹{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right">{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                       <td className="px-3 py-3 text-center">
 
@@ -27019,7 +26998,7 @@ const SuperAdminAllTrades = () => {
 
                       <td className="px-3 py-3 text-right">{trade.quantity}</td>
 
-                      <td className="px-3 py-3 text-right">₹{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right">{(trade.limitPrice || trade.entryPrice)?.toFixed(2)}</td>
 
                       <td className="px-3 py-3 text-xs">
 
@@ -27575,7 +27554,7 @@ const SuperAdminAllFundRequests = () => {
 
           <div className="text-2xl font-bold text-green-400">
 
-            ₹{requests.filter(r => r.type === 'DEPOSIT').reduce((s, r) => s + r.amount, 0).toLocaleString()}
+            {requests.filter(r => r.type === 'DEPOSIT').reduce((s, r) => s + r.amount, 0).toLocaleString()}
 
           </div>
 
@@ -27587,7 +27566,7 @@ const SuperAdminAllFundRequests = () => {
 
           <div className="text-2xl font-bold text-red-400">
 
-            ₹{requests.filter(r => r.type === 'WITHDRAWAL').reduce((s, r) => s + r.amount, 0).toLocaleString()}
+            {requests.filter(r => r.type === 'WITHDRAWAL').reduce((s, r) => s + r.amount, 0).toLocaleString()}
 
           </div>
 
@@ -27663,7 +27642,7 @@ const SuperAdminAllFundRequests = () => {
 
                   {getTypeBadge(req.type)}
 
-                  <div className="text-xl font-bold">₹{req.amount.toLocaleString()}</div>
+                  <div className="text-xl font-bold">{req.amount.toLocaleString()}</div>
 
                 </div>
 
@@ -27869,7 +27848,7 @@ const SuperAdminAllFundRequests = () => {
 
                     <td className="px-4 py-3">{getTypeBadge(req.type)}</td>
 
-                    <td className="px-4 py-3 text-right font-bold">₹{req.amount.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-bold">{req.amount.toLocaleString()}</td>
 
                     <td className="px-4 py-3 text-xs">
 
@@ -28004,1318 +27983,6 @@ const SuperAdminAllFundRequests = () => {
           />
 
         </>
-
-      )}
-
-    </div>
-
-  );
-
-};
-
-
-
-// Market Watch - Trading interface
-
-const TradingPanel = () => {
-
-  const { admin } = useAuth();
-
-  const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
-
-  const [instruments, setInstruments] = useState([]);
-
-  /** Segment the current `instruments` array was fetched for (avoids hydrating watchlist on stale data). */
-
-  const [instrumentsSegment, setInstrumentsSegment] = useState(null);
-
-  const [watchlist, setWatchlist] = useState([]);
-
-  const [loading, setLoading] = useState(true);
-
-  const [searchTerm, setSearchTerm] = useState('');
-
-  const [activeSegment, setActiveSegment] = useState('NSEFUT');
-
-  const [mwRulesInstrument, setMwRulesInstrument] = useState(null);
-
-  const [mwRulesForm, setMwRulesForm] = useState(null);
-
-  const [mwRulesSaving, setMwRulesSaving] = useState(false);
-
-  /** When set, Rules modal applies to all these instrument ids (Market Watch sector). */
-
-  const [mwBulkRuleIds, setMwBulkRuleIds] = useState(null);
-
-  const [mwBulkSectorLabel, setMwBulkSectorLabel] = useState('');
-
-  const [mwCollapsedSectors, setMwCollapsedSectors] = useState(() => new Set());
-
-  const [mwSectorBusy, setMwSectorBusy] = useState(null);
-
-  const mwWatchlistHydratedFor = useRef(null);
-
-
-
-  const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
-
-
-
-  const mwWatchlistStorageKey = (segment) => `stockex_admin_mw_watchlist_v1_${segment}`;
-
-
-
-  useEffect(() => {
-
-    fetchInstruments(activeSegment);
-
-  }, []);
-
-
-
-  useEffect(() => {
-
-    fetchInstruments(activeSegment, searchTerm);
-
-  }, [activeSegment, searchTerm]);
-
-
-
-  useEffect(() => {
-
-    mwWatchlistHydratedFor.current = null;
-
-    setWatchlist([]);
-
-    setMwCollapsedSectors(new Set());
-
-  }, [activeSegment]);
-
-
-
-  useEffect(() => {
-
-    if (!admin?.token || instruments.length === 0 || instrumentsSegment !== activeSegment) return;
-
-    if (mwWatchlistHydratedFor.current === activeSegment) return;
-
-    try {
-
-      const raw = localStorage.getItem(mwWatchlistStorageKey(activeSegment));
-
-      const ids = raw ? JSON.parse(raw) : [];
-
-      const idList = Array.isArray(ids) ? ids : [];
-
-      if (idList.length === 0) {
-
-        setWatchlist([]);
-
-      } else {
-
-        setWatchlist((prev) =>
-
-          idList
-
-            .map((id) => {
-
-              const match = instruments.find((i) => String(i._id) === String(id));
-
-              if (match) return match;
-
-              return prev.find((w) => String(w._id) === String(id)) || null;
-
-            })
-
-            .filter(Boolean)
-
-        );
-
-      }
-
-    } catch {
-
-      setWatchlist([]);
-
-    }
-
-    mwWatchlistHydratedFor.current = activeSegment;
-
-  }, [activeSegment, instruments, instrumentsSegment, admin?.token]);
-
-
-
-  useEffect(() => {
-
-    if (mwWatchlistHydratedFor.current !== activeSegment) return;
-
-    try {
-
-      localStorage.setItem(
-
-        mwWatchlistStorageKey(activeSegment),
-
-        JSON.stringify(watchlist.map((w) => w._id))
-
-      );
-
-    } catch {
-
-      /* ignore quota / private mode */
-
-    }
-
-  }, [watchlist, activeSegment]);
-
-
-
-  const fetchInstruments = async (segmentToFetch, term) => {
-
-    setLoading(true);
-
-    try {
-
-      const { data } = await axios.get('/api/instruments/admin', {
-
-        headers: { Authorization: `Bearer ${admin.token}` },
-
-        params: { limit: 5000, displaySegment: segmentToFetch, search: term || undefined }
-
-      });
-
-      const instrumentsArray = data?.instruments || data || [];
-
-      console.log('Fetched instruments:', instrumentsArray.length, 'Sample:', instrumentsArray[0]);
-
-      setInstruments(Array.isArray(instrumentsArray) ? instrumentsArray : []);
-
-      setInstrumentsSegment(segmentToFetch);
-
-    } catch (err) {
-
-      console.error('Error fetching instruments:', err);
-
-    } finally {
-
-      setLoading(false);
-
-    }
-
-  };
-
-
-
-  // Keep watchlist rows in sync with latest API instruments (same _id) so Rules always sees DB tradingDefaults.
-
-  useEffect(() => {
-
-    if (!instruments.length) return;
-
-    setWatchlist((prev) => {
-
-      if (!prev.length) return prev;
-
-      return prev.map((w) => instruments.find((i) => String(i._id) === String(w._id)) || w);
-
-    });
-
-  }, [instruments]);
-
-
-
-  // Filter instruments by segment and search - use displaySegment directly
-
-  const filteredInstruments = instruments.filter(i => {
-
-    const displaySeg = (i.displaySegment || '').toUpperCase();
-
-    const exchange = (i.exchange || '').toUpperCase();
-
-    const instType = (i.instrumentType || '').toUpperCase();
-
-    
-
-    // First try to match by displaySegment directly
-
-    let matchesSegment = displaySeg === activeSegment;
-
-    
-
-    // Fallback to exchange + instrumentType matching if displaySegment doesn't match
-
-    if (!matchesSegment) {
-
-      matchesSegment = 
-
-        (activeSegment === 'NSEFUT' && exchange === 'NFO' && instType === 'FUTURES') ||
-
-        (activeSegment === 'NSEOPT' && exchange === 'NFO' && instType === 'OPTIONS') ||
-
-        (activeSegment === 'MCXFUT' && exchange === 'MCX' && instType === 'FUTURES') ||
-
-        (activeSegment === 'MCXOPT' && exchange === 'MCX' && instType === 'OPTIONS') ||
-
-        (activeSegment === 'NSE-EQ' && exchange === 'NSE') ||
-
-        (activeSegment === 'BSE-FUT' && exchange === 'BFO' && instType === 'FUTURES') ||
-
-        (activeSegment === 'BSE-OPT' && exchange === 'BFO' && instType === 'OPTIONS') ||
-
-        (activeSegment === 'CRYPTOFUT' && exchange === 'BINANCE' && instType === 'FUTURES') ||
-
-        (activeSegment === 'CRYPTOOPT' && exchange === 'BINANCE' && instType === 'OPTIONS') ||
-
-        (activeSegment === 'FOREXFUT' && exchange === 'FOREX' && instType !== 'OPTIONS') ||
-
-        (activeSegment === 'FOREXOPT' && exchange === 'FOREX' && instType === 'OPTIONS');
-
-    }
-
-    
-
-    if (!searchTerm) return matchesSegment;
-
-    
-
-    const term = searchTerm.toLowerCase();
-
-    return matchesSegment && (
-
-      i.tradingSymbol?.toLowerCase().includes(term) ||
-
-      i.symbol?.toLowerCase().includes(term) ||
-
-      i.name?.toLowerCase().includes(term)
-
-    );
-
-  });
-
-
-
-  const instrumentGroups = useMemo(() => {
-
-    if (activeSegment === 'NSEFUT' || activeSegment === 'NSEOPT') {
-
-      return groupNseFoMarketWatch(filteredInstruments);
-
-    }
-
-    return [{ sector: 'All instruments', items: filteredInstruments }];
-
-  }, [activeSegment, filteredInstruments]);
-
-
-
-  const toggleMwSectorCollapsed = (sector) => {
-
-    setMwCollapsedSectors((prev) => {
-
-      const next = new Set(prev);
-
-      if (next.has(sector)) next.delete(sector);
-
-      else next.add(sector);
-
-      return next;
-
-    });
-
-  };
-
-
-
-  /** allOpen = clients can trade every row; allClosed = SA-locked off for all; mixed = needs manual reconcile */
-
-  const getMwTradingMode = (items) => {
-
-    if (!items?.length) return 'empty';
-
-    const isOpenRow = (i) => i.isEnabled !== false && i.adminLockedClosed !== true;
-
-    if (items.every(isOpenRow)) return 'allOpen';
-
-    if (items.every((i) => i.isEnabled === false && i.adminLockedClosed === true)) return 'allClosed';
-
-    return 'mixed';
-
-  };
-
-
-
-  const runSectorForcedClose = async (busyKey, items) => {
-
-    if (!isSuperAdmin || !admin?.token || !items?.length) return;
-
-    const slice = items.slice(0, 2000);
-
-    if (
-
-      !window.confirm(
-
-        `Close ${slice.length} contract(s)? Client open positions will be squared off and pending orders cancelled. Scripts stay locked until you Open them.`
-
-      )
-
-    ) {
-
-      return;
-
-    }
-
-    setMwSectorBusy(busyKey);
-
-    try {
-
-      await axios.post(
-
-        '/api/instruments/admin/forced-close',
-
-        { instrumentIds: slice.map((i) => i._id) },
-
-        { headers: { Authorization: `Bearer ${admin.token}` } }
-
-      );
-
-      await fetchInstruments(activeSegment, searchTerm);
-
-    } catch (e) {
-
-      alert(e.response?.data?.message || e.message || 'Close failed');
-
-    } finally {
-
-      setMwSectorBusy(null);
-
-    }
-
-  };
-
-
-
-  const runSectorForcedOpen = async (busyKey, items) => {
-
-    if (!isSuperAdmin || !admin?.token || !items?.length) return;
-
-    const slice = items.slice(0, 2000);
-
-    if (!window.confirm(`Open ${slice.length} contract(s) for clients?`)) return;
-
-    setMwSectorBusy(busyKey);
-
-    try {
-
-      await axios.post(
-
-        '/api/instruments/admin/forced-open',
-
-        { instrumentIds: slice.map((i) => i._id) },
-
-        { headers: { Authorization: `Bearer ${admin.token}` } }
-
-      );
-
-      await fetchInstruments(activeSegment, searchTerm);
-
-    } catch (e) {
-
-      alert(e.response?.data?.message || e.message || 'Open failed');
-
-    } finally {
-
-      setMwSectorBusy(null);
-
-    }
-
-  };
-
-
-
-  const renderMwTradingToggle = (items, busyKey) => {
-
-    if (!isSuperAdmin || !items?.length) return null;
-
-    const mode = getMwTradingMode(items);
-
-    const busy = mwSectorBusy === busyKey;
-
-    const title =
-
-      mode === 'allOpen'
-
-        ? 'Turn off: close for clients, square off open positions, show on client notice strip'
-
-        : mode === 'allClosed'
-
-          ? 'Turn on: allow clients to trade this group again'
-
-          : 'Mixed state — toggle on to open all, or off to close all (up to 2000 contracts)';
-
-    return (
-
-      <label
-
-        className="flex items-center gap-2 shrink-0 cursor-pointer select-none"
-
-        title={title}
-
-        onClick={(e) => e.stopPropagation()}
-
-        onKeyDown={(e) => e.stopPropagation()}
-
-      >
-
-        <span className="text-[10px] text-gray-500 w-7 text-right tabular-nums">
-
-          {mode === 'mixed' ? 'Mix' : mode === 'allOpen' ? 'On' : 'Off'}
-
-        </span>
-
-        <span className="relative inline-block h-6 w-12 shrink-0 align-middle">
-
-          <input
-
-            type="checkbox"
-
-            role="switch"
-
-            aria-checked={mode === 'mixed' ? undefined : mode === 'allOpen'}
-
-            aria-label="Trading on or off for this group"
-
-            className="absolute inset-0 z-10 m-0 h-6 w-12 cursor-pointer opacity-0 disabled:cursor-not-allowed"
-
-            checked={mode === 'allOpen'}
-
-            disabled={busy}
-
-            ref={(el) => {
-
-              if (el) el.indeterminate = mode === 'mixed';
-
-            }}
-
-            onChange={(e) => {
-
-              const wantOpen = e.target.checked;
-
-              if (wantOpen) void runSectorForcedOpen(busyKey, items);
-
-              else void runSectorForcedClose(busyKey, items);
-
-            }}
-
-          />
-
-          <span
-
-            className={`pointer-events-none block h-6 w-12 rounded-full transition-colors ${
-
-              mode === 'allOpen' ? 'bg-green-600' : mode === 'mixed' ? 'bg-amber-800/85' : 'bg-dark-600 ring-1 ring-red-900/50'
-
-            } ${busy ? 'opacity-50' : ''}`}
-
-          />
-
-          <span
-
-            className={`pointer-events-none absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-[left] duration-200 ${
-
-              mode === 'allOpen' ? 'left-7' : mode === 'mixed' ? 'left-4' : 'left-1'
-
-            }`}
-
-          />
-
-        </span>
-
-      </label>
-
-    );
-
-  };
-
-
-
-  const addToWatchlist = (instrument) => {
-
-    if (!watchlist.find(w => w._id === instrument._id)) {
-
-      setWatchlist([...watchlist, instrument]);
-
-    }
-
-  };
-
-
-
-  const removeFromWatchlist = (instrumentId) => {
-
-    setWatchlist(watchlist.filter(w => w._id !== instrumentId));
-
-  };
-
-
-
-  const openMwRulesModal = (instrument) => {
-
-    if (!isSuperAdmin) return;
-
-    const fresh =
-
-      instruments.find((i) => String(i._id) === String(instrument?._id)) || instrument;
-
-    setMwBulkRuleIds(null);
-
-    setMwBulkSectorLabel('');
-
-    setMwRulesInstrument(fresh);
-
-    setMwRulesForm(instrumentToTradingForm(fresh));
-
-  };
-
-
-
-  const openMwCategoryRulesModal = (sectorLabel, itemsInSector) => {
-
-    if (!isSuperAdmin || !itemsInSector?.length) return;
-
-    const first = itemsInSector[0];
-
-    const fresh = instruments.find((i) => String(i._id) === String(first?._id)) || first;
-
-    setMwBulkSectorLabel(sectorLabel);
-
-    setMwBulkRuleIds(itemsInSector.map((i) => String(i._id)));
-
-    setMwRulesInstrument(fresh);
-
-    setMwRulesForm(emptyInstrumentTradingForm());
-
-  };
-
-
-
-  const closeMwRulesModal = () => {
-
-    setMwRulesInstrument(null);
-
-    setMwRulesForm(null);
-
-    setMwBulkRuleIds(null);
-
-    setMwBulkSectorLabel('');
-
-  };
-
-
-
-  const saveMwRules = async () => {
-
-    if (!mwRulesInstrument?._id || !admin?.token || !mwRulesForm) return;
-
-    setMwRulesSaving(true);
-
-    try {
-
-      if (mwBulkRuleIds && mwBulkRuleIds.length > 0) {
-
-        const tradingDefaults = serializeInstrumentTradingForm(mwRulesForm);
-
-        tradingDefaults.enabled = true;
-
-        await axios.put(
-
-          '/api/instruments/admin/bulk-trading-defaults',
-
-          { ids: mwBulkRuleIds, tradingDefaults },
-
-          { headers: { Authorization: `Bearer ${admin.token}` } }
-
-        );
-
-        closeMwRulesModal();
-
-        fetchInstruments(activeSegment, searchTerm);
-
-        return;
-
-      }
-
-      const prevTd = mwRulesInstrument.tradingDefaults || {};
-
-      const tradingDefaults = serializeInstrumentTradingForm(mwRulesForm);
-
-      tradingDefaults.enabled = true;
-
-      tradingDefaults.blockTrading = !!prevTd.blockTrading;
-
-      tradingDefaults.notes = typeof prevTd.notes === 'string' ? prevTd.notes : '';
-
-      const { data: saved } = await axios.put(
-
-        `/api/instruments/admin/${mwRulesInstrument._id}`,
-
-        { tradingDefaults },
-
-        { headers: { Authorization: `Bearer ${admin.token}` } }
-
-      );
-
-      const id = mwRulesInstrument._id;
-
-      const merged =
-
-        saved && String(saved._id) === String(id) ? saved : { ...mwRulesInstrument, tradingDefaults };
-
-      setInstruments((prev) => prev.map((i) => (String(i._id) === String(id) ? { ...i, ...merged } : i)));
-
-      setWatchlist((prev) => prev.map((w) => (String(w._id) === String(id) ? { ...w, ...merged } : w)));
-
-      closeMwRulesModal();
-
-      fetchInstruments(activeSegment, searchTerm);
-
-    } catch (err) {
-
-      alert(err.response?.data?.message || err.message || 'Save failed');
-
-    } finally {
-
-      setMwRulesSaving(false);
-
-    }
-
-  };
-
-
-
-  // Display lot size strictly from DB (no hardcoded fallbacks)
-
-  const getDisplayLotSize = (instrument) => instrument.lotSize || 1;
-
-
-
-  const formatInstrumentExpiry = (instrument) => {
-
-    const e = instrument?.expiry;
-
-    if (e == null || e === '') return '—';
-
-    try {
-
-      const d = e instanceof Date ? e : new Date(e);
-
-      if (Number.isNaN(d.getTime())) return '—';
-
-      return d.toLocaleDateString('en-IN', {
-
-        day: 'numeric',
-
-        month: 'short',
-
-        year: 'numeric',
-
-        timeZone: 'Asia/Kolkata',
-
-      });
-
-    } catch {
-
-      return '—';
-
-    }
-
-  };
-
-
-
-  return (
-
-    <div className="p-4 md:p-6">
-
-      <div className="mb-6">
-
-        <h1 className="text-xl md:text-2xl font-bold">Market Watch</h1>
-
-        {isSuperAdmin && (
-
-          <p className="text-xs text-gray-500 mt-2 max-w-3xl">
-
-            Super Admin: use <span className="text-amber-400 font-medium">Rules</span> on any row to set leverage caps,
-
-            brokerage (per product), extra commission per trade / per lot / per crore turnover, exposure (margin), fixed
-
-            margin per lot, lot limits, and spread — same as Instruments; saved on the instrument record.
-
-            {(activeSegment === 'NSEFUT' || activeSegment === 'NSEOPT') && (
-
-              <>
-
-                {' '}
-
-                <span className="text-cyan-400/90">NSE F&amp;O lists are grouped by sector</span> (Banking, IT, Oil &amp;
-
-                Gas, etc.).                 Use <span className="text-amber-400 font-medium">Category rules</span> on a header to apply
-
-                the same trading defaults to every contract in that group. Use the <span className="text-gray-200 font-medium">toggle</span>{' '}
-
-                (On/Off) on each header to open or close that whole group for clients — Off squares off open client trades and lists scripts on the client notice strip.
-
-              </>
-
-            )}
-
-          </p>
-
-        )}
-
-      </div>
-
-
-
-      {/* Segment Tabs */}
-
-      <div className="flex flex-wrap gap-2 mb-4">
-
-        {segments.map(seg => (
-
-          <button
-
-            key={seg}
-
-            onClick={() => setActiveSegment(seg)}
-
-            className={`px-4 py-2 rounded-lg font-medium transition ${
-
-              activeSegment === seg 
-
-                ? 'bg-yellow-600 text-white' 
-
-                : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
-
-            }`}
-
-          >
-
-            {seg}
-
-          </button>
-
-        ))}
-
-      </div>
-
-
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Left: Search & Add Instruments */}
-
-        <div className="bg-dark-800 rounded-lg p-4">
-
-          <h2 className="text-lg font-semibold mb-4">Search Instruments</h2>
-
-          <div className="relative mb-4">
-
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-
-            <input
-
-              type="text"
-
-              placeholder={`Search ${activeSegment} instruments...`}
-
-              value={searchTerm}
-
-              onChange={(e) => setSearchTerm(e.target.value)}
-
-              className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-10 pr-4 py-2"
-
-            />
-
-          </div>
-
-
-
-          {loading ? (
-
-            <div className="text-center py-8"><RefreshCw className="animate-spin inline" /></div>
-
-          ) : (
-
-            <div className="max-h-[400px] overflow-y-auto space-y-2">
-
-              {instrumentGroups.length === 1 && instrumentGroups[0].sector === 'All instruments' ? (
-
-                <>
-
-                  {isSuperAdmin && instrumentGroups[0].items.length > 0 && (
-
-                    <div className="flex flex-wrap items-center gap-3 mb-2 px-1">
-
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wide">List trading</span>
-
-                      {renderMwTradingToggle(instrumentGroups[0].items, '__LIST__')}
-
-                      <span className="text-[10px] text-gray-600">Up to 2000 rows</span>
-
-                    </div>
-
-                  )}
-
-                  {instrumentGroups[0].items.slice(0, 500).map((instrument) => (
-
-                    <div
-
-                      key={instrument._id}
-
-                      className="flex items-center justify-between bg-dark-700 rounded-lg p-3 hover:bg-dark-600 transition"
-
-                    >
-
-                      <div className="flex-1 min-w-0">
-
-                        <div className="font-medium truncate">{instrument.tradingSymbol || instrument.symbol}</div>
-
-                        <div className="text-xs text-gray-400">
-
-                          {instrument.name} • {instrument.displaySegment || instrument.segment}
-
-                          <span
-
-                            className="text-yellow-400 ml-1"
-
-                            title="Exchange contract: units per 1 lot (not max/min lots from Rules)"
-
-                          >
-
-                            (Contract lot size: {getDisplayLotSize(instrument)})
-
-                          </span>
-
-                        </div>
-
-                        <div
-
-                          className="text-xs text-cyan-300/90 mt-0.5"
-
-                          title="Contract expiry from instrument record (Asia/Kolkata)"
-
-                        >
-
-                          Expiry: {formatInstrumentExpiry(instrument)}
-
-                        </div>
-
-                      </div>
-
-                      <div className="flex flex-wrap gap-2 justify-end shrink-0">
-
-                        {isSuperAdmin && (
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => openMwRulesModal(instrument)}
-
-                            className="px-2 py-1 rounded text-xs font-medium bg-amber-600/20 text-amber-300 border border-amber-600/40 hover:bg-amber-600/35"
-
-                            title="Leverage, commission, margin per instrument"
-
-                          >
-
-                            {instrument.tradingDefaults?.enabled ? 'Rules ✓' : 'Rules'}
-
-                          </button>
-
-                        )}
-
-                        <button
-
-                          onClick={() => addToWatchlist(instrument)}
-
-                          className="p-2 bg-blue-600 hover:bg-blue-700 rounded text-xs"
-
-                          title="Add to Watchlist"
-
-                        >
-
-                          <Plus size={14} />
-
-                        </button>
-
-                      </div>
-
-                    </div>
-
-                  ))}
-
-                  {instrumentGroups[0].items.length > 500 && (
-
-                    <div className="text-center py-2 text-gray-500 text-sm">
-
-                      Showing 500 of {instrumentGroups[0].items.length} results. Refine your search.
-
-                    </div>
-
-                  )}
-
-                </>
-
-              ) : (
-
-                instrumentGroups.map(({ sector, items }) => {
-
-                  const slice = items.slice(0, 500);
-
-                  const collapsed = mwCollapsedSectors.has(sector);
-
-                  const showCategoryRules =
-
-                    isSuperAdmin &&
-
-                    (activeSegment === 'NSEFUT' || activeSegment === 'NSEOPT') &&
-
-                    sector !== 'All instruments' &&
-
-                    items.length > 0;
-
-                  return (
-
-                    <div key={sector} className="rounded-lg border border-dark-600 overflow-hidden">
-
-                      <div className="flex items-center gap-2 bg-dark-700/80 px-2 py-2">
-
-                        <button
-
-                          type="button"
-
-                          onClick={() => toggleMwSectorCollapsed(sector)}
-
-                          className="flex flex-1 min-w-0 items-center gap-2 text-left"
-
-                          title={collapsed ? 'Expand' : 'Collapse'}
-
-                        >
-
-                          <ChevronDown
-
-                            size={18}
-
-                            className={`shrink-0 text-gray-400 transition-transform ${collapsed ? '-rotate-90' : ''}`}
-
-                          />
-
-                          <span className="font-semibold text-amber-200/90 truncate">{sector}</span>
-
-                          <span className="text-xs text-gray-500 shrink-0">({items.length})</span>
-
-                        </button>
-
-                        {renderMwTradingToggle(items, sector)}
-
-                        {showCategoryRules && (
-
-                          <button
-
-                            type="button"
-
-                            onClick={(e) => {
-
-                              e.stopPropagation();
-
-                              openMwCategoryRulesModal(sector, items);
-
-                            }}
-
-                            className="shrink-0 px-2 py-1 rounded text-xs font-medium bg-cyan-700/30 text-cyan-200 border border-cyan-600/40 hover:bg-cyan-700/50"
-
-                            title="Apply same rules to every contract in this sector"
-
-                          >
-
-                            Category rules
-
-                          </button>
-
-                        )}
-
-                      </div>
-
-                      {!collapsed && (
-
-                        <div className="p-2 space-y-2 bg-dark-800/40">
-
-                          {slice.map((instrument) => (
-
-                            <div
-
-                              key={instrument._id}
-
-                              className="flex items-center justify-between bg-dark-700 rounded-lg p-3 hover:bg-dark-600 transition"
-
-                            >
-
-                              <div className="flex-1 min-w-0">
-
-                                <div className="font-medium truncate">
-
-                                  {instrument.tradingSymbol || instrument.symbol}
-
-                                </div>
-
-                                <div className="text-xs text-gray-400">
-
-                                  {instrument.name} • {instrument.displaySegment || instrument.segment}
-
-                                  <span
-
-                                    className="text-yellow-400 ml-1"
-
-                                    title="Exchange contract: units per 1 lot (not max/min lots from Rules)"
-
-                                  >
-
-                                    (Contract lot size: {getDisplayLotSize(instrument)})
-
-                                  </span>
-
-                                </div>
-
-                                <div
-
-                                  className="text-xs text-cyan-300/90 mt-0.5"
-
-                                  title="Contract expiry from instrument record (Asia/Kolkata)"
-
-                                >
-
-                                  Expiry: {formatInstrumentExpiry(instrument)}
-
-                                </div>
-
-                              </div>
-
-                              <div className="flex flex-wrap gap-2 justify-end shrink-0">
-
-                                {isSuperAdmin && (
-
-                                  <button
-
-                                    type="button"
-
-                                    onClick={() => openMwRulesModal(instrument)}
-
-                                    className="px-2 py-1 rounded text-xs font-medium bg-amber-600/20 text-amber-300 border border-amber-600/40 hover:bg-amber-600/35"
-
-                                    title="Leverage, commission, margin per instrument"
-
-                                  >
-
-                                    {instrument.tradingDefaults?.enabled ? 'Rules ✓' : 'Rules'}
-
-                                  </button>
-
-                                )}
-
-                                <button
-
-                                  onClick={() => addToWatchlist(instrument)}
-
-                                  className="p-2 bg-blue-600 hover:bg-blue-700 rounded text-xs"
-
-                                  title="Add to Watchlist"
-
-                                >
-
-                                  <Plus size={14} />
-
-                                </button>
-
-                              </div>
-
-                            </div>
-
-                          ))}
-
-                          {items.length > 500 && (
-
-                            <div className="text-center py-2 text-gray-500 text-sm">
-
-                              Showing 500 of {items.length} in this category. Refine your search.
-
-                            </div>
-
-                          )}
-
-                        </div>
-
-                      )}
-
-                    </div>
-
-                  );
-
-                })
-
-              )}
-
-              {filteredInstruments.length === 0 && (
-
-                <div className="text-center py-8 text-gray-400">No instruments found</div>
-
-              )}
-
-            </div>
-
-          )}
-
-        </div>
-
-
-
-        {/* Right: Watchlist */}
-
-        <div className="bg-dark-800 rounded-lg p-4">
-
-          <h2 className="text-lg font-semibold mb-4">My Watchlist ({watchlist.length})</h2>
-
-          
-
-          {watchlist.length === 0 ? (
-
-            <div className="text-center py-12 text-gray-400">
-
-              <Eye size={48} className="mx-auto mb-4 opacity-50" />
-
-              <p>Your watchlist is empty</p>
-
-              <p className="text-sm">Search and add instruments to get started</p>
-
-            </div>
-
-          ) : (
-
-            <div className="space-y-2">
-
-              {watchlist.map(instrument => (
-
-                <div 
-
-                  key={instrument._id}
-
-                  className="flex items-center justify-between bg-dark-700 rounded-lg p-3"
-
-                >
-
-                  <div className="flex-1">
-
-                    <div className="font-medium">{instrument.tradingSymbol || instrument.symbol}</div>
-
-                    <div className="text-xs text-gray-400">
-
-                      {instrument.name} • {instrument.displaySegment || instrument.segment}
-
-                      <span className="text-yellow-400 ml-1" title="Exchange contract: units per 1 lot (not max/min lots from Rules)">
-
-                        (Contract lot size: {getDisplayLotSize(instrument)})
-
-                      </span>
-
-                    </div>
-
-                    <div
-
-                      className="text-xs text-cyan-300/90 mt-0.5"
-
-                      title="Contract expiry from instrument record (Asia/Kolkata)"
-
-                    >
-
-                      Expiry: {formatInstrumentExpiry(instrument)}
-
-                    </div>
-
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 justify-end">
-
-                    {isSuperAdmin && (
-
-                      <button
-
-                        type="button"
-
-                        onClick={() => openMwRulesModal(instrument)}
-
-                        className="px-2 py-1 rounded text-xs font-medium bg-amber-600/20 text-amber-300 border border-amber-600/40 hover:bg-amber-600/35"
-
-                        title="Leverage, commission, margin per instrument"
-
-                      >
-
-                        {instrument.tradingDefaults?.enabled ? 'Rules ✓' : 'Rules'}
-
-                      </button>
-
-                    )}
-
-                    <button
-
-                      onClick={() => removeFromWatchlist(instrument._id)}
-
-                      className="p-2 bg-red-600/20 hover:bg-red-600/40 rounded text-red-400"
-
-                      title="Remove"
-
-                    >
-
-                      <X size={14} />
-
-                    </button>
-
-                  </div>
-
-                </div>
-
-              ))}
-
-            </div>
-
-          )}
-
-        </div>
-
-      </div>
-
-
-
-      {isSuperAdmin && mwRulesInstrument && mwRulesForm && (
-
-        <InstrumentTradingRulesModal
-
-          instrument={mwRulesInstrument}
-
-          tradingForm={mwRulesForm}
-
-          setTradingForm={setMwRulesForm}
-
-          onClose={closeMwRulesModal}
-
-          onSave={saveMwRules}
-
-          saving={mwRulesSaving}
-
-          marketWatchLayout
-
-          bulkSectorLabel={mwBulkSectorLabel}
-
-          bulkContractCount={mwBulkRuleIds?.length || 0}
-
-        />
 
       )}
 
@@ -29711,7 +28378,7 @@ const TradeModal = ({
 
               <div className={`text-xl font-bold ${livePrice > 0 ? 'text-green-400' : 'text-gray-500'}`}>
 
-                {livePrice > 0 ? `₹${livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : 'Not Available'}
+                {livePrice > 0 ? `${livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : 'Not Available'}
 
               </div>
 
@@ -30121,7 +28788,7 @@ const TradeModal = ({
 
               <div className="w-full bg-dark-600 border border-blue-500/50 rounded px-3 py-2 text-green-400 font-medium">
 
-                ₹{livePrice > 0 ? livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '0.00'}
+                {livePrice > 0 ? livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '0.00'}
 
               </div>
 
@@ -30151,7 +28818,7 @@ const TradeModal = ({
 
               <div className="text-xs text-gray-500 mt-1">
 
-                Current market: ₹{livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                Current market: {livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
 
               </div>
 
@@ -30271,7 +28938,7 @@ function yourAccountFromClientTx(tx) {
 
         state: 'DEBIT',
 
-        amountStr: `−₹${abs}`,
+        amountStr: `−${abs}`,
 
         badge: 'bg-red-500/20 text-red-300',
 
@@ -30285,7 +28952,7 @@ function yourAccountFromClientTx(tx) {
 
       state: 'CREDIT',
 
-      amountStr: `+₹${abs}`,
+      amountStr: `+${abs}`,
 
       badge: 'bg-green-500/20 text-green-300',
 
@@ -30301,7 +28968,7 @@ function yourAccountFromClientTx(tx) {
 
       state: 'DEBIT',
 
-      amountStr: `−₹${abs}`,
+      amountStr: `−${abs}`,
 
       badge: 'bg-red-500/20 text-red-300',
 
@@ -30315,7 +28982,7 @@ function yourAccountFromClientTx(tx) {
 
     state: 'CREDIT',
 
-    amountStr: `+₹${abs}`,
+    amountStr: `+${abs}`,
 
     badge: 'bg-green-500/20 text-green-300',
 
@@ -30577,7 +29244,7 @@ const ControlHierarchyWallet = () => {
 
           </div>
 
-          <div className="text-3xl font-bold text-white">₹{totalPending.toLocaleString()}</div>
+          <div className="text-3xl font-bold text-white">{totalPending.toLocaleString()}</div>
 
         </div>
 
@@ -30591,7 +29258,7 @@ const ControlHierarchyWallet = () => {
 
           </div>
 
-          <div className="text-3xl font-bold text-white">₹{totalEarned.toLocaleString()}</div>
+          <div className="text-3xl font-bold text-white">{totalEarned.toLocaleString()}</div>
 
         </div>
 
@@ -30733,19 +29400,19 @@ const ControlHierarchyWallet = () => {
 
                       <td className="px-4 py-3 text-sm text-right font-semibold text-amber-400">
 
-                        ₹{(item.temporaryWallet?.balance || 0).toLocaleString()}
+                        {(item.temporaryWallet?.balance || 0).toLocaleString()}
 
                       </td>
 
                       <td className="px-4 py-3 text-sm text-right">
 
-                        ₹{(item.temporaryWallet?.totalEarned || 0).toLocaleString()}
+                        {(item.temporaryWallet?.totalEarned || 0).toLocaleString()}
 
                       </td>
 
                       <td className="px-4 py-3 text-sm text-right">
 
-                        ₹{(item.temporaryWallet?.totalReleased || 0).toLocaleString()}
+                        {(item.temporaryWallet?.totalReleased || 0).toLocaleString()}
 
                       </td>
 
@@ -30825,7 +29492,7 @@ const ControlHierarchyWallet = () => {
 
               <div className="text-2xl font-bold text-amber-400">
 
-                ₹{(selectedAdmin.temporaryWallet?.balance || 0).toLocaleString()}
+                {(selectedAdmin.temporaryWallet?.balance || 0).toLocaleString()}
 
               </div>
 
@@ -30948,6 +29615,7 @@ const AllTransactions = () => {
   /** When wallet is games: filter by `GamesWalletLedger.gameId`; '' = all games + transfers */
 
   const [gamesGameId, setGamesGameId] = useState('');
+  const [txDropdownOpen, setTxDropdownOpen] = useState(false);
 
 
 
@@ -31353,23 +30021,75 @@ const AllTransactions = () => {
 
         {segment !== 'superadmin' && (
 
-          <button
+          <div className="flex items-center gap-2">
 
-            type="button"
+            <button
 
-            onClick={() => fetchLedgerForSelection()}
+              type="button"
 
-            disabled={!selected || txLoading}
+              onClick={() => fetchLedgerForSelection()}
 
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm disabled:opacity-40"
+              disabled={!selected || txLoading}
 
-          >
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm disabled:opacity-40"
 
-            <RefreshCw size={16} className={txLoading ? 'animate-spin' : ''} />
+            >
 
-            Reload ledger
+              <RefreshCw size={16} className={txLoading ? 'animate-spin' : ''} />
 
-          </button>
+              Reload ledger
+
+            </button>
+
+            <div className="relative">
+
+              <button
+
+                type="button"
+
+                onClick={() => setTxDropdownOpen(!txDropdownOpen)}
+
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm"
+
+              >
+
+                <TrendingUp size={16} />
+
+                <ChevronDown size={14} />
+
+              </button>
+
+              {txDropdownOpen && (
+
+                <div className="absolute right-0 mt-2 w-48 bg-dark-800 border border-dark-600 rounded-lg shadow-lg z-50">
+
+                  <div className="py-1">
+
+                    <Link
+
+                      to="/admin/trading-transactions"
+
+                      onClick={() => setTxDropdownOpen(false)}
+
+                      className="flex items-center gap-3 px-4 py-2 text-gray-300 hover:bg-dark-700 hover:text-white"
+
+                    >
+
+                      <TrendingUp size={18} />
+
+                      <span>Pay Trading</span>
+
+                    </Link>
+
+                  </div>
+
+                </div>
+
+              )}
+
+            </div>
+
+          </div>
 
         )}
 
@@ -31745,7 +30465,7 @@ const AllTransactions = () => {
 
                     <div className="text-base font-bold text-green-400 tabular-nums">
 
-                      +₹{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      +{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                     </div>
 
@@ -31759,7 +30479,7 @@ const AllTransactions = () => {
 
                     <div className="text-base font-bold text-red-400 tabular-nums">
 
-                      −₹{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      −{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                     </div>
 
@@ -31781,8 +30501,7 @@ const AllTransactions = () => {
 
                     >
 
-                      {Number(summary.net || 0) >= 0 ? '+' : ''}₹
-
+                      {Number(summary.net || 0) >= 0 ? '+' : ''}
                       {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                     </div>
@@ -31927,13 +30646,13 @@ const AllTransactions = () => {
 
                           >
 
-                            {tx.type === 'CREDIT' ? '+' : '−'}₹{Number(tx.amount || 0).toLocaleString('en-IN')}
+                            {tx.type === 'CREDIT' ? '+' : '−'}{Number(tx.amount || 0).toLocaleString('en-IN')}
 
                           </td>
 
                           <td className="px-3 py-2 text-right text-[11px] text-gray-400">
 
-                            ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
+                            {Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
 
                           </td>
 
@@ -32989,7 +31708,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                   <div className="text-base font-bold text-green-400 tabular-nums">
 
-                    +₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    +{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                   </div>
 
@@ -33003,7 +31722,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                   <div className="text-base font-bold text-red-400 tabular-nums">
 
-                    −₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    −{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                   </div>
 
@@ -33021,7 +31740,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                 <div className="text-base font-bold text-red-400 tabular-nums">
 
-                  −₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  −{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                 </div>
 
@@ -33037,7 +31756,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                 <div className="text-base font-bold text-green-400 tabular-nums">
 
-                  +₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  +{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                 </div>
 
@@ -33061,8 +31780,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
               >
 
-                {Number(displaySummary.net || 0) >= 0 ? '+' : ''}₹
-
+                {Number(displaySummary.net || 0) >= 0 ? '+' : ''}
                 {Number(displaySummary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
               </div>
@@ -33119,8 +31837,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                 >
 
-                  {Number(earningsComparison.today || 0) >= 0 ? '+' : ''}₹
-
+                  {Number(earningsComparison.today || 0) >= 0 ? '+' : ''}
                   {Number(earningsComparison.today || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                   {earningsComparison.isPositive && (
@@ -33145,7 +31862,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                     <span className="ml-1">
 
-                      (Yesterday: ₹{Number(earningsComparison.yesterday).toLocaleString('en-IN', { maximumFractionDigits: 2 })})
+                      (Yesterday: {Number(earningsComparison.yesterday).toLocaleString('en-IN', { maximumFractionDigits: 2 })})
 
                     </span>
 
@@ -33161,7 +31878,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                 <div className="text-base font-bold text-yellow-300 tabular-nums">
 
-                  ₹{Number(gameStats.brokerage || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  {Number(gameStats.brokerage || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
 
                 </div>
 
@@ -33795,7 +32512,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                         <div className="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">
 
-                          ₹{Number(tx.brokerageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {Number(tx.brokerageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 
                         </div>
 
@@ -33823,7 +32540,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                       }`}>
 
-                        ₹{Number(tx.gamesAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(tx.gamesAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 
                       </div>
 
@@ -33861,7 +32578,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                     }`}>
 
-                      ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
+                      {Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
 
                     </div>
 
@@ -34101,7 +32818,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                     <span className="text-xs text-gray-500">Amount:</span>
 
-                    <span className="text-sm text-gray-200">₹{Number(hierarchyModal.tx.amount || 0).toLocaleString('en-IN')}</span>
+                    <span className="text-sm text-gray-200">{Number(hierarchyModal.tx.amount || 0).toLocaleString('en-IN')}</span>
 
                   </div>
 
@@ -34171,7 +32888,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
                     <span className="text-xs text-gray-500">Balance After:</span>
 
-                    <span className="text-sm text-gray-200">₹{Number(hierarchyModal.tx.balanceAfter || 0).toLocaleString('en-IN')}</span>
+                    <span className="text-sm text-gray-200">{Number(hierarchyModal.tx.balanceAfter || 0).toLocaleString('en-IN')}</span>
 
                   </div>
 
@@ -34260,6 +32977,10 @@ const SystemDefaultSettings = () => {
   const [adminDefTab, setAdminDefTab] = useState('segments'); // 'segments' or 'scripts'
 
   const [adminDefExpandedSeg, setAdminDefExpandedSeg] = useState('NSEFUT');
+
+  const [adminDefSettingsMode, setAdminDefSettingsMode] = useState('lot'); // 'lot' or 'quantity'
+  const [showAdminDefLotSettingsButton, setShowAdminDefLotSettingsButton] = useState(true);
+  const [showAdminDefQuantitySettingsButton, setShowAdminDefQuantitySettingsButton] = useState(true);
 
   const [adminSegDefs, setAdminSegDefs] = useState({});
 
@@ -35013,7 +33734,7 @@ const SystemDefaultSettings = () => {
 
             <div>
 
-              <label className="block text-sm text-gray-400 mb-1">Per Lot (₹)</label>
+              <label className="block text-sm text-gray-400 mb-1">Per Lot ()</label>
 
               <input
 
@@ -35031,7 +33752,7 @@ const SystemDefaultSettings = () => {
 
             <div>
 
-              <label className="block text-sm text-gray-400 mb-1">Per Crore (₹)</label>
+              <label className="block text-sm text-gray-400 mb-1">Per Crore ()</label>
 
               <input
 
@@ -35049,7 +33770,7 @@ const SystemDefaultSettings = () => {
 
             <div>
 
-              <label className="block text-sm text-gray-400 mb-1">Per Trade (₹)</label>
+              <label className="block text-sm text-gray-400 mb-1">Per Trade ()</label>
 
               <input
 
@@ -35679,7 +34400,7 @@ const SystemDefaultSettings = () => {
 
                 const s = adminSegDefs[adminDefExpandedSeg] || {};
 
-                const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT'].includes(adminDefExpandedSeg);
+                const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT', 'FOREXOPT', 'CRYPTOOPT'].includes(adminDefExpandedSeg);
 
                 return (
 
@@ -35687,7 +34408,27 @@ const SystemDefaultSettings = () => {
 
                     <div className="flex items-center justify-between mb-6">
 
-                      <h3 className="text-lg font-bold text-cyan-400">{adminDefExpandedSeg} Settings</h3>
+                      <div className="flex items-center gap-3">
+                        <h3 className="text-lg font-bold text-cyan-400">{adminDefExpandedSeg} Settings</h3>
+                        <div className="flex gap-4 items-center">
+                          <button
+                            type="button"
+                            onClick={() => setShowAdminDefLotSettingsButton(!showAdminDefLotSettingsButton)}
+                            className={`w-12 h-6 rounded-full p-1 transition-colors ${showAdminDefLotSettingsButton ? 'bg-yellow-600' : 'bg-dark-600'}`}
+                          >
+                            <div className={`w-4 h-4 rounded-full bg-white transition-transform ${showAdminDefLotSettingsButton ? 'translate-x-6' : 'translate-x-0'}`} />
+                          </button>
+                          <span className="text-xs text-gray-400">Lot</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowAdminDefQuantitySettingsButton(!showAdminDefQuantitySettingsButton)}
+                            className={`w-12 h-6 rounded-full p-1 transition-colors ${showAdminDefQuantitySettingsButton ? 'bg-blue-600' : 'bg-dark-600'}`}
+                          >
+                            <div className={`w-4 h-4 rounded-full bg-white transition-transform ${showAdminDefQuantitySettingsButton ? 'translate-x-6' : 'translate-x-0'}`} />
+                          </button>
+                          <span className="text-xs text-gray-400">Qty</span>
+                        </div>
+                      </div>
 
                       <button
 
@@ -35815,194 +34556,169 @@ const SystemDefaultSettings = () => {
 
 
 
-                    {isCryptoQtyOnlySegment(adminDefExpandedSeg) ? (
-
-                      <>
-
-                        <h4 className="text-sm font-semibold text-blue-400 mb-3">Quantity</h4>
-
-                        <p className="text-[10px] text-gray-500 mb-3 max-w-2xl">
-
-                          Crypto uses exchange step multiples on the server; these limits map to qty / step caps.
-
-                        </p>
-
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-
+                    {/* Lot/Quantity Mode Settings */}
+                    {showAdminDefLotSettingsButton && (
+                    <>
+                      <h4 className="text-sm font-semibold text-yellow-400 mb-4">Lot Settings</h4>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
                           <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Max Exchange Qty</label>
-
-                            <input type="number" value={s.maxExchangeLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxExchangeLots', parseInt(e.target.value, 10) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
+                            <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.lotSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.intradayLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              disabled={!showAdminDefLotSettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
                           </div>
-
                           <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Max Qty</label>
-
-                            <input type="number" value={s.maxLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxLots', parseInt(e.target.value, 10) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
+                            <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.lotSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              disabled={!showAdminDefLotSettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
                           </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Min Qty</label>
-
-                            <input type="number" value={s.minLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'minLots', parseInt(e.target.value, 10) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                          </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Order Qty</label>
-
-                            <input type="number" value={s.orderLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'orderLots', parseInt(e.target.value, 10) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                          </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-
-                            <input type="number" value={s.quantitySettings?.breakupQuantity || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value, 10) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                            <p className="text-[10px] text-gray-500 mt-1">0 = no per-order qty cap</p>
-
-                          </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-
-                            <input type="number" value={s.quantitySettings?.maxBid || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value, 10) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                            <p className="text-[10px] text-gray-500 mt-1">0 = unlimited open orders</p>
-
-                          </div>
-
                         </div>
-
-                      </>
-
-                    ) : (
-
-                      <>
-
-                        <h4 className="text-sm font-semibold text-blue-400 mb-3">Lot & Quantity Settings</h4>
-
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
                           <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
-
-                            <input type="number" value={s.maxExchangeLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxExchangeLots', parseInt(e.target.value) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                          </div>
-
-                          <div>
-
                             <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-
-                            <input type="number" value={s.maxLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxLots', parseInt(e.target.value) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.maxLots ?? 100}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'maxLots', isNaN(val) ? 100 : val);
+                              }}
+                              disabled={!showAdminDefLotSettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
                           </div>
-
                           <div>
-
                             <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
-
-                            <input type="number" value={s.minLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'minLots', parseInt(e.target.value) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.minLots ?? 1}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'minLots', isNaN(val) ? 1 : val);
+                              }}
+                              disabled={!showAdminDefLotSettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
                           </div>
-
                           <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Order Lots (Breakup)</label>
-
-                            <input type="number" value={s.orderLots || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'orderLots', parseInt(e.target.value) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
+                            <label className="block text-xs text-gray-400 mb-1">Breakup Lots</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.lotSettings?.breakupLots ?? 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.breakupLots', isNaN(val) ? 0 : val);
+                              }}
+                              disabled={!showAdminDefLotSettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
                           </div>
-
                         </div>
-
-                        <h4 className="text-sm font-semibold text-cyan-400 mb-2">Per-order quantity caps</h4>
-
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-
-                            <input type="number" value={s.quantitySettings?.breakupQuantity || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                            <p className="text-[10px] text-gray-500 mt-1">0 = no per-order qty cap</p>
-
-                          </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-
-                            <input type="number" value={s.quantitySettings?.maxBid || 0}
-
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value) || 0)}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                            <p className="text-[10px] text-gray-500 mt-1">0 = unlimited open orders</p>
-
-                          </div>
-
-                        </div>
-
                       </>
+                    )}
 
+                    {showAdminDefQuantitySettingsButton && (
+                    <>
+                      <h4 className="text-sm font-semibold text-blue-400 mb-3">Quantity Settings</h4>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            value={s.quantityModeSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.intradayLeverage', isNaN(val) ? 1 : val);
+                            }}
+                            disabled={!showAdminDefQuantitySettingsButton}
+                            className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                          />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.quantityModeSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              disabled={!showAdminDefQuantitySettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.quantityModeSettings?.maxQuantity ?? 1000}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.maxQuantity', isNaN(val) ? 1000 : val);
+                              }}
+                              disabled={!showAdminDefQuantitySettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Min Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.quantityModeSettings?.minQuantity ?? 1}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.minQuantity', isNaN(val) ? 1 : val);
+                              }}
+                              disabled={!showAdminDefQuantitySettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Breakup Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.quantityModeSettings?.breakupQuantity ?? 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.breakupQuantity', isNaN(val) ? 0 : val);
+                              }}
+                              disabled={!showAdminDefQuantitySettingsButton}
+                              className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
+                            />
+                          </div>
+                        </div>
+                      </>
                     )}
 
 
@@ -36171,7 +34887,7 @@ const SystemDefaultSettings = () => {
 
                           <div>
 
-                            <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (₹)</label>
+                            <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin ()</label>
 
                             <input type="number" value={s.superAdminIncentive || 0}
 
@@ -36185,7 +34901,7 @@ const SystemDefaultSettings = () => {
 
                           <div>
 
-                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (₹)</label>
+                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin ()</label>
 
                             <input type="number" value={s.superAdminBrokerageCharge || 0}
 
@@ -36249,7 +34965,7 @@ const SystemDefaultSettings = () => {
 
                         <p className="text-[11px] text-gray-500 mb-2">
 
-                          Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy ₹ total width per coin applies. 0 / 0 = exchange prices.
+                          Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy  total width per coin applies. 0 / 0 = exchange prices.
 
                         </p>
 
@@ -36291,7 +35007,7 @@ const SystemDefaultSettings = () => {
 
                           <div>
 
-                            <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin, legacy)</label>
+                            <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
 
                             <input
 
@@ -36963,6 +35679,14 @@ const SystemDefaultSettings = () => {
 
               <div className="space-y-4">
 
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                  <p className="text-sm text-yellow-200">
+                    <strong>Note:</strong> Brokerage distribution now uses custom rates (per crore) set for each admin in the hierarchy.
+                    These percentage-based sharing settings are no longer used for brokerage distribution.
+                    Set custom brokerage rates per admin in their individual settings.
+                  </p>
+                </div>
+
                 <div>
 
                   <label className="block text-sm text-gray-400 mb-1">Super Admin Share (%)</label>
@@ -36985,9 +35709,13 @@ const SystemDefaultSettings = () => {
 
                     }))}
 
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    disabled
+
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 opacity-50 cursor-not-allowed"
 
                   />
+
+                  <p className="text-xs text-gray-500 mt-1">Disabled - Using custom rates per crore instead</p>
 
                 </div>
 
@@ -37013,9 +35741,13 @@ const SystemDefaultSettings = () => {
 
                     }))}
 
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    disabled
+
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 opacity-50 cursor-not-allowed"
 
                   />
+
+                  <p className="text-xs text-gray-500 mt-1">Disabled - Using custom rates per crore instead</p>
 
                 </div>
 
@@ -37041,9 +35773,13 @@ const SystemDefaultSettings = () => {
 
                     }))}
 
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    disabled
+
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 opacity-50 cursor-not-allowed"
 
                   />
+
+                  <p className="text-xs text-gray-500 mt-1">Disabled - Using custom rates per crore instead</p>
 
                 </div>
 
@@ -37069,9 +35805,13 @@ const SystemDefaultSettings = () => {
 
                     }))}
 
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    disabled
+
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 opacity-50 cursor-not-allowed"
 
                   />
+
+                  <p className="text-xs text-gray-500 mt-1">Disabled - Using custom rates per crore instead</p>
 
                 </div>
 
@@ -37093,7 +35833,7 @@ const SystemDefaultSettings = () => {
 
                     : 'bg-red-500/20 text-red-400'
 
-                }`}>
+                } opacity-50`}>
 
                   <strong>Total: </strong>
 
@@ -37215,7 +35955,7 @@ const SystemDefaultSettings = () => {
 
                   <p className="text-xs text-gray-500">
 
-                    In B-Book mode: When user loses ₹100, their direct parent admin gains ₹100.
+                    In B-Book mode: When user loses 100, their direct parent admin gains 100.
 
                     The admin can then share this with SuperAdmin via Patti Sharing settings.
 
@@ -37247,13 +35987,13 @@ const SystemDefaultSettings = () => {
 
                 </p>
 
-                <p className="text-xs text-gray-400 mb-3">User pays ₹100 brokerage</p>
+                <p className="text-xs text-gray-400 mb-3">User pays 100 brokerage</p>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
 
                   <div className="bg-purple-900/30 border border-purple-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-purple-400">₹{settings.brokerageSharing?.superAdminShare || 20}</div>
+                    <div className="text-xl font-bold text-purple-400">{settings.brokerageSharing?.superAdminShare || 20}</div>
 
                     <div className="text-xs text-gray-400">Super Admin ({settings.brokerageSharing?.superAdminShare || 20}%)</div>
 
@@ -37261,7 +36001,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-blue-900/30 border border-blue-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-blue-400">₹{settings.brokerageSharing?.adminShare || 25}</div>
+                    <div className="text-xl font-bold text-blue-400">{settings.brokerageSharing?.adminShare || 25}</div>
 
                     <div className="text-xs text-gray-400">Admin ({settings.brokerageSharing?.adminShare || 25}%)</div>
 
@@ -37269,7 +36009,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-green-900/30 border border-green-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-green-400">₹{settings.brokerageSharing?.brokerShare || 25}</div>
+                    <div className="text-xl font-bold text-green-400">{settings.brokerageSharing?.brokerShare || 25}</div>
 
                     <div className="text-xs text-gray-400">Broker ({settings.brokerageSharing?.brokerShare || 25}%)</div>
 
@@ -37277,7 +36017,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-yellow-900/30 border border-yellow-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-yellow-400">₹{settings.brokerageSharing?.subBrokerShare || 30}</div>
+                    <div className="text-xl font-bold text-yellow-400">{settings.brokerageSharing?.subBrokerShare || 30}</div>
 
                     <div className="text-xs text-gray-400">Sub Broker ({settings.brokerageSharing?.subBrokerShare || 30}%)</div>
 
@@ -37305,7 +36045,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-purple-900/30 border border-purple-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-purple-400">₹{settings.brokerageSharing?.superAdminShare || 20}</div>
+                    <div className="text-xl font-bold text-purple-400">{settings.brokerageSharing?.superAdminShare || 20}</div>
 
                     <div className="text-xs text-gray-400">Super Admin ({settings.brokerageSharing?.superAdminShare || 20}%)</div>
 
@@ -37313,7 +36053,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-blue-900/30 border border-blue-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-blue-400">₹{settings.brokerageSharing?.adminShare || 25}</div>
+                    <div className="text-xl font-bold text-blue-400">{settings.brokerageSharing?.adminShare || 25}</div>
 
                     <div className="text-xs text-gray-400">Admin ({settings.brokerageSharing?.adminShare || 25}%)</div>
 
@@ -37321,7 +36061,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-green-900/30 border border-green-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-green-400">₹{(settings.brokerageSharing?.brokerShare || 25) + (settings.brokerageSharing?.subBrokerShare || 30)}</div>
+                    <div className="text-xl font-bold text-green-400">{(settings.brokerageSharing?.brokerShare || 25) + (settings.brokerageSharing?.subBrokerShare || 30)}</div>
 
                     <div className="text-xs text-gray-400">Broker ({(settings.brokerageSharing?.brokerShare || 25) + (settings.brokerageSharing?.subBrokerShare || 30)}%)</div>
 
@@ -37349,7 +36089,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-purple-900/30 border border-purple-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-purple-400">₹{settings.brokerageSharing?.superAdminShare || 20}</div>
+                    <div className="text-xl font-bold text-purple-400">{settings.brokerageSharing?.superAdminShare || 20}</div>
 
                     <div className="text-xs text-gray-400">Super Admin ({settings.brokerageSharing?.superAdminShare || 20}%)</div>
 
@@ -37357,7 +36097,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-blue-900/30 border border-blue-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-blue-400">₹{(settings.brokerageSharing?.adminShare || 25) + (settings.brokerageSharing?.brokerShare || 25) + (settings.brokerageSharing?.subBrokerShare || 30)}</div>
+                    <div className="text-xl font-bold text-blue-400">{(settings.brokerageSharing?.adminShare || 25) + (settings.brokerageSharing?.brokerShare || 25) + (settings.brokerageSharing?.subBrokerShare || 30)}</div>
 
                     <div className="text-xs text-gray-400">Admin ({(settings.brokerageSharing?.adminShare || 25) + (settings.brokerageSharing?.brokerShare || 25) + (settings.brokerageSharing?.subBrokerShare || 30)}%)</div>
 
@@ -37385,7 +36125,7 @@ const SystemDefaultSettings = () => {
 
                   <div className="bg-purple-900/30 border border-purple-500/30 rounded p-3 text-center">
 
-                    <div className="text-xl font-bold text-purple-400">₹100</div>
+                    <div className="text-xl font-bold text-purple-400">100</div>
 
                     <div className="text-xs text-gray-400">Super Admin (100%)</div>
 
@@ -37509,7 +36249,7 @@ const SystemDefaultSettings = () => {
 
                   />
 
-                  <p className="text-xs text-gray-500 mt-1">% of buy value added to pledge (e.g., 50% of ₹1,00,000 = ₹50,000 pledge)</p>
+                  <p className="text-xs text-gray-500 mt-1">% of buy value added to pledge (e.g., 50% of 1,00,000 = 50,000 pledge)</p>
 
                 </div>
 
@@ -37567,7 +36307,7 @@ const SystemDefaultSettings = () => {
 
                 <div>
 
-                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount (₹)</label>
+                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount ()</label>
 
                   <input
 
@@ -37621,7 +36361,7 @@ const SystemDefaultSettings = () => {
 
                   />
 
-                  <p className="text-xs text-gray-500 mt-1">Reduction in pledge value for margin calculation (e.g., 10% haircut on ₹50,000 = ₹45,000 usable margin)</p>
+                  <p className="text-xs text-gray-500 mt-1">Reduction in pledge value for margin calculation (e.g., 10% haircut on 50,000 = 45,000 usable margin)</p>
 
                 </div>
 
@@ -37643,15 +36383,15 @@ const SystemDefaultSettings = () => {
 
               <div className="bg-dark-800 p-3 rounded">
 
-                <p className="text-gray-400 mb-2">User BUYS ₹1,00,000 in Delivery:</p>
+                <p className="text-gray-400 mb-2">User BUYS 1,00,000 in Delivery:</p>
 
                 <ul className="space-y-1 text-gray-300">
 
-                  <li>• Buy Pledge: {settings.deliveryPledgeSettings?.buyPledgePercent || 50}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{((settings.deliveryPledgeSettings?.buyPledgePercent || 50) * 1000).toLocaleString()}</span></li>
+                  <li>• Buy Pledge: {settings.deliveryPledgeSettings?.buyPledgePercent || 50}% of 1,00,000 = <span className="text-green-400 font-bold">{((settings.deliveryPledgeSettings?.buyPledgePercent || 50) * 1000).toLocaleString()}</span></li>
 
                   <li>• Haircut: {settings.deliveryPledgeSettings?.haircutPercent || 10}%</li>
 
-                  <li>• Usable Margin: <span className="text-purple-400 font-bold">₹{(((settings.deliveryPledgeSettings?.buyPledgePercent || 50) * 1000) * (1 - (settings.deliveryPledgeSettings?.haircutPercent || 10) / 100)).toLocaleString()}</span></li>
+                  <li>• Usable Margin: <span className="text-purple-400 font-bold">{(((settings.deliveryPledgeSettings?.buyPledgePercent || 50) * 1000) * (1 - (settings.deliveryPledgeSettings?.haircutPercent || 10) / 100)).toLocaleString()}</span></li>
 
                 </ul>
 
@@ -37659,11 +36399,11 @@ const SystemDefaultSettings = () => {
 
               <div className="bg-dark-800 p-3 rounded">
 
-                <p className="text-gray-400 mb-2">User SELLS ₹1,00,000 from Delivery:</p>
+                <p className="text-gray-400 mb-2">User SELLS 1,00,000 from Delivery:</p>
 
                 <ul className="space-y-1 text-gray-300">
 
-                  <li>• Sell Pledge: {settings.deliveryPledgeSettings?.sellPledgePercent || 50}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{((settings.deliveryPledgeSettings?.sellPledgePercent || 50) * 1000).toLocaleString()}</span></li>
+                  <li>• Sell Pledge: {settings.deliveryPledgeSettings?.sellPledgePercent || 50}% of 1,00,000 = <span className="text-green-400 font-bold">{((settings.deliveryPledgeSettings?.sellPledgePercent || 50) * 1000).toLocaleString()}</span></li>
 
                   <li>• Added to existing pledge balance</li>
 
@@ -38447,7 +37187,7 @@ const DemoBrokersManagement = () => {
 
                       <div className="text-xs text-gray-400">Balance</div>
 
-                      <div className="text-lg font-bold text-green-400">₹{(broker.wallet?.balance || 0).toLocaleString()}</div>
+                      <div className="text-lg font-bold text-green-400">{(broker.wallet?.balance || 0).toLocaleString()}</div>
 
                     </div>
 
@@ -38753,7 +37493,7 @@ const DemoBrokersManagement = () => {
 
                         <td className="p-3 text-gray-400">{user.phone}</td>
 
-                        <td className="p-3 text-right text-green-400">₹{(user.wallet?.balance || 0).toLocaleString()}</td>
+                        <td className="p-3 text-right text-green-400">{(user.wallet?.balance || 0).toLocaleString()}</td>
 
                         <td className="p-3 text-center">
 
@@ -38921,6 +37661,30 @@ const DeliveryPledgeManagement = () => {
 
 
 
+  const fetchParentSegmentBaseline = async (userId) => {
+
+    try {
+
+      const { data } = await axios.get(`/api/admin/manage/users/${userId}/parent-segment-baseline`, {
+
+        headers: { Authorization: `Bearer ${admin.token}` }
+
+      });
+
+      setSegmentDefaultsBaseline(data.baseline || {});
+
+    } catch (error) {
+
+      console.error('Error fetching parent segment baseline:', error);
+
+      setSegmentDefaultsBaseline({});
+
+    }
+
+  };
+
+
+
   const saveSettings = async () => {
 
     try {
@@ -39055,7 +37819,7 @@ const DeliveryPledgeManagement = () => {
 
           <p className="text-gray-400 text-sm">Total Pledge Balance</p>
 
-          <p className="text-2xl font-bold text-purple-400">₹{totalPledgeBalance.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-purple-400">{totalPledgeBalance.toLocaleString()}</p>
 
         </div>
 
@@ -39063,7 +37827,7 @@ const DeliveryPledgeManagement = () => {
 
           <p className="text-gray-400 text-sm">Total Holdings Value</p>
 
-          <p className="text-2xl font-bold text-blue-400">₹{totalHoldingsValue.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-blue-400">{totalHoldingsValue.toLocaleString()}</p>
 
         </div>
 
@@ -39079,7 +37843,7 @@ const DeliveryPledgeManagement = () => {
 
           <p className="text-gray-400 text-sm">Usable Margin (after haircut)</p>
 
-          <p className="text-2xl font-bold text-orange-400">₹{(totalPledgeBalance * (1 - settings.haircutPercent / 100)).toLocaleString()}</p>
+          <p className="text-2xl font-bold text-orange-400">{(totalPledgeBalance * (1 - settings.haircutPercent / 100)).toLocaleString()}</p>
 
         </div>
 
@@ -39201,7 +37965,7 @@ const DeliveryPledgeManagement = () => {
 
                   />
 
-                  <p className="text-xs text-gray-500 mt-1">% of buy value added to pledge (e.g., 50% of ₹1,00,000 = ₹50,000 pledge)</p>
+                  <p className="text-xs text-gray-500 mt-1">% of buy value added to pledge (e.g., 50% of 1,00,000 = 50,000 pledge)</p>
 
                 </div>
 
@@ -39253,7 +38017,7 @@ const DeliveryPledgeManagement = () => {
 
                 <div>
 
-                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount (₹)</label>
+                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount ()</label>
 
                   <input
 
@@ -39295,7 +38059,7 @@ const DeliveryPledgeManagement = () => {
 
                   />
 
-                  <p className="text-xs text-gray-500 mt-1">Reduction in pledge value for margin calculation (e.g., 10% haircut on ₹50,000 = ₹45,000 usable margin)</p>
+                  <p className="text-xs text-gray-500 mt-1">Reduction in pledge value for margin calculation (e.g., 10% haircut on 50,000 = 45,000 usable margin)</p>
 
                 </div>
 
@@ -39335,15 +38099,15 @@ const DeliveryPledgeManagement = () => {
 
               <div className="bg-dark-800 p-3 rounded">
 
-                <p className="text-gray-400 mb-2">User BUYS ₹1,00,000 in Delivery:</p>
+                <p className="text-gray-400 mb-2">User BUYS 1,00,000 in Delivery:</p>
 
                 <ul className="space-y-1 text-gray-300">
 
-                  <li>• Buy Pledge: {settings.buyPledgePercent}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{(settings.buyPledgePercent * 1000).toLocaleString()}</span></li>
+                  <li>• Buy Pledge: {settings.buyPledgePercent}% of 1,00,000 = <span className="text-green-400 font-bold">{(settings.buyPledgePercent * 1000).toLocaleString()}</span></li>
 
                   <li>• Haircut: {settings.haircutPercent}%</li>
 
-                  <li>• Usable Margin: <span className="text-purple-400 font-bold">₹{((settings.buyPledgePercent * 1000) * (1 - settings.haircutPercent / 100)).toLocaleString()}</span></li>
+                  <li>• Usable Margin: <span className="text-purple-400 font-bold">{((settings.buyPledgePercent * 1000) * (1 - settings.haircutPercent / 100)).toLocaleString()}</span></li>
 
                 </ul>
 
@@ -39351,11 +38115,11 @@ const DeliveryPledgeManagement = () => {
 
               <div className="bg-dark-800 p-3 rounded">
 
-                <p className="text-gray-400 mb-2">User SELLS ₹1,00,000 from Delivery:</p>
+                <p className="text-gray-400 mb-2">User SELLS 1,00,000 from Delivery:</p>
 
                 <ul className="space-y-1 text-gray-300">
 
-                  <li>• Sell Pledge: {settings.sellPledgePercent}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{(settings.sellPledgePercent * 1000).toLocaleString()}</span></li>
+                  <li>• Sell Pledge: {settings.sellPledgePercent}% of 1,00,000 = <span className="text-green-400 font-bold">{(settings.sellPledgePercent * 1000).toLocaleString()}</span></li>
 
                   <li>• Added to existing pledge balance</li>
 
@@ -39487,7 +38251,7 @@ const DeliveryPledgeManagement = () => {
 
                           <span className={`font-bold ${pledgeBalance > 0 ? 'text-purple-400' : 'text-gray-500'}`}>
 
-                            ₹{pledgeBalance.toLocaleString()}
+                            {pledgeBalance.toLocaleString()}
 
                           </span>
 
@@ -39497,7 +38261,7 @@ const DeliveryPledgeManagement = () => {
 
                           <span className={`${usedMargin > 0 ? 'text-orange-400' : 'text-gray-500'}`}>
 
-                            ₹{usedMargin.toLocaleString()}
+                            {usedMargin.toLocaleString()}
 
                           </span>
 
@@ -39505,7 +38269,7 @@ const DeliveryPledgeManagement = () => {
 
                         <td className="px-4 py-3 text-right">
 
-                          <span className="text-blue-400">₹{holdingsValue.toLocaleString()}</span>
+                          <span className="text-blue-400">{holdingsValue.toLocaleString()}</span>
 
                         </td>
 
@@ -39513,7 +38277,7 @@ const DeliveryPledgeManagement = () => {
 
                           <span className={`font-bold ${usableMargin > 0 ? 'text-green-400' : 'text-gray-500'}`}>
 
-                            ₹{Math.max(0, usableMargin).toLocaleString()}
+                            {Math.max(0, usableMargin).toLocaleString()}
 
                           </span>
 
@@ -39583,7 +38347,7 @@ const DeliveryPledgeManagement = () => {
 
                   <span className="text-gray-400">Current Balance:</span>
 
-                  <span className="font-bold text-purple-400">₹{(selectedUser.deliveryPledge?.balance || 0).toLocaleString()}</span>
+                  <span className="font-bold text-purple-400">{(selectedUser.deliveryPledge?.balance || 0).toLocaleString()}</span>
 
                 </div>
 
@@ -39591,7 +38355,7 @@ const DeliveryPledgeManagement = () => {
 
                   <span className="text-gray-400">Used Margin:</span>
 
-                  <span className="text-orange-400">₹{(selectedUser.deliveryPledge?.usedMargin || 0).toLocaleString()}</span>
+                  <span className="text-orange-400">{(selectedUser.deliveryPledge?.usedMargin || 0).toLocaleString()}</span>
 
                 </div>
 
@@ -39627,7 +38391,7 @@ const DeliveryPledgeManagement = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
 
                 <input
 
@@ -40835,7 +39599,7 @@ const GameSettingsManagement = () => {
 
       });
 
-      setJackpotMessage({ type: 'success', text: `${data.message} — Winners: ${data.summary.winners}, Losers: ${data.summary.losers}, Paid: ₹${data.summary.totalPaidOut}` });
+      setJackpotMessage({ type: 'success', text: `${data.message} — Winners: ${data.summary.winners}, Losers: ${data.summary.losers}, Paid: ${data.summary.totalPaidOut}` });
 
       fetchLockedPrice(jackpotDate);
 
@@ -41405,7 +40169,7 @@ const GameSettingsManagement = () => {
 
                   />
 
-                  <p className="text-xs text-gray-500 mt-1">e.g., 1.95x means ₹100 bet wins ₹195</p>
+                  <p className="text-xs text-gray-500 mt-1">e.g., 1.95x means 100 bet wins 195</p>
 
                 </div>
 
@@ -41439,7 +40203,7 @@ const GameSettingsManagement = () => {
 
                   />
 
-                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.minTickets || 1) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500 mt-1">= {((currentGame?.minTickets || 1) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
 
                 </div>
 
@@ -41461,7 +40225,7 @@ const GameSettingsManagement = () => {
 
                   />
 
-                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.maxTickets || 500) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500 mt-1">= {((currentGame?.maxTickets || 500) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
 
                 </div>
 
@@ -41665,13 +40429,13 @@ const GameSettingsManagement = () => {
 
                   </span>
 
-                  . Changing it here does <span className="font-medium">not</span> change other games (e.g. Nifty Bracket vs Nifty Number each have their own). If a game has no saved price, users see the global default (₹{settings?.tokenValue ?? 300}).
+                  . Changing it here does <span className="font-medium">not</span> change other games (e.g. Nifty Bracket vs Nifty Number each have their own). If a game has no saved price, users see the global default ({settings?.tokenValue ?? 300}).
 
                 </p>
 
                 <div className="bg-purple-900/20 border border-purple-500/30 rounded-lg p-3">
 
-                  <label className="block text-sm text-purple-400 font-medium mb-2">1 Ticket Price (₹)</label>
+                  <label className="block text-sm text-purple-400 font-medium mb-2">1 Ticket Price ()</label>
 
                   <input
 
@@ -41689,15 +40453,15 @@ const GameSettingsManagement = () => {
 
                   <p className="text-xs text-gray-500 mt-1">
 
-                    1 Ticket = ₹{currentGame?.ticketPrice || settings?.tokenValue || 300} for this game
+                    1 Ticket = {currentGame?.ticketPrice || settings?.tokenValue || 300} for this game
 
                   </p>
 
                   <div className="mt-2 text-xs text-gray-400 bg-dark-700/50 rounded p-2">
 
-                    <span className="text-purple-400">Example:</span> Min {currentGame?.minTickets || 1} Tickets = ₹{((currentGame?.minTickets || 1) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()} | 
+                    <span className="text-purple-400">Example:</span> Min {currentGame?.minTickets || 1} Tickets = {((currentGame?.minTickets || 1) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()} | 
 
-                    Max {currentGame?.maxTickets || 500} Tickets = ₹{((currentGame?.maxTickets || 500) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}
+                    Max {currentGame?.maxTickets || 500} Tickets = {((currentGame?.maxTickets || 500) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}
 
                   </div>
 
@@ -41969,7 +40733,7 @@ const GameSettingsManagement = () => {
 
                       <div className="mt-2 pt-2 border-t border-dark-600 text-gray-500">
 
-                        Example: User wins ₹{example} → Gets full ₹{example} | SA pays extra → Sub-Broker: ₹{(example * sb / 100).toFixed(0)} | Broker: ₹{(example * br / 100).toFixed(0)} | Admin: ₹{(example * ad / 100).toFixed(0)}
+                        Example: User wins {example} → Gets full {example} | SA pays extra → Sub-Broker: {(example * sb / 100).toFixed(0)} | Broker: {(example * br / 100).toFixed(0)} | Admin: {(example * ad / 100).toFixed(0)}
 
                       </div>
 
@@ -42315,7 +41079,7 @@ const GameSettingsManagement = () => {
 
                     <div>
 
-                      <label className="block text-xs text-gray-500 mb-1">Nifty LTP (₹)</label>
+                      <label className="block text-xs text-gray-500 mb-1">Nifty LTP ()</label>
 
                       <input
 
@@ -42737,7 +41501,7 @@ const GameSettingsManagement = () => {
 
                               {jackpotBidsMeta.referencePrice != null
 
-                                ? `₹${Number(jackpotBidsMeta.referencePrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                                ? `${Number(jackpotBidsMeta.referencePrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
                                 : 'N/A'}
 
@@ -42749,8 +41513,7 @@ const GameSettingsManagement = () => {
 
                               <span className="text-gray-500">
 
-                                · locked ₹
-
+                                · locked 
                                 {Number(jackpotBidsMeta.lockedPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}{' '}
 
                                 (not declared)
@@ -42815,17 +41578,17 @@ const GameSettingsManagement = () => {
 
                               <th className="px-3 py-2 text-right">Bid time</th>
 
-                              <th className="px-3 py-2 text-right">Predicted ₹</th>
+                              <th className="px-3 py-2 text-right">Predicted </th>
 
                               <th className="px-3 py-2 text-right">Distance</th>
 
                               <th className="px-3 py-2 text-right">Tickets</th>
 
-                              <th className="px-3 py-2 text-right">Stake ₹</th>
+                              <th className="px-3 py-2 text-right">Stake </th>
 
                               <th className="px-3 py-2 text-right">Prize%</th>
 
-                              <th className="px-3 py-2 text-right">Proj. Prize ₹</th>
+                              <th className="px-3 py-2 text-right">Proj. Prize </th>
 
                               <th className="px-3 py-2 text-center">Status</th>
 
@@ -43041,7 +41804,7 @@ const GameSettingsManagement = () => {
 
                             </div>
 
-                            <div className="text-2xl font-bold text-green-400">₹{lockedPriceInfo.lockedPrice?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                            <div className="text-2xl font-bold text-green-400">{lockedPriceInfo.lockedPrice?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
 
                             <div className="text-xs text-gray-400 mt-1">
 
@@ -43155,7 +41918,7 @@ const GameSettingsManagement = () => {
 
                     <div>
 
-                      <label className="block text-sm text-gray-400 mb-2">Fixed gross prize per winning ticket (₹)</label>
+                      <label className="block text-sm text-gray-400 mb-2">Fixed gross prize per winning ticket ()</label>
 
                       <input
 
@@ -43339,7 +42102,7 @@ const GameSettingsManagement = () => {
 
                     <div>
 
-                      <label className="block text-sm text-gray-400 mb-2">Fixed gross prize per winning ticket (₹)</label>
+                      <label className="block text-sm text-gray-400 mb-2">Fixed gross prize per winning ticket ()</label>
 
                       <input
 
@@ -43533,7 +42296,7 @@ const GameSettingsManagement = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-2">Max Exposure Per User (₹)</label>
+                <label className="block text-sm text-gray-400 mb-2">Max Exposure Per User ()</label>
 
                 <input
 
@@ -43553,7 +42316,7 @@ const GameSettingsManagement = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-2">Max Win Per Round (₹)</label>
+                <label className="block text-sm text-gray-400 mb-2">Max Win Per Round ()</label>
 
                 <input
 
@@ -43611,7 +42374,7 @@ const GameSettingsManagement = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-2">Large Win Threshold (₹)</label>
+                <label className="block text-sm text-gray-400 mb-2">Large Win Threshold ()</label>
 
                 <input
 
@@ -44377,7 +43140,7 @@ const PlatformChargesManagement = () => {
 
             <div>
 
-              <label className="block text-sm text-gray-400 mb-1">Daily amount (₹)</label>
+              <label className="block text-sm text-gray-400 mb-1">Daily amount ()</label>
 
               <input
 
@@ -44453,7 +43216,7 @@ const PlatformChargesManagement = () => {
 
             <strong className="text-white">{chargedInfo?.count ?? 0}</strong> users,{' '}
 
-            <strong className="text-white">₹{(chargedInfo?.totalAmount ?? 0).toLocaleString('en-IN')}</strong>
+            <strong className="text-white">{(chargedInfo?.totalAmount ?? 0).toLocaleString('en-IN')}</strong>
 
           </p>
 
@@ -44571,7 +43334,7 @@ const PlatformChargesManagement = () => {
 
                   </td>
 
-                  <td className="p-3 text-right">₹{Number(row.amount || 0).toLocaleString('en-IN')}</td>
+                  <td className="p-3 text-right">{Number(row.amount || 0).toLocaleString('en-IN')}</td>
 
                   <td className="p-3">
 
@@ -46325,7 +45088,7 @@ const ChargeManagement = () => {
 
                 { value: 'PER_TRADE', label: 'Per Trade', desc: 'Fixed charge per trade' },
 
-                { value: 'PER_CRORE', label: 'Per Crore', desc: 'Charge per ₹1 Cr turnover' }
+                { value: 'PER_CRORE', label: 'Per Crore', desc: 'Charge per 1 Cr turnover' }
 
               ].map(type => (
 
@@ -46369,7 +45132,7 @@ const ChargeManagement = () => {
 
               <label className="block text-sm font-medium text-gray-300 mb-2">
 
-                Per Lot Charge (₹)
+                Per Lot Charge ()
 
               </label>
 
@@ -46391,13 +45154,13 @@ const ChargeManagement = () => {
 
                 />
 
-                <span className="text-gray-400">₹ per lot</span>
+                <span className="text-gray-400"> per lot</span>
 
               </div>
 
               <div className="mt-2 text-sm text-yellow-400">
 
-                Example: If charge is ₹20 and user trades 5 lots, total = ₹100
+                Example: If charge is 20 and user trades 5 lots, total = 100
 
               </div>
 
@@ -46415,7 +45178,7 @@ const ChargeManagement = () => {
 
               <label className="block text-sm font-medium text-gray-300 mb-2">
 
-                Per Trade Charge (₹)
+                Per Trade Charge ()
 
               </label>
 
@@ -46437,7 +45200,7 @@ const ChargeManagement = () => {
 
                 />
 
-                <span className="text-gray-400">₹ per trade</span>
+                <span className="text-gray-400"> per trade</span>
 
               </div>
 
@@ -46461,7 +45224,7 @@ const ChargeManagement = () => {
 
               <label className="block text-sm font-medium text-gray-300 mb-2">
 
-                Per Crore Charge (₹)
+                Per Crore Charge ()
 
               </label>
 
@@ -46483,13 +45246,13 @@ const ChargeManagement = () => {
 
                 />
 
-                <span className="text-gray-400">₹ per crore turnover</span>
+                <span className="text-gray-400"> per crore turnover</span>
 
               </div>
 
               <div className="mt-2 text-sm text-yellow-400">
 
-                Example: If charge is ₹500/Cr and trade value is ₹50 Lakhs, commission = ₹250
+                Example: If charge is 500/Cr and trade value is 50 Lakhs, commission = 250
 
               </div>
 
@@ -46523,7 +45286,7 @@ const ChargeManagement = () => {
 
               <div className="text-xl font-bold text-purple-400">
 
-                ₹{chargeSettings.commissionType === 'PER_LOT' ? chargeSettings.perLotCharge : 
+                {chargeSettings.commissionType === 'PER_LOT' ? chargeSettings.perLotCharge : 
 
                    chargeSettings.commissionType === 'PER_TRADE' ? chargeSettings.perTradeCharge :
 
@@ -46736,6 +45499,24 @@ const MySegmentSettings = () => {
 
 
   const handleSegmentChange = (segment, field, value) => {
+
+    // Hierarchy check: if parent has disabled enableLotSettings, child cannot enable it
+    if (field === 'enableLotSettings' && value === true) {
+      const parentSetting = systemSegBaseline[segment]?.enableLotSettings;
+      if (parentSetting === false) {
+        setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
+        return; // Prevent child from enabling if parent has disabled
+      }
+    }
+
+    // Hierarchy check: if parent has disabled enableQuantitySettings, child cannot enable it
+    if (field === 'enableQuantitySettings' && value === true) {
+      const parentSetting = systemSegBaseline[segment]?.enableQuantitySettings;
+      if (parentSetting === false) {
+        setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
+        return; // Prevent child from enabling if parent has disabled
+      }
+    }
 
     setSegmentPermissions(prev => ({
 
@@ -46955,11 +45736,9 @@ const MySegmentSettings = () => {
 
           </div>
 
-
-
           {/* Expanded Segment Settings */}
 
-          {expandedSegment && segmentPermissions[expandedSegment] && (
+              {expandedSegment && (
 
             <div className="bg-dark-800 rounded-lg p-6 border border-dark-600 animate-fadeIn">
 
@@ -47131,6 +45910,10 @@ const MySegmentSettings = () => {
 
                   { label: isCryptoQtyOnlySegment(expandedSegment) ? 'Max Exchange Qty' : 'Max Exchange Lots', field: 'maxExchangeLots' },
 
+                  { label: 'Min Exchange Qty', field: 'minExchangeQty' },
+
+                  { label: 'Max Exchange Qty Limit', field: 'maxExchangeQty' },
+
                   { label: isCryptoQtyOnlySegment(expandedSegment) ? 'Max Qty' : 'Max Lots', field: 'maxLots' },
 
                   { label: isCryptoQtyOnlySegment(expandedSegment) ? 'Min Qty' : 'Min Lots', field: 'minLots' },
@@ -47161,21 +45944,6 @@ const MySegmentSettings = () => {
 
 
 
-                {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
-
-                  <div className="col-span-2 md:col-span-4">
-
-                    <CryptoSegmentAdminExtras
-
-                      slice={segmentPermissions[expandedSegment]}
-
-                      onFieldChange={(field, value) => handleSegmentChange(expandedSegment, field, value)}
-
-                    />
-
-                  </div>
-
-                )}
 
 
 
@@ -47187,7 +45955,7 @@ const MySegmentSettings = () => {
 
                 <div>
 
-                  <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
+                  <label className="block text-xs text-gray-400 mb-1">Commission ()</label>
 
                   <input
 
@@ -47239,7 +46007,7 @@ const MySegmentSettings = () => {
 
                   <p className="text-xs text-gray-500 mb-2">
 
-                    Primary: USDT per side (bid −, ask +). If $ is 0, legacy ₹ total width per coin applies.
+                    Primary: USDT per side (bid −, ask +). If $ is 0, legacy  total width per coin applies.
 
                   </p>
 
@@ -47281,7 +46049,7 @@ const MySegmentSettings = () => {
 
                     <div>
 
-                      <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin, legacy)</label>
+                      <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
 
                       <input
 
@@ -47361,7 +46129,7 @@ const MySegmentSettings = () => {
 
                         <div>
 
-                          <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
+                          <label className="block text-xs text-gray-400 mb-1">Commission ()</label>
 
                           <input
 
@@ -47669,7 +46437,7 @@ const MySegmentSettings = () => {
 
                 <div className="bg-dark-700 rounded-lg p-4">
 
-                  <h4 className="text-sm font-semibold text-green-400 mb-3">Brokerage (₹)</h4>
+                  <h4 className="text-sm font-semibold text-green-400 mb-3">Brokerage ()</h4>
 
                   {[
 
@@ -47715,7 +46483,7 @@ const MySegmentSettings = () => {
 
                 <div className="bg-dark-700 rounded-lg p-4">
 
-                  <h4 className="text-sm font-semibold text-yellow-400 mb-3">Fixed Margin (₹)</h4>
+                  <h4 className="text-sm font-semibold text-yellow-400 mb-3">Fixed Margin ()</h4>
 
                   {[
 
@@ -48739,7 +47507,7 @@ const AllAccountsOverview = () => {
 
             <div className="text-yellow-400 text-sm">Total Balance</div>
 
-            <div className="text-xl font-bold text-yellow-300">₹{(data.stats.totalWalletBalance || 0).toLocaleString()}</div>
+            <div className="text-xl font-bold text-yellow-300">{(data.stats.totalWalletBalance || 0).toLocaleString()}</div>
 
           </div>
 
@@ -48927,7 +47695,7 @@ const AllAccountsOverview = () => {
 
                         </div>
 
-                        <div className="text-sm text-yellow-400 mt-1">₹{(u.wallet?.balance || 0).toLocaleString()}</div>
+                        <div className="text-sm text-yellow-400 mt-1">{(u.wallet?.balance || 0).toLocaleString()}</div>
 
                       </div>
 
@@ -49399,7 +48167,7 @@ const AllAccountsOverview = () => {
 
                     </td>
 
-                    <td className="p-4 text-yellow-400">₹{(u.wallet?.balance || 0).toLocaleString()}</td>
+                    <td className="p-4 text-yellow-400">{(u.wallet?.balance || 0).toLocaleString()}</td>
 
                     <td className="p-4">
 
@@ -49515,9 +48283,13 @@ const AllUsersManagement = () => {
 
   const [segmentDefaultsBaseline, setSegmentDefaultsBaseline] = useState({});
 
+  const [loadingSettingsModal, setLoadingSettingsModal] = useState(false);
+
+  const [hierarchySuccessMessage, setHierarchySuccessMessage] = useState(null);
 
 
-  const defaultSegmentOptions = ['MCX', 'NSEINDEX', 'NSESTOCK', 'BSE', 'EQ', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTOFUT', 'CRYPTOOPT'];
+
+  const defaultSegmentOptions = ['NSEOPT', 'NSEFUT', 'MCXOPT', 'MCXFUT', 'BSE-OPT', 'BSE-FUT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXOPT', 'FOREXFUT'];
 
   
 
@@ -49525,7 +48297,6 @@ const AllUsersManagement = () => {
 
     enabled: false,
 
-    fraction: false,
 
     maxExchangeLots: 100,
 
@@ -49565,8 +48336,7 @@ const AllUsersManagement = () => {
 
       allowed: true,
 
-      fraction: false,
-
+  
       commissionType: 'PER_LOT',
 
       commission: 0,
@@ -49581,8 +48351,7 @@ const AllUsersManagement = () => {
 
       allowed: true,
 
-      fraction: false,
-
+  
       commissionType: 'PER_LOT',
 
       commission: 0,
@@ -50036,17 +48805,23 @@ const AllUsersManagement = () => {
 
 
     const normalizedSegments = allSegments.reduce((acc, seg) => {
-
+      const userSeg = user.segmentPermissions?.[seg] || {};
       acc[seg] = {
-
         ...defaultSegmentSettings,
-
-        ...(user.segmentPermissions?.[seg] || {})
-
+        // Deep merge for nested objects - user values override defaults
+        optionBuy: { ...defaultSegmentSettings.optionBuy, ...(userSeg.optionBuy || {}) },
+        optionSell: { ...defaultSegmentSettings.optionSell, ...(userSeg.optionSell || {}) },
+        lotSettings: { ...defaultSegmentSettings.lotSettings, ...(userSeg.lotSettings || {}) },
+        quantityModeSettings: { ...defaultSegmentSettings.quantityModeSettings, ...(userSeg.quantityModeSettings || {}) },
+        // Then spread userSeg for any top-level fields (but not nested ones since they're already merged)
+        ...Object.keys(userSeg).reduce((acc2, key) => {
+          if (key !== 'optionBuy' && key !== 'optionSell' && key !== 'lotSettings' && key !== 'quantityModeSettings') {
+            acc2[key] = userSeg[key];
+          }
+          return acc2;
+        }, {})
       };
-
       return acc;
-
     }, {});
 
 
@@ -50088,6 +48863,334 @@ const AllUsersManagement = () => {
 
 
   const handleEditSegmentPermissionChange = (segment, field, value) => {
+    // Complete parent-child hierarchy logic for ALL segment settings fields
+
+    // Handle nested fields (lotSettings, quantityModeSettings, etc.)
+    if (field.includes('.')) {
+      const [parentField, childField] = field.split('.');
+
+      console.log('[Hierarchy Check] Nested field:', field, 'Parent field:', parentField, 'Child field:', childField, 'Value:', value);
+      console.log('[Hierarchy Check] Segment defaults baseline for', segment, ':', segmentDefaultsBaseline[segment]);
+
+      // Hierarchy check for leverage fields in nested objects
+      if (childField === 'intradayLeverage') {
+        // Check parent's intradayLeverage in the same nested object
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.intradayLeverage;
+        // If parent doesn't have the nested field, check the legacy exposureIntraday
+        const fallbackValue = segmentDefaultsBaseline[segment]?.exposureIntraday;
+        const limit = parentValue ?? fallbackValue;
+
+        console.log('[Hierarchy Check] intradayLeverage - Segment:', segment);
+        console.log('[Hierarchy Check] intradayLeverage - Parent field:', parentField);
+        console.log('[Hierarchy Check] intradayLeverage - User value:', value);
+        console.log('[Hierarchy Check] intradayLeverage - Parent value (nested):', parentValue);
+        console.log('[Hierarchy Check] intradayLeverage - Fallback value (legacy):', fallbackValue);
+        console.log('[Hierarchy Check] intradayLeverage - Final limit:', limit);
+        console.log('[Hierarchy Check] intradayLeverage - Full segmentDefaultsBaseline:', JSON.stringify(segmentDefaultsBaseline[segment], null, 2));
+
+        // Only apply hierarchy check if parent has a meaningful limit (> 0)
+        if (limit !== undefined && limit > 0 && value > limit) {
+          alert(`HIERARCHY VIOLATION: You cannot set Intraday Leverage (${value}) higher than your parent's limit (${limit}). Child cannot exceed parent value.`);
+          return;
+        }
+      }
+
+      if (childField === 'carryForwardLeverage') {
+        // Check parent's carryForwardLeverage in the same nested object
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.carryForwardLeverage;
+        // If parent doesn't have the nested field, check the legacy exposureCarryForward
+        const fallbackValue = segmentDefaultsBaseline[segment]?.exposureCarryForward;
+        const limit = parentValue ?? fallbackValue;
+
+        console.log('[Hierarchy Check] carryForwardLeverage - Parent value:', parentValue, 'Fallback:', fallbackValue, 'Limit:', limit);
+
+        // Only apply hierarchy check if parent has a meaningful limit (> 0)
+        if (limit !== undefined && limit > 0 && value > limit) {
+          alert(`HIERARCHY VIOLATION: You cannot set Carry Forward Leverage (${value}) higher than your parent's limit (${limit}). Child cannot exceed parent value.`);
+          return;
+        }
+      }
+
+      // Hierarchy check for lotSettings.maxLots
+      if (childField === 'maxLots') {
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.maxLots;
+        const fallbackValue = segmentDefaultsBaseline[segment]?.maxLots;
+        const limit = parentValue ?? fallbackValue;
+
+        if (limit !== undefined && value > limit) {
+          alert(`You cannot set Max Lots higher than ${limit}. Your parent's limit is ${limit}.`);
+          return;
+        }
+      }
+
+      // Hierarchy check for lotSettings.minLots
+      if (childField === 'minLots') {
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.minLots;
+        const fallbackValue = segmentDefaultsBaseline[segment]?.minLots;
+        const limit = parentValue ?? fallbackValue;
+
+        if (limit !== undefined && value < limit) {
+          alert(`You cannot set Min Lots lower than ${limit}. Your parent's minimum is ${limit}.`);
+          return;
+        }
+      }
+
+      // Hierarchy check for lotSettings.breakupLots
+      if (childField === 'breakupLots') {
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.breakupLots;
+        const fallbackValue = segmentDefaultsBaseline[segment]?.breakupLots;
+        const limit = parentValue ?? fallbackValue;
+
+        if (limit !== undefined && value < limit) {
+          alert(`You cannot set Breakup Lots lower than ${limit}. Your parent's minimum is ${limit}.`);
+          return;
+        }
+      }
+
+      setEditFormData(prev => ({
+        ...prev,
+        segmentPermissions: {
+          ...prev.segmentPermissions,
+          [segment]: {
+            ...prev.segmentPermissions[segment],
+            [parentField]: {
+              ...(prev.segmentPermissions[segment][parentField] || {}),
+              [childField]: value
+            }
+          }
+        }
+      }));
+      return;
+    }
+
+    // Hierarchy check: if parent has disabled the segment, child cannot enable it
+    if (field === 'enabled' && value === true) {
+      const parentSetting = segmentDefaultsBaseline[segment]?.enabled;
+      if (parentSetting === false) {
+        alert("You don't have permission to enable this segment. Your parent has disabled it.");
+        return;
+      }
+      // Success message when enabling segment
+      const userRole = selectedUser?.role || 'CLIENT';
+      const roleMessage = userRole === 'ADMIN' ? 'Admin' : 'Client';
+      setHierarchySuccessMessage(`${roleMessage} segment enabled successfully. Save to apply changes.`);
+      // Clear message after 3 seconds
+      setTimeout(() => setHierarchySuccessMessage(''), 3000);
+    }
+
+
+    // Hierarchy check: child cannot set maxExchangeLots higher than parent's value
+    if (field === 'maxExchangeLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxExchangeLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Exchange Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set minExchangeQty lower than parent's value
+    if (field === 'minExchangeQty') {
+      const parentValue = segmentDefaultsBaseline[segment]?.minExchangeQty;
+      if (parentValue !== undefined && value < parentValue) {
+        alert(`You cannot set Min Exchange Qty lower than ${parentValue}. Your parent's minimum is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set maxExchangeQty higher than parent's value
+    if (field === 'maxExchangeQty') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxExchangeQty;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Exchange Qty higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set maxLots higher than parent's value
+    if (field === 'maxLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set minLots lower than parent's value
+    if (field === 'minLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.minLots;
+      if (parentValue !== undefined && value < parentValue) {
+        alert(`You cannot set Min Lots lower than ${parentValue}. Your parent's minimum is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set orderLots higher than parent's value
+    if (field === 'orderLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.orderLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Order Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureIntraday higher than parent's value
+    if (field === 'exposureIntraday') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureIntraday;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Intraday Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureCarryForward higher than parent's value
+    if (field === 'exposureCarryForward') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureCarryForward;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Carry Forward Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: if parent has disabled allowLimitPendingOrders, child cannot enable it
+    if (field === 'allowLimitPendingOrders' && value === true) {
+      const parentSetting = segmentDefaultsBaseline[segment]?.allowLimitPendingOrders;
+      if (parentSetting === false) {
+        alert("You don't have permission to enable Limit Pending Orders. Your parent has disabled it.");
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoSpreadInr higher than parent's value
+    if (field === 'cryptoSpreadInr') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoSpreadInr;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Spread INR higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoSpreadUsdPerSide higher than parent's value
+    if (field === 'cryptoSpreadUsdPerSide') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoSpreadUsdPerSide;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Spread USD Per Side higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoPricePerLotInr higher than parent's value
+    if (field === 'cryptoPricePerLotInr') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoPricePerLotInr;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Price Per Lot INR higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoLotSizeLots higher than parent's value
+    if (field === 'cryptoLotSizeLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoLotSizeLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Lot Size Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoLotSizeQuantity higher than parent's value
+    if (field === 'cryptoLotSizeQuantity') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoLotSizeQuantity;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Lot Size Quantity higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check for optionBuy fields
+    if (field.startsWith('optionBuy.')) {
+      const optionBuyField = field.split('.')[1];
+      const parentValue = segmentDefaultsBaseline[segment]?.optionBuy?.[optionBuyField];
+      
+      if (optionBuyField === 'allowed' && value === true) {
+        if (parentValue === false) {
+          alert("You don't have permission to enable Option Buy. Your parent has disabled it.");
+          return;
+        }
+      }
+      
+      
+      if (optionBuyField === 'maxExchangeLots') {
+        if (parentValue !== undefined && value > parentValue) {
+          alert(`You cannot set Option Buy Max Exchange Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+          return;
+        }
+      }
+    }
+
+    // Hierarchy check for optionSell fields
+    if (field.startsWith('optionSell.')) {
+      const optionSellField = field.split('.')[1];
+      const parentValue = segmentDefaultsBaseline[segment]?.optionSell?.[optionSellField];
+      
+      if (optionSellField === 'allowed' && value === true) {
+        if (parentValue === false) {
+          alert("You don't have permission to enable Option Sell. Your parent has disabled it.");
+          return;
+        }
+      }
+      
+      
+      if (optionSellField === 'maxExchangeLots') {
+        if (parentValue !== undefined && value > parentValue) {
+          alert(`You cannot set Option Sell Max Exchange Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+          return;
+        }
+      }
+    }
+
+    // Hierarchy check: child cannot set maxLots higher than parent's value
+    if (field === 'maxLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set minLots lower than parent's value
+    if (field === 'minLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.minLots;
+      if (parentValue !== undefined && value < parentValue) {
+        alert(`You cannot set Min Lots lower than ${parentValue}. Your parent's minimum is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set orderLots higher than parent's value
+    if (field === 'orderLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.orderLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Order Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureIntraday higher than parent's value
+    if (field === 'exposureIntraday') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureIntraday;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Intraday Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureCarryForward higher than parent's value
+    if (field === 'exposureCarryForward') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureCarryForward;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Carry Forward Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
 
     setEditFormData(prev => ({
 
@@ -50131,6 +49234,10 @@ const AllUsersManagement = () => {
 
       );
 
+      console.log('[Save User Settings] Saving data for user:', selectedUser.username);
+      console.log('[Save User Settings] segmentPermissions:', JSON.stringify(editFormData.segmentPermissions, null, 2));
+      console.log('[Save User Settings] segmentExplicitKeys:', JSON.stringify(segmentExplicitKeys, null, 2));
+
       await axios.put(`/api/admin/manage/users/${selectedUser._id}/settings`,
 
         {
@@ -50147,7 +49254,12 @@ const AllUsersManagement = () => {
 
       );
 
-      alert('User settings updated successfully!');
+      // Set success message based on user role
+      const userRole = selectedUser.role || 'CLIENT';
+      const roleMessage = userRole === 'ADMIN' ? 'Admin' : 'Client';
+      setHierarchySuccessMessage(`${roleMessage} segment/script settings updated successfully`);
+      // Clear message after 3 seconds
+      setTimeout(() => setHierarchySuccessMessage(''), 3000);
 
       setShowEditModal(false);
 
@@ -50159,6 +49271,7 @@ const AllUsersManagement = () => {
 
     } catch (error) {
 
+      console.error('[Save User Settings] Error:', error);
       alert(error.response?.data?.message || 'Error updating user settings');
 
     } finally {
@@ -50477,7 +49590,21 @@ const AllUsersManagement = () => {
 
                 <th className="px-4 py-3 text-left text-sm">Admin</th>
 
-                <th className="px-4 py-3 text-left text-sm">Wallet</th>
+                <th className="px-4 py-3 text-left text-sm">Main Wallet</th>
+
+                <th className="px-4 py-3 text-left text-sm">Crypto</th>
+
+                <th className="px-4 py-3 text-left text-sm">MCX</th>
+
+                <th className="px-4 py-3 text-left text-sm">Games</th>
+
+                <th className="px-4 py-3 text-left text-sm">Forex</th>
+
+                <th className="px-4 py-3 text-left text-sm">NSE</th>
+
+                <th className="px-4 py-3 text-left text-sm">BSE</th>
+
+                <th className="px-4 py-3 text-left text-sm">SumOfAllWallets</th>
 
                 <th className="px-4 py-3 text-left text-sm">Status</th>
 
@@ -50541,9 +49668,51 @@ const AllUsersManagement = () => {
 
                   <td className="px-4 py-3">
 
-                    <div className="text-green-400 font-medium">₹{(user.wallet?.balance || 0).toLocaleString()}</div>
+                    <div className="text-green-400 font-medium">{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
 
-                    <div className="text-xs text-blue-400">Trading: ₹{(user.wallet?.tradingBalance || 0).toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">Main Wallet</div>
+
+                  </td>
+
+                  <td className="px-4 py-3">
+
+                    <div className="text-yellow-400">{(user.cryptoWallet?.balance || 0).toLocaleString()}</div>
+
+                  </td>
+
+                  <td className="px-4 py-3">
+
+                    <div className="text-orange-400">{(user.mcxWallet?.balance || 0).toLocaleString()}</div>
+
+                  </td>
+
+                  <td className="px-4 py-3">
+
+                    <div className="text-green-400 font-medium">{(user.gamesWallet?.balance || 0).toLocaleString()}</div>
+
+                  </td>
+
+                  <td className="px-4 py-3">
+
+                    <div className="text-pink-400">{(user.forexWallet?.balance || 0).toLocaleString()}</div>
+
+                  </td>
+
+                  <td className="px-4 py-3">
+
+                    <div className="text-blue-400">{(user.nseWallet?.balance || 0).toLocaleString()}</div>
+
+                  </td>
+
+                  <td className="px-4 py-3">
+
+                    <div className="text-cyan-400">{(user.bseWallet?.balance || 0).toLocaleString()}</div>
+
+                  </td>
+
+                  <td className="px-4 py-3">
+
+                    <div className="text-amber-400 font-bold">{((user.gamesWallet?.balance || 0) + (user.mcxWallet?.balance || 0) + (user.cryptoWallet?.balance || 0) + (user.forexWallet?.balance || 0) + (user.nseWallet?.balance || 0) + (user.bseWallet?.balance || 0)).toLocaleString()}</div>
 
                   </td>
 
@@ -51165,6 +50334,16 @@ const AllUsersManagement = () => {
 
             </div>
 
+            {hierarchySuccessMessage && (
+
+              <div className="mb-4 p-3 bg-green-900/50 border border-green-500 rounded-lg">
+
+                <div className="text-sm text-green-400">{hierarchySuccessMessage}</div>
+
+              </div>
+
+            )}
+
 
 
             {/* Segment Permissions */}
@@ -51213,10 +50392,8 @@ const AllUsersManagement = () => {
 
               {/* Expanded Segment Settings */}
 
-              {expandedSegment && editFormData.segmentPermissions?.[expandedSegment] && (
-
+              {expandedSegment && (
                 <div className="bg-dark-700 rounded-lg p-4 border border-dark-600">
-
                   <div className="flex items-center justify-between mb-4">
 
                     <h4 className="text-md font-semibold text-blue-400">{expandedSegment} Settings</h4>
@@ -51227,33 +50404,11 @@ const AllUsersManagement = () => {
 
                         type="button"
 
-                        onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'fraction', !editFormData.segmentPermissions[expandedSegment].fraction)}
+                        onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'enabled', !(editFormData.segmentPermissions[expandedSegment]?.enabled ?? false))}
 
                         className={`px-3 py-1 rounded text-xs font-medium ${
 
-                          editFormData.segmentPermissions[expandedSegment].fraction
-
-                            ? 'bg-purple-600 text-white'
-
-                            : 'bg-gray-600 text-white'
-
-                        }`}
-
-                      >
-
-                        {editFormData.segmentPermissions[expandedSegment].fraction ? 'Fraction On' : 'Fraction Off'}
-
-                      </button>
-
-                      <button
-
-                        type="button"
-
-                        onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'enabled', !editFormData.segmentPermissions[expandedSegment].enabled)}
-
-                        className={`px-3 py-1 rounded text-xs font-medium ${
-
-                          editFormData.segmentPermissions[expandedSegment].enabled
+                          editFormData.segmentPermissions[expandedSegment]?.enabled
 
                             ? 'bg-green-600 text-white'
 
@@ -51263,7 +50418,7 @@ const AllUsersManagement = () => {
 
                       >
 
-                        {editFormData.segmentPermissions[expandedSegment].enabled ? 'Enabled' : 'Disabled'}
+                        {editFormData.segmentPermissions[expandedSegment]?.enabled ? 'Enabled' : 'Disabled'}
 
                       </button>
 
@@ -51285,7 +50440,7 @@ const AllUsersManagement = () => {
 
                         type="number"
 
-                        value={editFormData.segmentPermissions[expandedSegment].maxExchangeLots || 100}
+                        value={editFormData.segmentPermissions[expandedSegment]?.maxExchangeLots ?? 100}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'maxExchangeLots', Number(e.target.value))}
 
@@ -51303,7 +50458,7 @@ const AllUsersManagement = () => {
 
                         type="number"
 
-                        value={editFormData.segmentPermissions[expandedSegment].maxLots || 50}
+                        value={editFormData.segmentPermissions[expandedSegment]?.maxLots ?? 50}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'maxLots', Number(e.target.value))}
 
@@ -51321,7 +50476,7 @@ const AllUsersManagement = () => {
 
                         type="number"
 
-                        value={editFormData.segmentPermissions[expandedSegment].minLots || 1}
+                        value={editFormData.segmentPermissions[expandedSegment]?.minLots ?? 1}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'minLots', Number(e.target.value))}
 
@@ -51339,7 +50494,7 @@ const AllUsersManagement = () => {
 
                         type="number"
 
-                        value={editFormData.segmentPermissions[expandedSegment].orderLots || 10}
+                        value={editFormData.segmentPermissions[expandedSegment]?.orderLots ?? 10}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'orderLots', Number(e.target.value))}
 
@@ -51355,7 +50510,7 @@ const AllUsersManagement = () => {
 
                       <select
 
-                        value={editFormData.segmentPermissions[expandedSegment].commissionType || 'PER_LOT'}
+                        value={editFormData.segmentPermissions[expandedSegment]?.commissionType ?? 'PER_LOT'}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'commissionType', e.target.value)}
 
@@ -51375,13 +50530,13 @@ const AllUsersManagement = () => {
 
                     <div>
 
-                      <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
+                      <label className="block text-xs text-gray-400 mb-1">Commission ()</label>
 
                       <input
 
                         type="number"
 
-                        value={editFormData.segmentPermissions[expandedSegment].commissionLot || 0}
+                        value={editFormData.segmentPermissions[expandedSegment]?.commissionLot ?? 0}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'commissionLot', Number(e.target.value))}
 
@@ -51399,7 +50554,7 @@ const AllUsersManagement = () => {
 
                         type="number"
 
-                        value={editFormData.segmentPermissions[expandedSegment].exposureIntraday || 1}
+                        value={editFormData.segmentPermissions[expandedSegment]?.exposureIntraday ?? 1}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'exposureIntraday', Number(e.target.value))}
 
@@ -51417,7 +50572,7 @@ const AllUsersManagement = () => {
 
                         type="number"
 
-                        value={editFormData.segmentPermissions[expandedSegment].exposureCarryForward || 1}
+                        value={editFormData.segmentPermissions[expandedSegment]?.exposureCarryForward ?? 1}
 
                         onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'exposureCarryForward', Number(e.target.value))}
 
@@ -51441,7 +50596,7 @@ const AllUsersManagement = () => {
 
                         className="mt-1 shrink-0"
 
-                        checked={editFormData.segmentPermissions[expandedSegment].defaultIntradayOnly === true}
+                        checked={editFormData.segmentPermissions[expandedSegment]?.defaultIntradayOnly === true}
 
                         onChange={(e) =>
 
@@ -51491,7 +50646,7 @@ const AllUsersManagement = () => {
 
                         className="mt-1 shrink-0"
 
-                        checked={editFormData.segmentPermissions[expandedSegment].allowLimitPendingOrders !== false}
+                        checked={editFormData.segmentPermissions[expandedSegment]?.allowLimitPendingOrders !== false}
 
                         onChange={(e) =>
 
@@ -51531,25 +50686,6 @@ const AllUsersManagement = () => {
 
 
 
-                  {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
-
-                    <>
-
-                      <CryptoSegmentAdminExtras
-
-                        slice={editFormData.segmentPermissions[expandedSegment]}
-
-                        onFieldChange={(field, value) =>
-
-                          handleEditSegmentPermissionChange(expandedSegment, field, value)
-
-                        }
-
-                      />
-
-                    </>
-
-                  )}
 
 
 
@@ -51561,7 +50697,7 @@ const AllUsersManagement = () => {
 
                       <p className="text-[11px] text-gray-500 mb-2">
 
-                        Primary: USDT per side (bid −, ask +). If $ is 0, legacy ₹ total width applies.
+                        Primary: USDT per side (bid −, ask +). If $ is 0, legacy  total width applies.
 
                       </p>
 
@@ -51579,7 +50715,7 @@ const AllUsersManagement = () => {
 
                             step={0.01}
 
-                            value={editFormData.segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide ?? 0}
+                            value={editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadUsdPerSide ?? 0}
 
                             onChange={(e) =>
 
@@ -51603,7 +50739,7 @@ const AllUsersManagement = () => {
 
                         <div>
 
-                          <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin)</label>
+                          <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin)</label>
 
                           <input
 
@@ -51613,7 +50749,7 @@ const AllUsersManagement = () => {
 
                             step={1}
 
-                            value={editFormData.segmentPermissions[expandedSegment].cryptoSpreadInr ?? 0}
+                            value={editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadInr ?? 0}
 
                             onChange={(e) =>
 
@@ -51663,43 +50799,15 @@ const AllUsersManagement = () => {
 
                             onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionBuy || {}),
 
-                              fraction: !editFormData.segmentPermissions[expandedSegment].optionBuy?.fraction
-
-                            })}
-
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-
-                              editFormData.segmentPermissions[expandedSegment].optionBuy?.fraction
-
-                                ? 'bg-purple-600 text-white'
-
-                                : 'bg-gray-600 text-white'
-
-                            }`}
-
-                          >
-
-                            {editFormData.segmentPermissions[expandedSegment].optionBuy?.fraction ? 'Fraction On' : 'Fraction Off'}
-
-                          </button>
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
-
-                              allowed: !editFormData.segmentPermissions[expandedSegment].optionBuy?.allowed
+                              allowed: !(editFormData.segmentPermissions[expandedSegment]?.optionBuy?.allowed ?? true)
 
                             })}
 
                             className={`px-2 py-0.5 rounded text-xs font-medium ${
 
-                              editFormData.segmentPermissions[expandedSegment].optionBuy?.allowed
+                              editFormData.segmentPermissions[expandedSegment]?.optionBuy?.allowed
 
                                 ? 'bg-green-600 text-white'
 
@@ -51709,7 +50817,35 @@ const AllUsersManagement = () => {
 
                           >
 
-                            {editFormData.segmentPermissions[expandedSegment].optionBuy?.allowed ? 'Allowed' : 'Blocked'}
+                            {editFormData.segmentPermissions[expandedSegment]?.optionBuy?.allowed ? 'Allowed' : 'Not Allowed'}
+
+                          </button>
+
+                          <button
+
+                            type="button"
+
+                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
+
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionBuy || {}),
+
+                              allowed: !(editFormData.segmentPermissions[expandedSegment]?.optionBuy?.allowed ?? false)
+
+                            })}
+
+                            className={`px-2 py-0.5 rounded text-xs font-medium ${
+
+                              editFormData.segmentPermissions[expandedSegment]?.optionBuy?.allowed
+
+                                ? 'bg-green-600 text-white'
+
+                                : 'bg-red-600 text-white'
+
+                            }`}
+
+                          >
+
+                            {editFormData.segmentPermissions[expandedSegment]?.optionBuy?.allowed ? 'Allowed' : 'Blocked'}
 
                           </button>
 
@@ -51725,11 +50861,11 @@ const AllUsersManagement = () => {
 
                           <select
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.commissionType || 'PER_LOT'}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionBuy?.commissionType ?? 'PER_LOT'}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionBuy || {}),
 
                               commissionType: e.target.value
 
@@ -51751,17 +50887,17 @@ const AllUsersManagement = () => {
 
                         <div>
 
-                          <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
+                          <label className="block text-xs text-gray-400 mb-1">Commission ()</label>
 
                           <input
 
                             type="number"
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.commission || 0}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionBuy?.commission ?? 0}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionBuy || {}),
 
                               commission: Number(e.target.value)
 
@@ -51781,11 +50917,11 @@ const AllUsersManagement = () => {
 
                             type="number"
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.strikeSelection || 50}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionBuy?.strikeSelection ?? 50}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionBuy || {}),
 
                               strikeSelection: Number(e.target.value)
 
@@ -51805,11 +50941,11 @@ const AllUsersManagement = () => {
 
                             type="number"
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.maxExchangeLots || 100}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionBuy?.maxExchangeLots ?? 100}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionBuy || {}),
 
                               maxExchangeLots: Number(e.target.value)
 
@@ -51843,43 +50979,15 @@ const AllUsersManagement = () => {
 
                             onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionSell || {}),
 
-                              fraction: !editFormData.segmentPermissions[expandedSegment].optionSell?.fraction
-
-                            })}
-
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-
-                              editFormData.segmentPermissions[expandedSegment].optionSell?.fraction
-
-                                ? 'bg-purple-600 text-white'
-
-                                : 'bg-gray-600 text-white'
-
-                            }`}
-
-                          >
-
-                            {editFormData.segmentPermissions[expandedSegment].optionSell?.fraction ? 'Fraction On' : 'Fraction Off'}
-
-                          </button>
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
-
-                              allowed: !editFormData.segmentPermissions[expandedSegment].optionSell?.allowed
+                              allowed: !(editFormData.segmentPermissions[expandedSegment]?.optionSell?.allowed ?? true)
 
                             })}
 
                             className={`px-2 py-0.5 rounded text-xs font-medium ${
 
-                              editFormData.segmentPermissions[expandedSegment].optionSell?.allowed
+                              editFormData.segmentPermissions[expandedSegment]?.optionSell?.allowed
 
                                 ? 'bg-green-600 text-white'
 
@@ -51889,7 +50997,35 @@ const AllUsersManagement = () => {
 
                           >
 
-                            {editFormData.segmentPermissions[expandedSegment].optionSell?.allowed ? 'Allowed' : 'Blocked'}
+                            {editFormData.segmentPermissions[expandedSegment]?.optionSell?.allowed ? 'Allowed' : 'Not Allowed'}
+
+                          </button>
+
+                          <button
+
+                            type="button"
+
+                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
+
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionSell || {}),
+
+                              allowed: !(editFormData.segmentPermissions[expandedSegment]?.optionSell?.allowed ?? false)
+
+                            })}
+
+                            className={`px-2 py-0.5 rounded text-xs font-medium ${
+
+                              editFormData.segmentPermissions[expandedSegment]?.optionSell?.allowed
+
+                                ? 'bg-green-600 text-white'
+
+                                : 'bg-red-600 text-white'
+
+                            }`}
+
+                          >
+
+                            {editFormData.segmentPermissions[expandedSegment]?.optionSell?.allowed ? 'Allowed' : 'Blocked'}
 
                           </button>
 
@@ -51905,11 +51041,11 @@ const AllUsersManagement = () => {
 
                           <select
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.commissionType || 'PER_LOT'}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionSell?.commissionType ?? 'PER_LOT'}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionSell || {}),
 
                               commissionType: e.target.value
 
@@ -51931,17 +51067,17 @@ const AllUsersManagement = () => {
 
                         <div>
 
-                          <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
+                          <label className="block text-xs text-gray-400 mb-1">Commission ()</label>
 
                           <input
 
                             type="number"
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.commission || 0}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionSell?.commission ?? 0}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionSell || {}),
 
                               commission: Number(e.target.value)
 
@@ -51961,11 +51097,11 @@ const AllUsersManagement = () => {
 
                             type="number"
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.strikeSelection || 50}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionSell?.strikeSelection ?? 50}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionSell || {}),
 
                               strikeSelection: Number(e.target.value)
 
@@ -51985,11 +51121,11 @@ const AllUsersManagement = () => {
 
                             type="number"
 
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.maxExchangeLots || 100}
+                            value={editFormData.segmentPermissions[expandedSegment]?.optionSell?.maxExchangeLots ?? 100}
 
                             onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
 
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
+                              ...(editFormData.segmentPermissions[expandedSegment]?.optionSell || {}),
 
                               maxExchangeLots: Number(e.target.value)
 
@@ -52123,7 +51259,9 @@ const AllUsersManagement = () => {
 
                                 spread: { buy: 0, sell: 0 },
 
-                                block: { future: false, option: false }
+                                block: { future: false, option: false },
+
+                                leverage: { exposureIntraday: segmentDefaults.exposureIntraday || 1, exposureCarryForward: segmentDefaults.exposureCarryForward || 1 }
 
                               };
 
@@ -52429,7 +51567,7 @@ const AllUsersManagement = () => {
 
                         <div className="flex flex-wrap gap-2">
 
-                          {['LOT', 'QUANTITY', 'FIXED_MARGIN', 'BROKERAGE', 'SPREAD', 'BLOCK'].map(type => (
+                          {['LOT', 'QUANTITY', 'LEVERAGE', 'FIXED_MARGIN', 'BROKERAGE', 'SPREAD', 'BLOCK'].map(type => (
 
                             <button
 
@@ -52469,7 +51607,7 @@ const AllUsersManagement = () => {
 
                             >
 
-                              {type === 'LOT' ? 'Lot' : type === 'QUANTITY' ? 'Quantity' : type === 'FIXED_MARGIN' ? 'Fixed Margin' : type === 'BROKERAGE' ? 'Brokerage' : type === 'SPREAD' ? 'Spread' : 'Block'}
+                              {type === 'LOT' ? 'Lot' : type === 'QUANTITY' ? 'Quantity' : type === 'LEVERAGE' ? 'Leverage' : type === 'FIXED_MARGIN' ? 'Fixed Margin' : type === 'BROKERAGE' ? 'Brokerage' : type === 'SPREAD' ? 'Spread' : 'Block'}
 
                             </button>
 
@@ -52831,6 +51969,52 @@ const AllUsersManagement = () => {
 
                         </div>
 
+                      )}
+
+                      
+
+                      {/* Leverage Settings */}
+                      {editFormData.scriptSettings[selectedScript]?.settingType === 'LEVERAGE' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Intraday Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={editFormData.scriptSettings[selectedScript]?.leverage?.exposureIntraday || 1}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    leverage: { ...prev.scriptSettings[selectedScript]?.leverage, exposureIntraday: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Carry Forward Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={editFormData.scriptSettings[selectedScript]?.leverage?.exposureCarryForward || 1}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    leverage: { ...prev.scriptSettings[selectedScript]?.leverage, exposureCarryForward: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
                       )}
 
                       
@@ -54521,7 +53705,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
       });
 
-      setSuccess(`Margin reset: ₹${data.oldUsedMargin} → ₹0`);
+      setSuccess(`Margin reset: ${data.oldUsedMargin} → 0`);
 
       onSuccess();
 
@@ -54555,7 +53739,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
       });
 
-      setSuccess(`Margin reconciled: ₹${data.oldUsedMargin} → ₹${data.newUsedMargin} (${data.openPositionsCount} open positions)`);
+      setSuccess(`Margin reconciled: ${data.oldUsedMargin} → ${data.newUsedMargin} (${data.openPositionsCount} open positions)`);
 
       onSuccess();
 
@@ -54593,13 +53777,13 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
           <div className="font-medium">{user.fullName || user.username}</div>
 
-          <div className="text-lg font-bold text-green-400 mt-1">₹{user.wallet?.cashBalance?.toLocaleString() || '0'}</div>
+          <div className="text-lg font-bold text-green-400 mt-1">{user.wallet?.cashBalance?.toLocaleString() || '0'}</div>
 
           <div className="flex justify-between text-sm text-gray-400 mt-1">
 
-            <span>Trading: ₹{(user.wallet?.tradingBalance || 0).toLocaleString()}</span>
+            <span>Trading: {(user.wallet?.tradingBalance || 0).toLocaleString()}</span>
 
-            <span className="text-yellow-400">Margin Used: ₹{(user.wallet?.usedMargin || 0).toLocaleString()}</span>
+            <span className="text-yellow-400">Margin Used: {(user.wallet?.usedMargin || 0).toLocaleString()}</span>
 
           </div>
 
@@ -54759,7 +53943,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
           <div>
 
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
 
             <input
 
@@ -55063,6 +54247,8 @@ const UserManagement = () => {
 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
+  const [hierarchySuccessMessage, setHierarchySuccessMessage] = useState('');
+
   const [showCopyModal, setShowCopyModal] = useState(false);
 
   const [showNotificationModal, setShowNotificationModal] = useState(false);
@@ -55081,6 +54267,8 @@ const UserManagement = () => {
 
   const [expandedSegment, setExpandedSegment] = useState(null);
 
+  const [showOnlyOwnUsers, setShowOnlyOwnUsers] = useState(false);
+
   const [selectedScriptSegment, setSelectedScriptSegment] = useState(null);
 
   const [selectedScript, setSelectedScript] = useState(null);
@@ -55089,39 +54277,14 @@ const UserManagement = () => {
 
   const [segmentDefaultsBaseline, setSegmentDefaultsBaseline] = useState({});
 
+  const [loadingSettingsModal, setLoadingSettingsModal] = useState(false);
 
-
-  const { currentPage, setCurrentPage, totalPages, paginatedData: paginatedUsers, totalItems } = usePagination(
-
-    users, 20, searchTerm, ['username', 'fullName', 'email', 'phone']
-
-  );
-
-  
-
-  const defaultSegmentOptions = ['MCX', 'NSEINDEX', 'NSESTOCK', 'BSE', 'EQ', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTOFUT', 'CRYPTOOPT'];
-
-  const [marketSegments, setMarketSegments] = useState([]);
-
-  const [marketScripts, setMarketScripts] = useState({});
-
-  
-
-  // Dynamic segment options from market data
-
-  const segmentOptions = marketSegments.length > 0 
-
-    ? marketSegments.map(s => s.id) 
-
-    : defaultSegmentOptions;
-
-  
+  const [scriptSettings, setScriptSettings] = useState({});
 
   const defaultSegmentSettings = {
 
     enabled: false,
 
-    fraction: false,
 
     maxExchangeLots: 100,
 
@@ -55161,8 +54324,7 @@ const UserManagement = () => {
 
       allowed: true,
 
-      fraction: false,
-
+  
       commissionType: 'PER_LOT',
 
       commission: 0,
@@ -55177,8 +54339,7 @@ const UserManagement = () => {
 
       allowed: true,
 
-      fraction: false,
-
+  
       commissionType: 'PER_LOT',
 
       commission: 0,
@@ -55187,9 +54348,98 @@ const UserManagement = () => {
 
       maxExchangeLots: 100
 
+    },
+
+    defaultIntradayOnly: false,
+
+    intradayOnlyLeverage: 1,
+
+    intradayOnlyMaxQty: 1000,
+
+    enableLotSettings: false,
+
+    enableQuantitySettings: false,
+
+    lotSettings: {
+
+      intradayLeverage: 1,
+
+      carryForwardLeverage: 1,
+
+      breakupLots: 0,
+
+      notificationPercent: 70,
+
+      autosquarePercent: 90
+
+    },
+
+    quantityModeSettings: {
+
+      intradayLeverage: 1,
+
+      carryForwardLeverage: 1,
+
+      maxQuantity: 1000,
+
+      minQuantity: 1,
+
+      breakupQuantity: 0,
+
+      notificationPercent: 70,
+
+      autosquarePercent: 90
+
     }
 
   };
+
+  const fetchParentSegmentBaseline = async (userId) => {
+    try {
+      // Fetch the actual parent admin's segment permissions from backend
+      const { data } = await axios.get(`/api/admin/manage/users/${userId}/parent-segment-baseline`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      console.log('[fetchParentSegmentBaseline] Fetched parent baseline from backend:', JSON.stringify(data.baseline, null, 2));
+      setSegmentDefaultsBaseline(data.baseline || {});
+    } catch (error) {
+      console.error('[fetchParentSegmentBaseline] Error fetching parent segment baseline:', error);
+      // Fallback to current admin's settings if backend call fails
+      const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
+      const baseline = {};
+      segmentKeys.forEach(seg => {
+        baseline[seg] = admin?.segmentPermissions?.[seg] ? { ...admin.segmentPermissions[seg] } : { ...defaultSegmentSettings };
+      });
+      console.log('[fetchParentSegmentBaseline] Using fallback baseline from current admin:', JSON.stringify(baseline, null, 2));
+      setSegmentDefaultsBaseline(baseline);
+    }
+  };
+
+
+
+  const { currentPage, setCurrentPage, totalPages, paginatedData: paginatedUsers, totalItems } = usePagination(
+
+    users, 20, searchTerm, ['username', 'fullName', 'email', 'phone']
+
+  );
+
+  
+
+  const defaultSegmentOptions = ['NSEOPT', 'NSEFUT', 'MCXOPT', 'MCXFUT', 'BSE-OPT', 'BSE-FUT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXOPT', 'FOREXFUT'];
+
+  const [marketSegments, setMarketSegments] = useState([]);
+
+  const [marketScripts, setMarketScripts] = useState({});
+
+  
+
+  // Dynamic segment options from market data
+
+  const segmentOptions = marketSegments.length > 0 
+
+    ? marketSegments.map(s => s.id) 
+
+    : defaultSegmentOptions;
 
   
 
@@ -55295,15 +54545,22 @@ const UserManagement = () => {
 
 
 
-  const filteredUsers = users.filter(user => 
+  const filteredUsers = users.filter(user => {
+    const matchesSearch = 
+      user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
 
-    user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesOwnUsers = showOnlyOwnUsers 
+      ? user.admin?.adminCode === admin.adminCode 
+      : true;
 
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    if (showOnlyOwnUsers) {
+      console.log('[Filter Own Users] User:', user.username, 'user.admin.adminCode:', user.admin?.adminCode, 'admin.adminCode:', admin.adminCode, 'matches:', matchesOwnUsers);
+    }
 
-    user.fullName?.toLowerCase().includes(searchTerm.toLowerCase())
-
-  );
+    return matchesSearch && matchesOwnUsers;
+  });
 
 
 
@@ -55468,74 +54725,400 @@ const UserManagement = () => {
 
 
   const openSettingsModal = async (user) => {
+    setLoadingSettingsModal(true);
+    console.log('[Open Settings Modal] User data:', JSON.stringify(user, null, 2));
+    console.log('[Open Settings Modal] User segmentPermissions:', JSON.stringify(user.segmentPermissions, null, 2));
 
-    setSelectedUser(user);
+    // Set baseline BEFORE opening modal
+    await fetchParentSegmentBaseline(user._id);
 
     const userSegmentKeys = Object.keys(user.segmentPermissions || {});
 
-    const allSegments = Array.from(new Set([
+    // Fixed segment order - always use this order
+    const fixedSegmentOrder = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
+    // Get all unique segments while maintaining fixed order
+    const allSegmentsSet = new Set([
+      ...fixedSegmentOrder,
       ...segmentOptions,
-
       ...userSegmentKeys,
-
       ...defaultSegmentOptions
+    ]);
 
-    ]));
+    // Filter to only include segments in fixed order
+    const allSegments = fixedSegmentOrder.filter(seg => allSegmentsSet.has(seg));
 
 
 
     const normalizedSegments = allSegments.reduce((acc, seg) => {
-
+      const userSeg = user.segmentPermissions?.[seg] || {};
+      console.log('[Open Settings Modal] Segment:', seg, 'User data:', JSON.stringify(userSeg, null, 2));
+      console.log('[Open Settings Modal] Segment:', seg, 'User enabled:', userSeg.enabled, 'Default enabled:', defaultSegmentSettings.enabled);
       acc[seg] = {
-
         ...defaultSegmentSettings,
-
-        ...(user.segmentPermissions?.[seg] || {})
-
+        // Deep merge for nested objects - USER values should override defaults
+        optionBuy: { ...defaultSegmentSettings.optionBuy, ...(userSeg.optionBuy || {}) },
+        optionSell: { ...defaultSegmentSettings.optionSell, ...(userSeg.optionSell || {}) },
+        lotSettings: { ...(userSeg.lotSettings || defaultSegmentSettings.lotSettings) },
+        quantityModeSettings: { ...(userSeg.quantityModeSettings || defaultSegmentSettings.quantityModeSettings) },
+        // Then spread userSeg for any top-level fields (but not nested ones since they're already merged)
+        ...Object.keys(userSeg).reduce((acc2, key) => {
+          if (key !== 'optionBuy' && key !== 'optionSell' && key !== 'lotSettings' && key !== 'quantityModeSettings') {
+            acc2[key] = userSeg[key];
+          }
+          return acc2;
+        }, {})
       };
-
+      console.log('[Open Settings Modal] Segment:', seg, 'Final enabled:', acc[seg].enabled);
       return acc;
-
     }, {});
 
+    console.log('[Open Settings Modal] Normalized segments:', JSON.stringify(normalizedSegments, null, 2));
 
-
+    // Batch all state updates together to prevent flicker
+    setSelectedUser(user);
     setEditFormData({
-
       segmentPermissions: normalizedSegments,
-
       scriptSettings: user.scriptSettings || {}
-
     });
-
     setSelectedScriptSegment(null);
-
     setSelectedScript(null);
-
-    try {
-
-      const { data } = await axios.get('/api/admin/segment-defaults-baseline', {
-
-        headers: { Authorization: `Bearer ${admin.token}` }
-
-      });
-
-      setSegmentDefaultsBaseline(data.adminSegmentDefaults || {});
-
-    } catch {
-
-      setSegmentDefaultsBaseline({});
-
-    }
-
     setShowSettingsModal(true);
+    setLoadingSettingsModal(false);
 
   };
 
 
 
   const handleEditSegmentPermissionChange = (segment, field, value) => {
+    // Complete parent-child hierarchy logic for ALL segment settings fields
+
+    // Hierarchy check: if parent has disabled the segment, child cannot enable it
+    if (field === 'enabled' && value === true) {
+      const parentSetting = segmentDefaultsBaseline[segment]?.enabled;
+      if (parentSetting === false) {
+        alert("You don't have permission to enable this segment. Your parent has disabled it.");
+        return;
+      }
+      // Success message when enabling segment
+      const userRole = selectedUser?.role || 'CLIENT';
+      const roleMessage = userRole === 'ADMIN' ? 'Admin' : 'Client';
+      setHierarchySuccessMessage(`${roleMessage} segment enabled successfully. Save to apply changes.`);
+      // Clear message after 3 seconds
+      setTimeout(() => setHierarchySuccessMessage(''), 3000);
+    }
+
+    // Handle nested fields (lotSettings, quantityModeSettings, etc.)
+    if (field.includes('.')) {
+      const [parentField, childField] = field.split('.');
+
+      console.log('[Hierarchy Check] Nested field:', field, 'Parent field:', parentField, 'Child field:', childField, 'Value:', value);
+      console.log('[Hierarchy Check] Segment defaults baseline for', segment, ':', segmentDefaultsBaseline[segment]);
+
+      // Hierarchy check for leverage fields in nested objects
+      if (childField === 'intradayLeverage') {
+        // Check parent's intradayLeverage in the same nested object
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.intradayLeverage;
+        // If parent doesn't have the nested field, check the legacy exposureIntraday
+        const fallbackValue = segmentDefaultsBaseline[segment]?.exposureIntraday;
+        const limit = parentValue ?? fallbackValue;
+
+        console.log('[Hierarchy Check] intradayLeverage - Segment:', segment);
+        console.log('[Hierarchy Check] intradayLeverage - Parent field:', parentField);
+        console.log('[Hierarchy Check] intradayLeverage - User value:', value);
+        console.log('[Hierarchy Check] intradayLeverage - Parent value (nested):', parentValue);
+        console.log('[Hierarchy Check] intradayLeverage - Fallback value (legacy):', fallbackValue);
+        console.log('[Hierarchy Check] intradayLeverage - Final limit:', limit);
+        console.log('[Hierarchy Check] intradayLeverage - Full segmentDefaultsBaseline:', JSON.stringify(segmentDefaultsBaseline[segment], null, 2));
+
+        // Only apply hierarchy check if parent has a meaningful limit (> 0)
+        if (limit !== undefined && limit > 0 && value > limit) {
+          alert(`HIERARCHY VIOLATION: You cannot set Intraday Leverage (${value}) higher than your parent's limit (${limit}). Child cannot exceed parent value.`);
+          return;
+        }
+      }
+
+      if (childField === 'carryForwardLeverage') {
+        // Check parent's carryForwardLeverage in the same nested object
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.carryForwardLeverage;
+        // If parent doesn't have the nested field, check the legacy exposureCarryForward
+        const fallbackValue = segmentDefaultsBaseline[segment]?.exposureCarryForward;
+        const limit = parentValue ?? fallbackValue;
+
+        console.log('[Hierarchy Check] carryForwardLeverage - Parent value:', parentValue, 'Fallback:', fallbackValue, 'Limit:', limit);
+
+        // Only apply hierarchy check if parent has a meaningful limit (> 0)
+        if (limit !== undefined && limit > 0 && value > limit) {
+          alert(`HIERARCHY VIOLATION: You cannot set Carry Forward Leverage (${value}) higher than your parent's limit (${limit}). Child cannot exceed parent value.`);
+          return;
+        }
+      }
+
+      // Hierarchy check for lotSettings.maxLots
+      if (childField === 'maxLots') {
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.maxLots;
+        const fallbackValue = segmentDefaultsBaseline[segment]?.maxLots;
+        const limit = parentValue ?? fallbackValue;
+
+        if (limit !== undefined && value > limit) {
+          alert(`You cannot set Max Lots higher than ${limit}. Your parent's limit is ${limit}.`);
+          return;
+        }
+      }
+
+      // Hierarchy check for lotSettings.minLots
+      if (childField === 'minLots') {
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.minLots;
+        const fallbackValue = segmentDefaultsBaseline[segment]?.minLots;
+        const limit = parentValue ?? fallbackValue;
+
+        if (limit !== undefined && value < limit) {
+          alert(`You cannot set Min Lots lower than ${limit}. Your parent's minimum is ${limit}.`);
+          return;
+        }
+      }
+
+      // Hierarchy check for lotSettings.breakupLots
+      if (childField === 'breakupLots') {
+        const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.breakupLots;
+        const fallbackValue = segmentDefaultsBaseline[segment]?.breakupLots;
+        const limit = parentValue ?? fallbackValue;
+
+        if (limit !== undefined && value < limit) {
+          alert(`You cannot set Breakup Lots lower than ${limit}. Your parent's minimum is ${limit}.`);
+          return;
+        }
+      }
+
+      setEditFormData(prev => ({
+        ...prev,
+        segmentPermissions: {
+          ...prev.segmentPermissions,
+          [segment]: {
+            ...prev.segmentPermissions[segment],
+            [parentField]: {
+              ...(prev.segmentPermissions[segment][parentField] || {}),
+              [childField]: value
+            }
+          }
+        }
+      }));
+      return;
+    }
+
+
+    // Hierarchy check: child cannot set maxExchangeLots higher than parent's value
+    if (field === 'maxExchangeLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxExchangeLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Exchange Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set minExchangeQty lower than parent's value
+    if (field === 'minExchangeQty') {
+      const parentValue = segmentDefaultsBaseline[segment]?.minExchangeQty;
+      if (parentValue !== undefined && value < parentValue) {
+        alert(`You cannot set Min Exchange Qty lower than ${parentValue}. Your parent's minimum is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set maxExchangeQty higher than parent's value
+    if (field === 'maxExchangeQty') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxExchangeQty;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Exchange Qty higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set maxLots higher than parent's value
+    if (field === 'maxLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set minLots lower than parent's value
+    if (field === 'minLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.minLots;
+      if (parentValue !== undefined && value < parentValue) {
+        alert(`You cannot set Min Lots lower than ${parentValue}. Your parent's minimum is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set orderLots higher than parent's value
+    if (field === 'orderLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.orderLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Order Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureIntraday higher than parent's value
+    if (field === 'exposureIntraday') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureIntraday;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Intraday Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureCarryForward higher than parent's value
+    if (field === 'exposureCarryForward') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureCarryForward;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Carry Forward Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: if parent has disabled allowLimitPendingOrders, child cannot enable it
+    if (field === 'allowLimitPendingOrders' && value === true) {
+      const parentSetting = segmentDefaultsBaseline[segment]?.allowLimitPendingOrders;
+      if (parentSetting === false) {
+        alert("You don't have permission to enable Limit Pending Orders. Your parent has disabled it.");
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoSpreadInr higher than parent's value
+    if (field === 'cryptoSpreadInr') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoSpreadInr;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Spread INR higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoSpreadUsdPerSide higher than parent's value
+    if (field === 'cryptoSpreadUsdPerSide') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoSpreadUsdPerSide;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Spread USD Per Side higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoPricePerLotInr higher than parent's value
+    if (field === 'cryptoPricePerLotInr') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoPricePerLotInr;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Price Per Lot INR higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoLotSizeLots higher than parent's value
+    if (field === 'cryptoLotSizeLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoLotSizeLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Lot Size Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set cryptoLotSizeQuantity higher than parent's value
+    if (field === 'cryptoLotSizeQuantity') {
+      const parentValue = segmentDefaultsBaseline[segment]?.cryptoLotSizeQuantity;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Crypto Lot Size Quantity higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check for optionBuy fields
+    if (field.startsWith('optionBuy.')) {
+      const optionBuyField = field.split('.')[1];
+      const parentValue = segmentDefaultsBaseline[segment]?.optionBuy?.[optionBuyField];
+      
+      if (optionBuyField === 'allowed' && value === true) {
+        if (parentValue === false) {
+          alert("You don't have permission to enable Option Buy. Your parent has disabled it.");
+          return;
+        }
+      }
+      
+      
+      if (optionBuyField === 'maxExchangeLots') {
+        if (parentValue !== undefined && value > parentValue) {
+          alert(`You cannot set Option Buy Max Exchange Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+          return;
+        }
+      }
+    }
+
+    // Hierarchy check for optionSell fields
+    if (field.startsWith('optionSell.')) {
+      const optionSellField = field.split('.')[1];
+      const parentValue = segmentDefaultsBaseline[segment]?.optionSell?.[optionSellField];
+      
+      if (optionSellField === 'allowed' && value === true) {
+        if (parentValue === false) {
+          alert("You don't have permission to enable Option Sell. Your parent has disabled it.");
+          return;
+        }
+      }
+      
+      
+      if (optionSellField === 'maxExchangeLots') {
+        if (parentValue !== undefined && value > parentValue) {
+          alert(`You cannot set Option Sell Max Exchange Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+          return;
+        }
+      }
+    }
+
+    // Hierarchy check: child cannot set maxLots higher than parent's value
+    if (field === 'maxLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.maxLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Max Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set minLots lower than parent's value
+    if (field === 'minLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.minLots;
+      if (parentValue !== undefined && value < parentValue) {
+        alert(`You cannot set Min Lots lower than ${parentValue}. Your parent's minimum is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set orderLots higher than parent's value
+    if (field === 'orderLots') {
+      const parentValue = segmentDefaultsBaseline[segment]?.orderLots;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Order Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureIntraday higher than parent's value
+    if (field === 'exposureIntraday') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureIntraday;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Intraday Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
+
+    // Hierarchy check: child cannot set exposureCarryForward higher than parent's value
+    if (field === 'exposureCarryForward') {
+      const parentValue = segmentDefaultsBaseline[segment]?.exposureCarryForward;
+      if (parentValue !== undefined && value > parentValue) {
+        alert(`You cannot set Carry Forward Exposure higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
+        return;
+      }
+    }
 
     setEditFormData(prev => ({
 
@@ -55579,6 +55162,10 @@ const UserManagement = () => {
 
       );
 
+      console.log('[Save User Settings] Saving data for user:', selectedUser.username);
+      console.log('[Save User Settings] segmentPermissions:', JSON.stringify(editFormData.segmentPermissions, null, 2));
+      console.log('[Save User Settings] segmentExplicitKeys:', JSON.stringify(segmentExplicitKeys, null, 2));
+
       await axios.put(`/api/admin/users/${selectedUser._id}/settings`,
 
         {
@@ -55595,7 +55182,12 @@ const UserManagement = () => {
 
       );
 
-      alert('User settings updated successfully!');
+      // Set success message based on user role
+      const userRole = selectedUser.role || 'CLIENT';
+      const roleMessage = userRole === 'ADMIN' ? 'Admin' : 'Client';
+      setHierarchySuccessMessage(`${roleMessage} segment/script settings updated successfully`);
+      // Clear message after 3 seconds
+      setTimeout(() => setHierarchySuccessMessage(''), 3000);
 
       setShowSettingsModal(false);
 
@@ -55607,6 +55199,7 @@ const UserManagement = () => {
 
     } catch (error) {
 
+      console.error('[Save User Settings] Error:', error);
       alert(error.response?.data?.message || 'Error updating user settings');
 
     } finally {
@@ -55723,6 +55316,20 @@ const UserManagement = () => {
 
           <button
 
+            onClick={() => setShowOnlyOwnUsers(!showOnlyOwnUsers)}
+
+            className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition ${showOnlyOwnUsers ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-600 hover:bg-gray-700'}`}
+
+          >
+
+            <Users size={20} />
+
+            <span>See Your Own Users List</span>
+
+          </button>
+
+          <button
+
             onClick={() => setShowNotificationModal(true)}
 
             className="flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg transition"
@@ -55833,9 +55440,9 @@ const UserManagement = () => {
 
                 <div>
 
-                  <div className="text-green-400 font-bold">₹{user.wallet?.balance?.toLocaleString() || '0'}</div>
+                  <div className="text-green-400 font-bold">{user.wallet?.balance?.toLocaleString() || '0'}</div>
 
-                  <div className="text-xs text-blue-400">Trading: ₹{(user.wallet?.tradingBalance || 0).toLocaleString()}</div>
+                  <div className="text-xs text-blue-400">Trading: {(user.wallet?.tradingBalance || 0).toLocaleString()}</div>
 
                 </div>
 
@@ -55949,13 +55556,13 @@ const UserManagement = () => {
 
                     <div className="text-green-400 font-medium">
 
-                      ₹{user.wallet?.balance?.toLocaleString() || '0'}
+                      {user.wallet?.balance?.toLocaleString() || '0'}
 
                     </div>
 
                     <div className="text-xs text-blue-400">
 
-                      Trading: ₹{(user.wallet?.tradingBalance || 0).toLocaleString()}
+                      Trading: {(user.wallet?.tradingBalance || 0).toLocaleString()}
 
                     </div>
 
@@ -56077,7 +55684,77 @@ const UserManagement = () => {
 
                       <button
 
-                        onClick={() => handleDeleteUser(user._id, user.fullName || user.username)}
+                        onClick={() => {
+                          setSelectedUser(user);
+                          // Load user's segment data for settings modal with defaults
+                          const allSegments = ['nseopt', 'nsefut', 'mcxopt', 'mcxfut', 'bse-opt', 'bse-fut', 'cryptofut', 'cryptoopt', 'forexopt', 'forexfut'];
+                          const defaultSegmentSettings = {
+                            enabled: false,
+                                                    maxLots: 50,
+                            minLots: 1,
+                            orderLots: 10,
+                            maxExchangeLots: 1000,
+                            exposureIntraday: 1,
+                            exposureCarryForward: 1,
+                            commissionType: 'PER_LOT',
+                            commissionLot: 0,
+                            optionBuy: { allowed: true, commissionType: 'PER_LOT', commissionLot: 0 },
+                            optionSell: { allowed: true, commissionType: 'PER_LOT', commissionLot: 0 },
+                            defaultIntradayOnly: false,
+                            intradayOnlyLeverage: 1,
+                            intradayOnlyMaxQty: 1000,
+                            allowLimitPendingOrders: true,
+                            enableLotSettings: false,
+                            enableQuantitySettings: false,
+                            lotSettings: {
+                              intradayLeverage: 1,
+                              carryForwardLeverage: 1,
+                              breakupLots: 0,
+                              notificationPercent: 70,
+                              autosquarePercent: 90
+                            },
+                            quantityModeSettings: {
+                              intradayLeverage: 1,
+                              carryForwardLeverage: 1,
+                              maxQuantity: 1000,
+                              minQuantity: 1,
+                              breakupQuantity: 0,
+                              notificationPercent: 70,
+                              autosquarePercent: 90
+                            },
+                            cryptoSpreadInr: 0,
+                            cryptoSpreadUsdPerSide: 0
+                          };
+                          const normalizedSegments = allSegments.reduce((acc, seg) => {
+                            const userSeg = user.segmentPermissions?.[seg] || {};
+                            acc[seg] = {
+                              ...defaultSegmentSettings,
+                              ...userSeg,
+                              // Deep merge for nested objects
+                              optionBuy: { ...defaultSegmentSettings.optionBuy, ...(userSeg.optionBuy || {}) },
+                              optionSell: { ...defaultSegmentSettings.optionSell, ...(userSeg.optionSell || {}) },
+                              lotSettings: { ...defaultSegmentSettings.lotSettings, ...(userSeg.lotSettings || {}) },
+                              quantityModeSettings: { ...defaultSegmentSettings.quantityModeSettings, ...(userSeg.quantityModeSettings || {}) }
+                            };
+                            return acc;
+                          }, {});
+                          // Use openSettingsModal to ensure baseline is loaded before modal opens
+                          openSettingsModal(user);
+                        }}
+
+                        className="p-2 hover:bg-dark-600 rounded transition text-gray-400 hover:text-white"
+
+                        title="User Settings"
+
+                      >
+
+                        <Settings size={16} />
+
+                      </button>
+
+                      <button
+
+                        onClick={() => { setSelectedUser(user); setShowDeleteConfirmModal(true); setUserToDelete(user); }}
 
                         className="p-2 hover:bg-dark-600 rounded transition text-red-400"
 
@@ -56465,6 +56142,16 @@ const UserManagement = () => {
 
             </div>
 
+            {hierarchySuccessMessage && (
+
+              <div className="mb-4 p-3 bg-green-900/50 border border-green-500 rounded-lg">
+
+                <div className="text-sm text-green-400">{hierarchySuccessMessage}</div>
+
+              </div>
+
+            )}
+
 
 
             {/* Segment Permissions */}
@@ -56509,811 +56196,437 @@ const UserManagement = () => {
 
               </div>
 
-
+            
 
               {/* Expanded Segment Settings */}
 
-              {expandedSegment && editFormData.segmentPermissions?.[expandedSegment] && (
-
-                <div className="bg-dark-700 rounded-lg p-4 border border-dark-600">
-
-                  <div className="flex items-center justify-between mb-4">
-
-                    <h4 className="text-md font-semibold text-blue-400">{expandedSegment} Settings</h4>
-
-                    <div className="flex items-center gap-2">
-
-                      <button
-
-                        type="button"
-
-                        onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'fraction', !editFormData.segmentPermissions[expandedSegment].fraction)}
-
-                        className={`px-3 py-1 rounded text-xs font-medium ${
-
-                          editFormData.segmentPermissions[expandedSegment].fraction
-
-                            ? 'bg-purple-600 text-white'
-
-                            : 'bg-gray-600 text-white'
-
-                        }`}
-
-                      >
-
-                        {editFormData.segmentPermissions[expandedSegment].fraction ? 'Fraction On' : 'Fraction Off'}
-
-                      </button>
-
-                      <button
-
-                        type="button"
-
-                        onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'enabled', !editFormData.segmentPermissions[expandedSegment].enabled)}
-
-                        className={`px-3 py-1 rounded text-xs font-medium ${
-
-                          editFormData.segmentPermissions[expandedSegment].enabled
-
-                            ? 'bg-green-600 text-white'
-
-                            : 'bg-red-600 text-white'
-
-                        }`}
-
-                      >
-
-                        {editFormData.segmentPermissions[expandedSegment].enabled ? 'Enabled' : 'Disabled'}
-
-                      </button>
-
+              {(() => {
+                const segmentKey = expandedSegment?.toUpperCase();
+                if (!expandedSegment) return null;
+                const s = editFormData.segmentPermissions?.[segmentKey] || {};
+                return (
+                  <div className="bg-dark-700/50 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-bold text-cyan-400">{segmentKey} Settings</h3>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => handleEditSegmentPermissionChange(segmentKey, 'enabled', !s.enabled)}
+                          className={`px-3 py-1 rounded text-xs font-medium ${s.enabled ? 'bg-green-600' : 'bg-red-600'}`}>
+                          {s.enabled ? 'Enabled' : 'Disabled'}
+                        </button>
+                      </div>
                     </div>
 
-                  </div>
-
-                  
-
-                  {/* General Settings */}
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Max Exchange Qty' : 'Max Exchange Lots'}</label>
-
-                      <input
-
-                        type="number"
-
-                        value={editFormData.segmentPermissions[expandedSegment].maxExchangeLots || 100}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'maxExchangeLots', Number(e.target.value))}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Max Qty' : 'Max Lots'}</label>
-
-                      <input
-
-                        type="number"
-
-                        value={editFormData.segmentPermissions[expandedSegment].maxLots || 50}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'maxLots', Number(e.target.value))}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Min Qty' : 'Min Lots'}</label>
-
-                      <input
-
-                        type="number"
-
-                        value={editFormData.segmentPermissions[expandedSegment].minLots || 1}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'minLots', Number(e.target.value))}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Order Qty' : 'Order Lots'}</label>
-
-                      <input
-
-                        type="number"
-
-                        value={editFormData.segmentPermissions[expandedSegment].orderLots || 10}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'orderLots', Number(e.target.value))}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-
-                      <select
-
-                        value={editFormData.segmentPermissions[expandedSegment].commissionType || 'PER_LOT'}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'commissionType', e.target.value)}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      >
-
-                        <option value="PER_LOT">Per Lot</option>
-
-                        <option value="PER_TRADE">Per Trade</option>
-
-                        <option value="PER_CRORE">Per Crore</option>
-
-                      </select>
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
-
-                      <input
-
-                        type="number"
-
-                        value={editFormData.segmentPermissions[expandedSegment].commissionLot || 0}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'commissionLot', Number(e.target.value))}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">Exposure Intraday</label>
-
-                      <input
-
-                        type="number"
-
-                        value={editFormData.segmentPermissions[expandedSegment].exposureIntraday || 1}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'exposureIntraday', Number(e.target.value))}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">Exposure Carry Forward</label>
-
-                      <input
-
-                        type="number"
-
-                        value={editFormData.segmentPermissions[expandedSegment].exposureCarryForward || 1}
-
-                        onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'exposureCarryForward', Number(e.target.value))}
-
-                        className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                      />
-
-                    </div>
-
-                  </div>
-
-
-
-                  <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
-
-                    <label className="flex cursor-pointer items-start gap-3">
-
-                      <input
-
-                        type="checkbox"
-
-                        className="mt-1 shrink-0"
-
-                        checked={editFormData.segmentPermissions[expandedSegment].defaultIntradayOnly === true}
-
-                        onChange={(e) =>
-
-                          handleEditSegmentPermissionChange(
-
-                            expandedSegment,
-
-                            'defaultIntradayOnly',
-
-                            e.target.checked
-
-                          )}
-
-                      />
-
-                      <span>
-
-                        <span className="text-sm font-medium text-gray-200">
-
-                          Default intraday-only orders (EOD auto square)
-
+                    <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input type="checkbox" className="mt-1 shrink-0"
+                          checked={s.defaultIntradayOnly === true}
+                          onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'defaultIntradayOnly', e.target.checked)}
+                        />
+                        <span>
+                          <span className="text-sm font-medium text-gray-200">
+                            Default intraday-only orders (EOD auto square)
+                          </span>
+                          <span className="mt-1 block text-xs text-gray-500">
+                            Merged with Super Admin defaults for this hierarchy. Traders get no dashboard toggle.
+                          </span>
                         </span>
-
-                        <span className="mt-1 block text-xs text-gray-500">
-
-                          Merged with Super Admin defaults → hierarchy → user. No trader toggle on the dashboard.
-
-                        </span>
-
-                      </span>
-
-                    </label>
-
-                  </div>
-
-
-
-                  {showLimitPendingGate && (
-
-                  <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
-
-                    <label className="flex cursor-pointer items-start gap-3">
-
-                      <input
-
-                        type="checkbox"
-
-                        className="mt-1 shrink-0"
-
-                        checked={editFormData.segmentPermissions[expandedSegment].allowLimitPendingOrders !== false}
-
-                        onChange={(e) =>
-
-                          handleEditSegmentPermissionChange(
-
-                            expandedSegment,
-
-                            'allowLimitPendingOrders',
-
-                            e.target.checked
-
-                          )}
-
-                      />
-
-                      <span>
-
-                        <span className="text-sm font-medium text-gray-200">
-
-                          Allow limit & pending (LIMIT / SL-M) orders
-
-                        </span>
-
-                        <span className="mt-1 block text-xs text-gray-500">
-
-                          {LIMIT_PENDING_HELP_TEXT}
-
-                        </span>
-
-                      </span>
-
-                    </label>
-
-                  </div>
-
-                  )}
-
-
-
-                  {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
-
-                    <>
-
-                      <CryptoSegmentAdminExtras
-
-                        slice={editFormData.segmentPermissions[expandedSegment]}
-
-                        onFieldChange={(field, value) =>
-
-                          handleEditSegmentPermissionChange(expandedSegment, field, value)
-
-                        }
-
-                      />
-
-                    </>
-
-                  )}
-
-
-
-                  {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
-
-                    <div className="mb-4">
-
-                      <h5 className="text-xs font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h5>
-
-                      <p className="text-[11px] text-gray-500 mb-2">
-
-                        Primary: USDT per side (bid −, ask +). If $ is 0, legacy ₹ total width applies.
-
-                      </p>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
-
-                          <input
-
-                            type="number"
-
-                            min={0}
-
-                            step={0.01}
-
-                            value={editFormData.segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide ?? 0}
-
-                            onChange={(e) =>
-
-                              handleEditSegmentPermissionChange(
-
-                                expandedSegment,
-
-                                'cryptoSpreadUsdPerSide',
-
-                                Math.max(0, parseFloat(e.target.value) || 0)
-
-                              )
-
-                            }
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin)</label>
-
-                          <input
-
-                            type="number"
-
-                            min={0}
-
-                            step={1}
-
-                            value={editFormData.segmentPermissions[expandedSegment].cryptoSpreadInr ?? 0}
-
-                            onChange={(e) =>
-
-                              handleEditSegmentPermissionChange(
-
-                                expandedSegment,
-
-                                'cryptoSpreadInr',
-
-                                Math.max(0, parseFloat(e.target.value) || 0)
-
-                              )
-
-                            }
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          />
-
-                        </div>
-
-                      </div>
-
+                      </label>
                     </div>
 
-                  )}
-
-
-
-                  {/* Option Buy & Sell Settings */}
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                    {/* Option Buy */}
-
-                    <div className="bg-dark-800 rounded-lg p-3 border border-green-900/50">
-
-                      <div className="flex items-center justify-between mb-2">
-
-                        <h5 className="text-sm font-medium text-green-400">Option Buy</h5>
-
-                        <div className="flex items-center gap-2">
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
-
-                              fraction: !editFormData.segmentPermissions[expandedSegment].optionBuy?.fraction
-
-                            })}
-
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-
-                              editFormData.segmentPermissions[expandedSegment].optionBuy?.fraction
-
-                                ? 'bg-purple-600 text-white'
-
-                                : 'bg-gray-600 text-white'
-
-                            }`}
-
-                          >
-
-                            {editFormData.segmentPermissions[expandedSegment].optionBuy?.fraction ? 'Fraction On' : 'Fraction Off'}
-
-                          </button>
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
-
-                              allowed: !editFormData.segmentPermissions[expandedSegment].optionBuy?.allowed
-
-                            })}
-
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-
-                              editFormData.segmentPermissions[expandedSegment].optionBuy?.allowed
-
-                                ? 'bg-green-600 text-white'
-
-                                : 'bg-red-600 text-white'
-
-                            }`}
-
-                          >
-
-                            {editFormData.segmentPermissions[expandedSegment].optionBuy?.allowed ? 'Allowed' : 'Blocked'}
-
-                          </button>
-
+                    {s.defaultIntradayOnly === true && (
+                      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-4">
+                        <h4 className="text-xs font-semibold text-cyan-400 mb-3">Intraday-Only Settings</h4>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Leverage in Intraday (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.intradayOnlyLeverage ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'intradayOnlyLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Qty</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.intradayOnlyMaxQty ?? 1000}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleEditSegmentPermissionChange(segmentKey, 'intradayOnlyMaxQty', isNaN(val) ? 1000 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
                         </div>
-
                       </div>
+                    )}
 
-                      <div className="grid grid-cols-2 gap-2">
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-
-                          <select
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.commissionType || 'PER_LOT'}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
-
-                              commissionType: e.target.value
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
-                          >
-
-                            <option value="PER_LOT">Per Lot</option>
-
-                            <option value="PER_TRADE">Per Trade</option>
-
-                            <option value="PER_CRORE">Per Crore</option>
-
-                          </select>
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
-
-                          <input
-
-                            type="number"
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.commission || 0}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
-
-                              commission: Number(e.target.value)
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
+                    {showLimitPendingGate && (
+                      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                        <label className="flex cursor-pointer items-start gap-3">
+                          <input type="checkbox" className="mt-1 shrink-0"
+                            checked={s.allowLimitPendingOrders !== false}
+                            onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'limitPendingGate', e.target.checked)}
                           />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Strike Selection (±)</label>
-
-                          <input
-
-                            type="number"
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.strikeSelection || 50}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
-
-                              strikeSelection: Number(e.target.value)
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Max Exchange Qty' : 'Max Exchange Lots'}</label>
-
-                          <input
-
-                            type="number"
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionBuy?.maxExchangeLots || 100}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionBuy', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionBuy,
-
-                              maxExchangeLots: Number(e.target.value)
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
-                          />
-
-                        </div>
-
+                          <span>
+                            <span className="text-sm font-medium text-gray-200">
+                              Allow limit & pending (LIMIT / SL-M) orders
+                            </span>
+                            <span className="mt-1 block text-xs text-gray-500">
+                              {LIMIT_PENDING_HELP_TEXT}
+                            </span>
+                          </span>
+                        </label>
                       </div>
+                    )}
 
+                    {/* Lot/Quantity Mode Settings */}
+                    <div className="flex gap-6 items-center mb-4">
+                      <div className="flex items-center gap-3">
+                        <button type="button"
+                          onClick={() => handleEditSegmentPermissionChange(segmentKey, 'enableLotSettings', !s.enableLotSettings)}
+                          className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableLotSettings ? 'bg-yellow-600' : 'bg-dark-600'}`}
+                        >
+                          <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableLotSettings ? 'translate-x-6' : 'translate-x-0'}`} />
+                        </button>
+                        <span className="text-xs text-gray-400">Settings in Lot</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button type="button"
+                          onClick={() => handleEditSegmentPermissionChange(segmentKey, 'enableQuantitySettings', !s.enableQuantitySettings)}
+                          className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableQuantitySettings ? 'bg-blue-600' : 'bg-dark-600'}`}
+                        >
+                          <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableQuantitySettings ? 'translate-x-6' : 'translate-x-0'}`} />
+                        </button>
+                        <span className="text-xs text-gray-400">Settings in Qty</span>
+                      </div>
                     </div>
 
-
-
-                    {/* Option Sell */}
-
-                    <div className="bg-dark-800 rounded-lg p-3 border border-red-900/50">
-
-                      <div className="flex items-center justify-between mb-2">
-
-                        <h5 className="text-sm font-medium text-red-400">Option Sell</h5>
-
-                        <div className="flex items-center gap-2">
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
-
-                              fraction: !editFormData.segmentPermissions[expandedSegment].optionSell?.fraction
-
-                            })}
-
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-
-                              editFormData.segmentPermissions[expandedSegment].optionSell?.fraction
-
-                                ? 'bg-purple-600 text-white'
-
-                                : 'bg-gray-600 text-white'
-
-                            }`}
-
-                          >
-
-                            {editFormData.segmentPermissions[expandedSegment].optionSell?.fraction ? 'Fraction On' : 'Fraction Off'}
-
-                          </button>
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
-
-                              allowed: !editFormData.segmentPermissions[expandedSegment].optionSell?.allowed
-
-                            })}
-
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-
-                              editFormData.segmentPermissions[expandedSegment].optionSell?.allowed
-
-                                ? 'bg-green-600 text-white'
-
-                                : 'bg-red-600 text-white'
-
-                            }`}
-
-                          >
-
-                            {editFormData.segmentPermissions[expandedSegment].optionSell?.allowed ? 'Allowed' : 'Blocked'}
-
-                          </button>
-
+                    {s.enableLotSettings && (
+                      <>
+                        <h4 className="text-xs font-semibold text-yellow-400 mb-3">Lot Settings</h4>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.lotSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.intradayLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.lotSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
                         </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.maxLots ?? 100}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleEditSegmentPermissionChange(segmentKey, 'maxLots', isNaN(val) ? 100 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.minLots ?? 1}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleEditSegmentPermissionChange(segmentKey, 'minLots', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Breakup Lots</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.lotSettings?.breakupLots ?? 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.breakupLots', isNaN(val) ? 0 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Notification in %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={s.lotSettings?.notificationPercent ?? 70}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.notificationPercent', isNaN(val) ? 70 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Autosquare %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={s.lotSettings?.autosquarePercent ?? 90}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.autosquarePercent', isNaN(val) ? 90 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
 
+                    {s.enableQuantitySettings && (
+                      <>
+                        <h4 className="text-xs font-semibold text-blue-400 mb-3">Quantity Settings</h4>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.quantityModeSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.intradayLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={s.quantityModeSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.quantityModeSettings?.maxQuantity ?? 1000}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.maxQuantity', isNaN(val) ? 1000 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Min Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.quantityModeSettings?.minQuantity ?? 1}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.minQuantity', isNaN(val) ? 1 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Breakup Quantity</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={s.quantityModeSettings?.breakupQuantity ?? 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.breakupQuantity', isNaN(val) ? 0 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Notification in %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={s.quantityModeSettings?.notificationPercent ?? 70}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.notificationPercent', isNaN(val) ? 70 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Autosquare %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={s.quantityModeSettings?.autosquarePercent ?? 90}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.autosquarePercent', isNaN(val) ? 90 : val);
+                              }}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+
+                    {/* Brokerage */}
+                    <h4 className="text-xs font-semibold text-green-400 mb-2">Brokerage</h4>
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">
+                          {commissionAmountLabel(s.commissionType || 'PER_LOT')}
+                        </label>
+                        <input type="number" value={s.commissionLot || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, 'commissionLot', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                        <p className="text-[10px] text-gray-600 mt-1">{commissionHelperText(s.commissionType || 'PER_LOT')}</p>
                       </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-
-                          <select
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.commissionType || 'PER_LOT'}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
-
-                              commissionType: e.target.value
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
-                          >
-
-                            <option value="PER_LOT">Per Lot</option>
-
-                            <option value="PER_TRADE">Per Trade</option>
-
-                            <option value="PER_CRORE">Per Crore</option>
-
-                          </select>
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
-
-                          <input
-
-                            type="number"
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.commission || 0}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
-
-                              commission: Number(e.target.value)
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Strike Selection (±)</label>
-
-                          <input
-
-                            type="number"
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.strikeSelection || 50}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
-
-                              strikeSelection: Number(e.target.value)
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Max Exchange Qty' : 'Max Exchange Lots'}</label>
-
-                          <input
-
-                            type="number"
-
-                            value={editFormData.segmentPermissions[expandedSegment].optionSell?.maxExchangeLots || 100}
-
-                            onChange={(e) => handleEditSegmentPermissionChange(expandedSegment, 'optionSell', {
-
-                              ...editFormData.segmentPermissions[expandedSegment].optionSell,
-
-                              maxExchangeLots: Number(e.target.value)
-
-                            })}
-
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs"
-
-                          />
-
-                        </div>
-
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
+                        <select
+                          value={s.commissionType || 'PER_LOT'}
+                          onChange={(e) => {
+                            const ct = e.target.value;
+                            handleEditSegmentPermissionChange(expandedSegment, 'commissionType', ct);
+                            handleEditSegmentPermissionChange(expandedSegment, 'commissionUnit', requiredUnitForCommissionType(ct));
+                          }}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                        >
+                          <option value="PER_LOT">Per Lot</option>
+                          <option value="PER_TRADE">Per Trade</option>
+                          <option value="PER_CRORE">Per Crore</option>
+                        </select>
                       </div>
-
                     </div>
 
+                    {/* Option Buy / Sell */}
+                    <h4 className="text-xs font-semibold text-purple-400 mb-2">Option Buy / Sell</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {['optionBuy', 'optionSell'].map(optType => {
+                            const opt = s[optType] || {};
+                            return (
+                              <div key={optType} className="bg-dark-800 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <h5 className="text-xs font-semibold">{optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}</h5>
+                                  <button type="button" onClick={() => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, allowed: !opt.allowed })}
+                                    className={`px-2 py-0.5 rounded text-xs font-medium ${opt.allowed !== false ? 'bg-green-600' : 'bg-red-600'}`}>
+                                    {opt.allowed !== false ? 'Allowed' : 'Blocked'}
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-xs text-gray-400 mb-1">
+                                      {commissionAmountLabel(opt.commissionType || 'PER_LOT')}
+                                    </label>
+                                    <input type="number" value={opt.commission || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, commission: parseFloat(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
+                                    <p className="text-[9px] text-gray-600 mt-0.5">{commissionHelperText(opt.commissionType || 'PER_LOT')}</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
+                                    <input type="number" value={opt.strikeSelection || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, strikeSelection: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Max Exch Qty' : 'Max Exch Lots'}</label>
+                                    <input type="number" value={opt.maxExchangeLots || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, maxExchangeLots: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs text-gray-400 mb-1">Comm. Type</label>
+                                    <select
+                                      value={opt.commissionType || 'PER_LOT'}
+                                      onChange={(e) => {
+                                        const ct = e.target.value;
+                                        handleEditSegmentPermissionChange(expandedSegment, optType, {
+                                          ...opt,
+                                          commissionType: ct,
+                                          commissionUnit: requiredUnitForCommissionType(ct),
+                                        });
+                                      }}
+                                      className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs"
+                                    >
+                                      <option value="PER_LOT">Per Lot</option>
+                                      <option value="PER_TRADE">Per Trade</option>
+                                      <option value="PER_CRORE">Per Crore</option>
+                                    </select>
+                                    <select
+                                      value={requiredUnitForCommissionType(opt.commissionType || 'PER_LOT')}
+                                      disabled
+                                      className="w-full mt-1 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-[10px] opacity-90 cursor-not-allowed"
+                                      title="Unit follows commission type"
+                                    >
+                                      {unitOptionsForCommissionType(opt.commissionType || 'PER_LOT').map((o) => (
+                                        <option key={o.value} value={o.value}>
+                                          {o.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                   </div>
-
-                </div>
-
-              )}
+                );
+              })()}
 
             </div>
-
-
 
             {/* Script Settings */}
 
@@ -57417,7 +56730,9 @@ const UserManagement = () => {
 
                                 spread: { buy: 0, sell: 0 },
 
-                                block: { future: false, option: false }
+                                block: { future: false, option: false },
+
+                                leverage: { exposureIntraday: segmentDefaults.exposureIntraday || 1, exposureCarryForward: segmentDefaults.exposureCarryForward || 1 }
 
                               };
 
@@ -57717,7 +57032,7 @@ const UserManagement = () => {
 
                         <div className="flex flex-wrap gap-2">
 
-                          {['LOT', 'QUANTITY', 'FIXED_MARGIN', 'BROKERAGE', 'SPREAD', 'BLOCK'].map(type => (
+                          {['LOT', 'QUANTITY', 'LEVERAGE', 'FIXED_MARGIN', 'BROKERAGE', 'SPREAD', 'BLOCK'].map(type => (
 
                             <button
 
@@ -57757,7 +57072,7 @@ const UserManagement = () => {
 
                             >
 
-                              {type === 'LOT' ? 'Lot' : type === 'QUANTITY' ? 'Quantity' : type === 'FIXED_MARGIN' ? 'Fixed Margin' : type === 'BROKERAGE' ? 'Brokerage' : type === 'SPREAD' ? 'Spread' : 'Block'}
+                              {type === 'LOT' ? 'Lot' : type === 'QUANTITY' ? 'Quantity' : type === 'LEVERAGE' ? 'Leverage' : type === 'FIXED_MARGIN' ? 'Fixed Margin' : type === 'BROKERAGE' ? 'Brokerage' : type === 'SPREAD' ? 'Spread' : 'Block'}
 
                             </button>
 
@@ -58119,6 +57434,52 @@ const UserManagement = () => {
 
                         </div>
 
+                      )}
+
+                      
+
+                      {/* Leverage Settings */}
+                      {editFormData.scriptSettings[selectedScript]?.settingType === 'LEVERAGE' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Intraday Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={editFormData.scriptSettings[selectedScript]?.leverage?.exposureIntraday || 1}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    leverage: { ...prev.scriptSettings[selectedScript]?.leverage, exposureIntraday: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Carry Forward Leverage (x)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={editFormData.scriptSettings[selectedScript]?.leverage?.exposureCarryForward || 1}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    leverage: { ...prev.scriptSettings[selectedScript]?.leverage, exposureCarryForward: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
                       )}
 
                       
@@ -59799,7 +59160,7 @@ const WalletModal = ({ user, onClose, onSuccess, token }) => {
 
               <span className="text-sm text-purple-400">Your Wallet Balance</span>
 
-              <span className="text-lg font-bold text-purple-400">₹{adminBalance.toLocaleString()}</span>
+              <span className="text-lg font-bold text-purple-400">{adminBalance.toLocaleString()}</span>
 
             </div>
 
@@ -59819,23 +59180,23 @@ const WalletModal = ({ user, onClose, onSuccess, token }) => {
 
           <p className="text-2xl font-bold text-green-400 mt-1">
 
-            ₹{(walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0).toLocaleString()}
+            {(walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0).toLocaleString()}
 
           </p>
 
           <div className="flex justify-between text-sm text-gray-400 mt-1">
 
-            <span>Cash Balance: ₹{(walletData?.wallet?.cashBalance || 0).toLocaleString()}</span>
+            <span>Cash Balance: {(walletData?.wallet?.cashBalance || 0).toLocaleString()}</span>
 
-            <span>Trading: ₹{(walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
+            <span>Trading: {(walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
 
           </div>
 
           <div className="flex justify-between text-sm mt-1">
 
-            <span className="text-yellow-400">Margin Used: ₹{(walletData?.wallet?.usedMargin || 0).toLocaleString()}</span>
+            <span className="text-yellow-400">Margin Used: {(walletData?.wallet?.usedMargin || 0).toLocaleString()}</span>
 
-            <span className="text-gray-400">Available: ₹{((walletData?.wallet?.tradingBalance || 0) - (walletData?.wallet?.usedMargin || 0)).toLocaleString()}</span>
+            <span className="text-gray-400">Available: {((walletData?.wallet?.tradingBalance || 0) - (walletData?.wallet?.usedMargin || 0)).toLocaleString()}</span>
 
           </div>
 
@@ -59961,7 +59322,7 @@ const WalletModal = ({ user, onClose, onSuccess, token }) => {
 
           <div>
 
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
 
             <input
 
@@ -60071,7 +59432,7 @@ const WalletModal = ({ user, onClose, onSuccess, token }) => {
 
                   <span className={tx.type === 'deposit' || tx.type === 'credit' ? 'text-green-400' : 'text-red-400'}>
 
-                    {tx.type === 'deposit' || tx.type === 'credit' ? '+' : '-'}₹{tx.amount}
+                    {tx.type === 'deposit' || tx.type === 'credit' ? '+' : '-'}{tx.amount}
 
                   </span>
 
@@ -60339,7 +59700,7 @@ const TransactionSlipsManagement = () => {
 
 
 
-  const formatAmount = (amount) => `₹${Number(amount).toFixed(2)}`;
+  const formatAmount = (amount) => `${Number(amount).toFixed(2)}`;
 
   const formatDate = (date) => new Date(date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
@@ -62259,7 +61620,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
 
               <div>
 
-                <label className="block text-xs text-gray-400 mb-1">Intraday Limit (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Intraday Limit ()</label>
 
                 <input
 
@@ -62287,7 +61648,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
 
               <div>
 
-                <label className="block text-xs text-gray-400 mb-1">Carryforward Limit (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Carryforward Limit ()</label>
 
                 <input
 
@@ -62399,7 +61760,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
 
               <div>
 
-                <label className="block text-xs text-gray-400 mb-1">Max Position Value (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Max Position Value ()</label>
 
                 <input
 
@@ -62427,7 +61788,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
 
               <div>
 
-                <label className="block text-xs text-gray-400 mb-1">Max Exposure (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Max Exposure ()</label>
 
                 <input
 
@@ -62617,7 +61978,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
 
                 <p className="text-xs text-gray-400 mb-4">
 
-                  Choose exchange, then segment (same tabs as Market Watch). Instruments load from the database for that tab.
+                  Choose exchange, then segment. Instruments load from the database for that tab.
 
                   Pick a contract from the list, or Custom to type symbol / trading symbol. Saved values are uppercase.
 

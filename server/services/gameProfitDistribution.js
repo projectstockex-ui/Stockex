@@ -526,8 +526,6 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
             let segment = 'games'; // default
             if (gameKey?.includes('mcx') || gameKey?.includes('MCX')) {
               segment = 'mcx';
-            } else if (gameKey?.includes('crypto') || gameKey?.includes('Crypto') || gameKey?.includes('btc') || gameKey?.includes('BTC')) {
-              segment = 'crypto';
             } else if (gameKey?.includes('forex') || gameKey?.includes('Forex') || gameKey?.includes('FOREX')) {
               segment = 'forex';
             }

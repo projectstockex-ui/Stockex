@@ -1566,22 +1566,24 @@ function mergeNiftyLiveIntoLastCandle(rows, livePx) {
   if (!Array.isArray(rows) || rows.length === 0) return rows;
   const p = Number(livePx);
   if (!Number.isFinite(p) || p <= 0) return rows;
-  const out = rows.map((r) => ({ ...r }));
-  const last = out[out.length - 1];
+  // OPTIMIZATION: Only update the last candle without deep copying entire array
+  const last = rows[rows.length - 1];
+  if (!last) return rows;
   const o = Number(last.open);
   const hi = Number(last.high);
   const lo = Number(last.low);
   const open = Number.isFinite(o) ? o : p;
   const high = Math.max(Number.isFinite(hi) ? hi : open, p);
   const low = Math.min(Number.isFinite(lo) ? lo : open, p);
-  out[out.length - 1] = {
+  const updatedLast = {
     ...last,
     open,
     high,
     low,
     close: p,
   };
-  return out;
+  // Return new array with only the last candle updated (much faster)
+  return [...rows.slice(0, -1), updatedLast];
 }
 
 /** Last second of betting window `winNum` (1-based) — LTP clock. */
@@ -1604,14 +1606,14 @@ const niftyOpenFixSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   return m + winNum * D;
 };
 
-/** Scheduled result instant for window `winNum` (1-based), at start of window winNum+1. */
+/** Scheduled result instant for window `winNum` (1-based), at end of window (immediate). */
 const niftyResultSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   const m = niftyMarketOpenSnappedSecForGame(openTime);
   const D = Math.max(
     NIFTY_UP_DOWN_MIN_ROUND_SEC,
     Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC,
   );
-  return m + (winNum + 1) * D;
+  return m + winNum * D;
 };
 
 const formatCountdown = (totalSec) => {
@@ -1661,7 +1663,8 @@ const getTradingWindowInfo = (openTime, closeTime, roundDurationSec = DEFAULT_NI
   const windowStartSec = marketOpenSec + windowIndex * D;
   const windowEndSec = marketOpenSec + (windowIndex + 1) * D;
   const ltpTimeSec = marketOpenSec + (windowIndex + 1) * D;
-  const resultTimeSec = marketOpenSec + (windowIndex + 2) * D;
+  // Result is at the end of the current window (immediate, no delay)
+  const resultTimeSec = marketOpenSec + (windowIndex + 1) * D;
 
   if (windowEndSec >= marketCloseSec) {
     return {
@@ -2081,6 +2084,9 @@ const GameLivePricePanel = ({
   /** IST YYYY-MM-DD for the rows currently in state — detects midnight rollover. */
   const ltpTapeIstYmdRef = useRef('');
 
+  // Removed throttling - duplicate handler was the issue, not throttling
+  // Prices should now update immediately without delays
+
   const [livePrice, setLivePrice] = useState(null);
   const [priceChange, setPriceChange] = useState(null);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
@@ -2122,9 +2128,14 @@ const GameLivePricePanel = ({
   const symbol = isBTC ? 'BTC/USDT' : 'NIFTY 50';
 
   const pushLive = useCallback((price, changePayload, tickData) => {
-    if (!price || price <= 0 || !Number.isFinite(price)) return;
+    console.log('[pushLive] Called with price:', price, 'changePayload:', changePayload);
+    if (!price || price <= 0 || !Number.isFinite(price)) {
+      console.log('[pushLive] Invalid price, returning');
+      return;
+    }
     setUsingDummyPrice(false);
     onDemoPriceActiveRef.current?.(false);
+    console.log('[pushLive] Setting livePrice to:', price);
     setLivePrice(price);
     onPriceUpdateRef.current?.(price);
     if (!isBTC && niftyLtpTapeRef.current) {
@@ -2217,15 +2228,10 @@ const GameLivePricePanel = ({
     return () => clearInterval(id);
   }, []);
 
-  // Clear price when market is closed (only for Nifty, not BTC)
+  // Removed market hours check - backend controls when to send ticks
   useEffect(() => {
     if (isBTC) return;
-    if (!isNseCashMarketOpen()) {
-      isLiveRef.current = false;
-      setIsLiveConnected(false);
-      setLivePrice(null);
-      setPriceChange(null);
-    }
+    // Removed automatic price clearing on market close
   }, [sessionClock, isBTC]);
 
   const nseCashOpen = !isBTC && isNseCashMarketOpen();
@@ -2261,32 +2267,6 @@ const GameLivePricePanel = ({
     // Request initial Zerodha status
     socket.emit('get_zerodha_status');
 
-    if (!isBTC) {
-      socket.on('market_tick', (ticks) => {
-        const niftyTick = ticks['256265'] ?? ticks[256265];
-        if (!niftyTick) return;
-
-        // Ignore ticks when NSE market is closed — use authoritative API clearing price instead
-        if (!isNseCashMarketOpen()) return;
-
-        if (!isLiveRef.current) {
-          isLiveRef.current = true;
-          setIsLiveConnected(true);
-        }
-        const ch = niftyTick.change !== undefined
-          ? { change: parseFloat(niftyTick.change).toFixed(2), percent: niftyTick.changePercent }
-          : null;
-        pushLive(niftyTick.ltp, ch, niftyTick);
-        // Extract bid/ask for Nifty Bracket
-        if (niftyTick.bid !== undefined || niftyTick.ask !== undefined) {
-          onBidAskUpdateRef.current?.({
-            bid: niftyTick.bid || niftyTick.ltp,
-            ask: niftyTick.ask || niftyTick.ltp,
-          });
-        }
-      });
-    }
-
     if (isBTC) {
       const handleBtc = (ticks) => {
         const btcTick = ticks['BTCUSDT'] || ticks['BTC'];
@@ -2306,24 +2286,33 @@ const GameLivePricePanel = ({
     } else {
       // Handle NIFTY live prices from Zerodha
       const handleNifty = (ticks) => {
-        // Ignore ticks when NSE market is closed
-        if (!isNseCashMarketOpen()) return;
+        console.log('[handleNifty] Received ticks:', Object.keys(ticks));
+        // Removed market hours check - backend controls when to send ticks
         const niftyTick = ticks['256265']; // NIFTY 50 token
-        if (niftyTick && niftyTick.last_price) {
+        console.log('[handleNifty] niftyTick:', niftyTick ? 'found' : 'not found');
+        if (niftyTick && (niftyTick.last_price || niftyTick.ltp)) {
           if (!isLiveRef.current) {
             isLiveRef.current = true;
             setIsLiveConnected(true);
           }
-          const currentPrice = niftyTick.last_price;
-          let ch = null;
+          const currentPrice = niftyTick.last_price || niftyTick.ltp;
+          const ch = niftyTick.change !== undefined
+            ? { change: parseFloat(niftyTick.change).toFixed(2), percent: niftyTick.changePercent }
+            : null;
           pushLive(currentPrice, ch, niftyTick);
+          // Extract bid/ask for Nifty Bracket
+          if (niftyTick.bid !== undefined || niftyTick.ask !== undefined) {
+            onBidAskUpdateRef.current?.({
+              bid: niftyTick.bid || niftyTick.ltp,
+              ask: niftyTick.ask || niftyTick.ltp,
+            });
+          }
         }
       };
 
       socket.on('market_tick', handleNifty);
       socket.on('nifty_price', (data) => {
-        // Ignore price events when NSE market is closed
-        if (!isNseCashMarketOpen()) return;
+        // Removed market hours check - backend controls when to send data
         if (data && data.price) {
           if (!isLiveRef.current) {
             isLiveRef.current = true;
@@ -2347,9 +2336,14 @@ const GameLivePricePanel = ({
   }, [gameId, isBTC, pushLive]);
 
   // Kite Connect quote last_price — same as Kite app; runs during and after cash session (no mock LTP override)
+  // DISABLED: API polling conflicts with WebSocket real-time data
+  // WebSocket now provides tick-to-tick updates, so API polling is disabled
+  // Only used for initial price load and market closed prices
   useEffect(() => {
     if (isBTC) return undefined;
     let cancelled = false;
+    let initialLoadDone = false;
+    
     const syncAuthoritative = async () => {
       try {
         const closedMode = closedNiftyStickMode === 'ltp' ? 'ltp' : 'clearing';
@@ -2367,6 +2361,17 @@ const GameLivePricePanel = ({
             ? spotRef
             : ltpPrice;
         if (!Number.isFinite(price) || price <= 0) return;
+        
+        // Only use API price on initial load or when market is closed
+        // During market hours, WebSocket provides real-time updates
+        if (nseOpenNow && initialLoadDone) {
+          console.log('[Nifty API] Market open - WebSocket active, skipping API poll');
+          return;
+        }
+        
+        // When market is closed, always call pushLive to ensure correct price is used
+        // The backend will return LTP or clearing based on closedMode parameter
+        
         if (!nseOpenNow) {
           console.log('[Nifty API] Market closed - using closing price:', price, '| ltp:', ltpPrice, '| spotRef:', spotRef);
         }
@@ -2394,6 +2399,12 @@ const GameLivePricePanel = ({
         } else {
           setSessionClearing(null);
           onSessionClearingUpdateRef.current?.(null);
+        }
+        if (!initialLoadDone) {
+          console.log('[Nifty API] Initial price load:', price);
+          initialLoadDone = true;
+        } else {
+          console.log('[Nifty API] Using API price (market closed):', price);
         }
         pushLive(price, ch, {
           open: data.open,
@@ -2429,28 +2440,8 @@ const GameLivePricePanel = ({
   const displayPrice = livePrice;
   const isUp = priceChange ? parseFloat(priceChange.change) >= 0 : true;
 
-  // Create simple chart with current price only for Nifty (no historical data)
-  useEffect(() => {
-    if (isBTC) return; // Skip for BTC - BTC should use real historical data
-    if (!displayPrice) return;
-    
-    // Create a simple chart with just current price for Nifty
-    const now = Date.now() / 1000;
-    const price = Number(displayPrice);
-    
-    // Create a few data points around current price for visual effect
-    const simpleData = [
-      { time: now - 300, open: price * 0.999, high: price * 1.001, low: price * 0.998, close: price * 0.9995 },
-      { time: now - 240, open: price * 0.9995, high: price * 1.001, low: price * 0.9985, close: price * 0.9998 },
-      { time: now - 180, open: price * 0.9998, high: price * 1.001, low: price * 0.999, close: price * 1.0002 },
-      { time: now - 120, open: price * 1.0002, high: price * 1.002, low: price * 0.999, close: price * 1.0005 },
-      { time: now - 60, open: price * 1.0005, high: price * 1.002, low: price * 0.9995, close: price * 1.0008 },
-      { time: now, open: price * 1.0008, high: price * 1.003, low: price * 0.999, close: price }
-    ];
-    
-    setHistoricalData(simpleData);
-    setLoadingHistory(false);
-  }, [displayPrice, isBTC]);
+  // REMOVED: This useEffect was creating fake historical data on every price change
+  // causing excessive re-renders and slowness. Real historical data is loaded separately.
 
   // Fetch historical data for BTC charts (real Binance data)
   useEffect(() => {
@@ -2471,6 +2462,26 @@ const GameLivePricePanel = ({
         setLoadingHistory(false);
       });
   }, [isBTC, btcChartInterval]);
+
+  // Fetch historical data for NIFTY charts (real Kite data)
+  useEffect(() => {
+    if (isBTC) return;
+    const interval = niftyChartInterval;
+    setLoadingHistory(true);
+    axios.get('/api/market/nifty-history', {
+      params: { interval, limit: 200 }
+    })
+      .then(({ data }) => {
+        const rows = Array.isArray(data) ? data : data?.data || [];
+        setHistoricalData(rows);
+        setLoadingHistory(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load NIFTY history:', err);
+        setHistoricalData([]);
+        setLoadingHistory(false);
+      });
+  }, [isBTC, niftyChartInterval]);
 
   const chartTfLabel = isBTC
     ? BTC_CHART_OPTIONS.find((o) => o.interval === btcChartInterval)?.label || btcChartInterval
@@ -2544,7 +2555,7 @@ const GameLivePricePanel = ({
     cb(niftyRowsSyncedForGameLtp ?? []);
   }, [isBTC, gameId, niftyRowsSyncedForGameLtp]);
 
-  // Notify parent of price data updates
+  // Notify parent of price data updates (immediate - no throttling)
   useEffect(() => {
     onPriceDataUpdateRef.current?.({ displayPrice, priceChange });
   }, [displayPrice, priceChange]);
@@ -5793,13 +5804,46 @@ const NiftyNumberScreen = ({
 
           {/* CENTER COLUMN - live price (Nifty or BTC) */}
           <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
+            {/* Clearing Price Display - Prominent at top */}
+            <div className="p-3 rounded-lg bg-purple-900/30 border border-purple-500/40 mb-3">
+              <div className="text-xs font-semibold text-purple-300 uppercase tracking-wide mb-1">
+                Clearing Price (NIFTY 50)
+              </div>
+              <div className="text-2xl sm:text-3xl text-center font-bold">
+                {(() => {
+                  const priceToShow = sessionClearing != null && Number.isFinite(sessionClearing) ? sessionClearing : displayPrice;
+                  console.log('[NiftyNumber] sessionClearing:', sessionClearing, 'displayPrice:', displayPrice, 'priceToShow:', priceToShow);
+                  if (priceToShow != null) {
+                    const priceStr = priceToShow.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    const dotIndex = priceStr.lastIndexOf('.');
+                    if (dotIndex === -1) {
+                      return `₹${priceStr}`;
+                    }
+                    return (
+                      <>
+                        ₹{priceStr.slice(0, dotIndex)}
+                        <span className="text-purple-400 text-3xl sm:text-4xl font-bold ml-1">
+                          {priceStr.slice(dotIndex)}
+                        </span>
+                      </>
+                    );
+                  }
+                  return '—';
+                })()}
+              </div>
+              {sessionClearing != null && Number.isFinite(sessionClearing) && (
+                <div className="text-center text-[10px] text-purple-400/80 mt-1">
+                  Last 15m bar close (IST)
+                </div>
+              )}
+            </div>
             <GameLivePricePanel 
               gameId={game.id} 
               fullHeight 
               onPriceUpdate={(price) => setDisplayPrice(price)}
               onSessionClearingUpdate={(price) => {
                 if (price != null && Number.isFinite(price)) {
-                  setDisplayPrice(price);
+                  setSessionClearing(price);
                 }
               }}
             />
@@ -5938,36 +5982,6 @@ const NiftyNumberScreen = ({
                       )}
                     </div>
                   )}
-
-                  {/* Clearing and LTP Display */}
-                  <div className="mt-3 space-y-2">
-                    <div className="text-[10px] text-gray-500 uppercase tracking-wide">
-                      {clearingLabel}
-                    </div>
-                    <div className="text-2xl sm:text-3xl text-center">
-                      {displayPrice != null ? (
-                        <span className="font-bold tracking-tight text-white">
-                          {(() => {
-                            const priceStr = displayPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                            const dotIndex = priceStr.lastIndexOf('.');
-                            if (dotIndex === -1) {
-                              return `₹${priceStr}`;
-                            }
-                            return (
-                              <>
-                                ₹{priceStr.slice(0, dotIndex)}
-                                <span className="text-red-500 text-3xl sm:text-4xl font-bold ml-1">
-                                  {priceStr.slice(dotIndex)}
-                                </span>
-                              </>
-                            );
-                          })()}
-                        </span>
-                      ) : (
-                        <span className="text-gray-500">—</span>
-                      )}
-                    </div>
-                  </div>
 
                   {/* Step 2: Select number of tickets */}
                   {currentStep === 2 && (
@@ -6607,8 +6621,8 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               niftyLtpTape={true} 
               closedNiftyStickMode="ltp"
               onPriceUpdate={(price) => {
-                console.log('[NiftyBracket] onPriceUpdate called with:', price);
-                // Only update currentPrice if price is valid and not zero
+                console.log('[NiftyBracket] onPriceUpdate called with:', price, 'currentPrice:', currentPrice);
+                // Always update currentPrice - the LTP should be the last traded price
                 if (price != null && Number.isFinite(price) && price > 0) {
                   setCurrentPrice(price);
                 }
