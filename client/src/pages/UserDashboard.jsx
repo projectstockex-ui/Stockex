@@ -4621,20 +4621,18 @@ const TradingPanel = ({
       : null;
 
   const confirmMinVolumeLabel =
-    !isUsdSpot && marginPreview?.minLots != null && Number(lotSize) > 0
-      ? `${marginPreview.minLots * Number(lotSize)} qty (min ${marginPreview.minLots} lot)`
-      : isUsdSpot && marginPreview?.minQuantity != null
-        ? `${marginPreview.minQuantity} units (min)`
+    (isUsdSpot || instrument?.exchange === 'MCX') && marginPreview?.minQuantity != null
+      ? `${marginPreview.minQuantity} units (min)`
+      : !isUsdSpot && marginPreview?.minLots != null && Number(lotSize) > 0
+        ? `${marginPreview.minLots * Number(lotSize)} qty (min ${marginPreview.minLots} lot)`
         : isUsdSpot
-          ? 'Exchange min quantity'
-          : !isUsdSpot && marginPreview?.minLots != null
-            ? `${marginPreview.minLots} lot(s)`
-            : '—';
+          ? '—'
+          : '—';
 
   const confirmVolumeStepLabel =
-    isUsdSpot && marginPreview?.quantityStep != null
+    (isUsdSpot || instrument?.exchange === 'MCX') && marginPreview?.quantityStep != null
       ? `Step ${marginPreview.quantityStep}`
-      : isUsdSpot
+      : (isUsdSpot || instrument?.exchange === 'MCX')
         ? '1 unit'
         : !isUsdSpot && inputMode === 'quantity'
           ? '1 qty'
@@ -5136,9 +5134,9 @@ const TradingPanel = ({
                 <div className="text-xs text-amber-400/95 mb-2">Loading margin preview…</div>
               )}
               {[
-                [isCryptoOnly ? 'Break/order qty' : 'Breakup / order lots', confirmBreakupCapLabel],
-                [isCryptoOnly ? 'Max qty' : 'Max lot', marginPreview?.maxLots != null ? String(marginPreview.maxLots) : '—'],
-                [isCryptoOnly ? 'Qty step' : 'Lot size', marginPreview?.lotSize != null ? String(marginPreview.lotSize) : String(lotSize ?? '—')],
+                [(isCryptoOnly || instrument?.exchange === 'MCX') ? 'Break/order qty' : 'Breakup / order lots', confirmBreakupCapLabel],
+                [(isCryptoOnly || instrument?.exchange === 'MCX') ? 'Max qty' : 'Max lot', marginPreview?.maxQuantity != null ? String(marginPreview.maxQuantity) : (marginPreview?.maxLots != null ? String(marginPreview.maxLots) : '—')],
+                [(isCryptoOnly || instrument?.exchange === 'MCX') ? 'Qty step' : 'Lot size', marginPreview?.quantityStep != null ? String(marginPreview.quantityStep) : (marginPreview?.lotSize != null ? String(marginPreview.lotSize) : String(lotSize ?? '—'))],
                 ['Time', confirmTickTimeLabel],
                 ['Volume', confirmVolumeDisp],
                 [

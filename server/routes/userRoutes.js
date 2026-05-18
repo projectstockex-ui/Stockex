@@ -1725,12 +1725,18 @@ router.get('/games/recent-winners', protectUser, async (req, res) => {
 router.get('/settings', protectUser, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('marginSettings rmsSettings settings segmentPermissions segmentExplicitKeys')
+      .select('userId marginSettings rmsSettings settings segmentPermissions segmentExplicitKeys')
       .populate({ path: 'admin', select: 'segmentPermissions segmentExplicitKeys' })
       .lean();
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Attach parent admin's segment permissions to user for hierarchy inheritance
+    if (user.admin?.segmentPermissions) {
+      user.parentSegmentPermissions = user.admin.segmentPermissions;
+      console.log('[user/settings] Attached parentSegmentPermissions for user:', user.userId);
     }
 
     // Default segment settings for all Market Watch segments (fills gaps for trading UI)

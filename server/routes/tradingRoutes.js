@@ -123,6 +123,20 @@ router.get('/wallet', protect, async (req, res) => {
 // Calculate margin for order (preview) - Uses user's segment and script settings
 router.post('/margin-preview', protect, async (req, res) => {
   try {
+    // Populate user with admin's segment permissions for hierarchy inheritance
+    const User = (await import('../models/User.js')).default;
+    const user = await User.findById(req.user._id)
+      .select('userId segmentPermissions segmentExplicitKeys scriptSettings')
+      .populate({ path: 'admin', select: 'segmentPermissions segmentExplicitKeys' })
+      .lean();
+
+    if (!user) throw new Error('User not found');
+
+    // Attach parent admin's segment permissions to user for permission checks
+    if (user.admin?.segmentPermissions) {
+      user.parentSegmentPermissions = user.admin.segmentPermissions;
+    }
+
     // User-selectable leverage removed: margin = tradeValue / segment exposure / 1 (instrument caps still apply).
     let leverage = 1;
     const { symbol, productType, side, instrumentType, category, segment } = req.body;
@@ -142,7 +156,7 @@ router.post('/margin-preview', protect, async (req, res) => {
     const TradeService = (await import('../services/tradeService.js')).default;
     
     // Get user's segment and script settings (System defaults + hierarchy + user; merged with instrument Rules in margin calculator)
-    let segmentSettings = await TradeService.getUserSegmentSettings(req.user, effectiveSegment, instrumentType);
+    let segmentSettings = await TradeService.getUserSegmentSettings(user, effectiveSegment, instrumentType);
     const orInst = [];
     if (req.body.token) orInst.push({ token: String(req.body.token) });
     if (symbol && req.body.exchange) {
@@ -342,14 +356,15 @@ router.post('/margin-preview', protect, async (req, res) => {
     const qtyModeSettings = segmentSettings?.quantityModeSettings;
     const maxLots = (isCrypto && qtyModeSettings?.maxQuantity > 0)
       ? qtyModeSettings.maxQuantity
-      : (scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50);
+      : (scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots);
     const minLots = (isCrypto && qtyModeSettings?.minQuantity > 0)
       ? qtyModeSettings.minQuantity
       : (scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1);
     
     // Get breakup quantity and max bid limits - for crypto prefer quantityModeSettings.breakupQuantity
+    // For MCX also use qtyModeSettings like crypto
     const instrumentBreakupQuantity = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.breakupQuantity;
-    const segmentBreakupQuantity = (isCrypto && qtyModeSettings?.breakupQuantity > 0)
+    const segmentBreakupQuantity = ((isCrypto || isMCX) && qtyModeSettings?.breakupQuantity > 0)
       ? qtyModeSettings.breakupQuantity
       : (segmentSettings?.quantitySettings?.breakupQuantity || 0);
     const breakupQuantity = instrumentBreakupQuantity || segmentBreakupQuantity || 0;
@@ -370,12 +385,13 @@ router.post('/margin-preview', protect, async (req, res) => {
     // Get quantity step from instrument (for crypto/forex)
     const quantityStep = instrumentDoc?.qtyFilterMin || (isCrypto || isForex ? 0.001 : 1);
 
-    // For crypto/forex, use exchange quantity limits if set
-    const minQuantity = minExchangeQty > 0 ? minExchangeQty : (instrumentDoc?.qtyFilterMin || 0.001);
-    const maxQuantity = maxExchangeQty > 0 ? maxExchangeQty : (instrumentDoc?.qtyFilterMax || 0);
+    // For crypto/forex/MCX, use exchange quantity limits if set
+    const minQuantity = minExchangeQty > 0 ? minExchangeQty : ((isCrypto || isMCX) && qtyModeSettings?.minQuantity > 0 ? qtyModeSettings.minQuantity : (instrumentDoc?.qtyFilterMin || 0.001));
+    const maxQuantity = maxExchangeQty > 0 ? maxExchangeQty : ((isCrypto || isMCX) && qtyModeSettings?.maxQuantity > 0 ? qtyModeSettings.maxQuantity : (instrumentDoc?.qtyFilterMax || 0));
     
     let lotsValid;
     let lotsError = null;
+    // For MCX, use quantity validation like crypto/forex (not lots)
     if (bnCryptoPreview) {
       try {
         assertBinanceCryptoQuantityValidated({
@@ -390,12 +406,11 @@ router.post('/margin-preview', protect, async (req, res) => {
         lotsValid = false;
         lotsError = e?.message || 'Invalid quantity';
       }
-    } else if (orderIsUsdSpot({ ...req.body, segment, instrumentType })) {
-      lotsValid =
-        quantity > 0 &&
-        (lotSize <= 0 || !Number.isFinite(effectivePreviewLots) || effectivePreviewLots <= maxLots);
+    } else if (orderIsUsdSpot({ ...req.body, segment, instrumentType }) || isMCX) {
+      // For MCX and USD spot, validate quantity directly (not lots)
+      lotsValid = quantity > 0;
       if (quantity > 0 && !lotsValid) {
-        lotsError = `Exceeds maximum ${maxLots} lots for this order`;
+        lotsError = `Invalid quantity`;
       }
     } else {
       lotsValid = lots >= minLots && lots <= maxLots;
@@ -423,16 +438,16 @@ router.post('/margin-preview', protect, async (req, res) => {
       brokerage: Math.round(brokerage * 100) / 100,
       commission: Math.round(commission * 100) / 100,
       spread,
-      minQuantity: isCrypto || isForex ? minQuantity : undefined,
-      maxQuantity: isCrypto || isForex ? maxQuantity : undefined,
-      quantityStep: isCrypto || isForex ? quantityStep : undefined,
-      lotSize,
-      effectiveLots: Math.round(effectivePreviewLots * 1e8) / 1e8,
-      maxLots,
-      minLots,
-      perOrderLots,
+      minQuantity: (isCrypto || isForex || isMCX) ? minQuantity : undefined,
+      maxQuantity: (isCrypto || isForex || isMCX) ? maxQuantity : undefined,
+      quantityStep: (isCrypto || isForex || isMCX) ? quantityStep : undefined,
+      lotSize: isMCX ? undefined : lotSize,
+      effectiveLots: isMCX ? undefined : Math.round(effectivePreviewLots * 1e8) / 1e8,
+      maxLots: isMCX ? undefined : maxLots,
+      minLots: isMCX ? undefined : minLots,
+      perOrderLots: isMCX ? undefined : perOrderLots,
       lotsValid,
-      lotsError: !lotsValid ? (lotsError || `Quantity must be between ${minLots} and ${maxLots}`) : null,
+      lotsError: !lotsValid ? (lotsError || (isMCX ? 'Invalid quantity' : `Quantity must be between ${minLots} and ${maxLots}`)) : null,
       shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
       exposureIntraday: segmentSettingsForMargin?.exposureIntraday || null,
       exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null,
@@ -451,8 +466,23 @@ router.get('/market-status', protect, async (req, res) => {
   try {
     const exchange = req.query.exchange || 'NSE';
     const segment = req.query.segment || null;
-    const user = req.user;
+    
+    // Populate user with admin's segment permissions for hierarchy inheritance
+    const user = await User.findById(req.user._id).populate('admin', 'segmentPermissions segmentExplicitKeys');
+    if (!user) throw new Error('User not found');
+
+    console.log('[market-status] User:', user.userId, 'Admin:', user.admin?.name, 'Admin exists:', !!user.admin);
+
+    // Attach parent admin's segment permissions to user for permission checks
+    if (user.admin?.segmentPermissions) {
+      user.parentSegmentPermissions = user.admin.segmentPermissions;
+      console.log('[market-status] Attached parentSegmentPermissions for segment:', segment);
+    } else {
+      console.log('[market-status] No admin or no segmentPermissions found');
+    }
+    
     const status = await TradingService.getMarketStatus(exchange, segment, user);
+    console.log('[market-status] Status result:', status);
     res.json(status);
   } catch (error) {
     console.error('Error getting market status:', error);

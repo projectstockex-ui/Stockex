@@ -227,17 +227,32 @@ class TradingService {
       // FNO is the product category, NSEFUT/NSEOPT are the actual exchange segments under NSE
       if (userSegUpper === 'FNO' || userSegUpper === 'NFO') {
         const userSegPerms = user.segmentPermissions;
+        let userHasFNO = false;
+        
         if (userSegPerms) {
           const nseFutPerm = userSegPerms instanceof Map ? userSegPerms.get('NSEFUT') : userSegPerms['NSEFUT'];
           const nseOptPerm = userSegPerms instanceof Map ? userSegPerms.get('NSEOPT') : userSegPerms['NSEOPT'];
-          if ((nseFutPerm && nseFutPerm.enabled) || (nseOptPerm && nseOptPerm.enabled)) {
-            console.log(`[isMarketOpen] User has NSEFUT or NSEOPT enabled, allowing FNO trading`);
-            return { open: true, reason: 'User has NSEFUT/NSEOPT enabled' };
-          } else {
-            console.log(`[isMarketOpen] User does NOT have NSEFUT/NSEOPT enabled, blocking FNO trading`);
-            return { open: false, reason: 'NSEFUT/NSEOPT segment is not enabled for this user' };
+          userHasFNO = (nseFutPerm && nseFutPerm.enabled) || (nseOptPerm && nseOptPerm.enabled);
+        }
+
+        if (userHasFNO) {
+          console.log(`[isMarketOpen] User has NSEFUT or NSEOPT enabled, allowing FNO trading`);
+          return { open: true, reason: 'User has NSEFUT/NSEOPT enabled' };
+        }
+
+        // Check parent admin's segment permissions (hierarchy inheritance)
+        const parentSegPerms = user.parentSegmentPermissions || user.admin?.segmentPermissions;
+        if (parentSegPerms) {
+          const parentNseFutPerm = parentSegPerms instanceof Map ? parentSegPerms.get('NSEFUT') : parentSegPerms['NSEFUT'];
+          const parentNseOptPerm = parentSegPerms instanceof Map ? parentSegPerms.get('NSEOPT') : parentSegPerms['NSEOPT'];
+          if ((parentNseFutPerm && parentNseFutPerm.enabled) || (parentNseOptPerm && parentNseOptPerm.enabled)) {
+            console.log(`[isMarketOpen] Parent admin has NSEFUT or NSEOPT enabled (hierarchy inheritance), allowing FNO trading`);
+            return { open: true, reason: 'Parent admin has NSEFUT/NSEOPT enabled' };
           }
         }
+
+        console.log(`[isMarketOpen] User and parent admin do NOT have NSEFUT/NSEOPT enabled, blocking FNO trading`);
+        return { open: false, reason: 'NSEFUT/NSEOPT segment is not enabled for this user' };
       }
 
       const userSegPerms = user.segmentPermissions;
@@ -246,11 +261,32 @@ class TradingService {
         if (segPerm && segPerm.enabled) {
           console.log(`[isMarketOpen] User has ${userSegUpper} enabled in segment permissions, allowing trading`);
           return { open: true, reason: `User has ${userSegUpper} enabled` };
-        } else {
-          console.log(`[isMarketOpen] User does NOT have ${userSegUpper} enabled, blocking trading`);
-          return { open: false, reason: `${userSegUpper} segment is not enabled for this user` };
         }
       }
+
+      // Check parent admin's segment permissions (hierarchy inheritance)
+      const parentSegPerms = user.parentSegmentPermissions || user.admin?.segmentPermissions;
+      if (parentSegPerms) {
+        const parentSegPerm = parentSegPerms instanceof Map ? parentSegPerms.get(userSegUpper) : parentSegPerms[userSegUpper];
+        if (parentSegPerm && parentSegPerm.enabled) {
+          console.log(`[isMarketOpen] Parent admin has ${userSegUpper} enabled (hierarchy inheritance), allowing trading`);
+          return { open: true, reason: `Parent admin has ${userSegUpper} enabled` };
+        }
+
+        // For MCX, also check MCXFUT and MCXOPT if parent has them enabled
+        if (userSegUpper === 'MCX') {
+          const mcxFutPerm = parentSegPerms instanceof Map ? parentSegPerms.get('MCXFUT') : parentSegPerms['MCXFUT'];
+          const mcxOptPerm = parentSegPerms instanceof Map ? parentSegPerms.get('MCXOPT') : parentSegPerms['MCXOPT'];
+          if ((mcxFutPerm && mcxFutPerm.enabled) || (mcxOptPerm && mcxOptPerm.enabled)) {
+            console.log(`[isMarketOpen] Parent admin has MCXFUT or MCXOPT enabled (hierarchy inheritance), allowing MCX trading`);
+            return { open: true, reason: `Parent admin has MCXFUT/MCXOPT enabled` };
+          }
+        }
+      }
+
+      // If neither user nor parent has the segment enabled, block trading
+      console.log(`[isMarketOpen] User and parent admin do NOT have ${userSegUpper} enabled, blocking trading`);
+      return { open: false, reason: `${userSegUpper} segment is not enabled for this user` };
     }
 
     // Fallback: check market hours only if no user segment check
@@ -848,44 +884,49 @@ class TradingService {
     }
 
     // Skip lot validation for USD spot (uses INR notional, not lots)
-    if (!isUsdSpot && !isBinanceCrypto) {
+    // Also skip for MCX - uses quantity-based validation
+    const isMCX = orderData.exchange === 'MCX' || ['MCXFUT', 'MCXOPT'].includes(String(orderData.segment || '').toUpperCase());
+    if (!isUsdSpot && !isBinanceCrypto && !isMCX) {
       // Validate lot limits from user settings
       // Script settings override segment settings, segment settings are the default
-      const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50;
+      const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots;
       const minLots = scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1;
       
-      // For quantity mode, calculate effective lots from quantity for validation
-      const effectiveLots = isQuantityMode ? Math.ceil(totalQuantity / lotSize) : lots;
-      
-      console.log('Order Validation:', {
-        isQuantityMode,
-        requestedLots: lots,
-        effectiveLots,
-        totalQuantity,
-        lotSize,
-        maxLots, minLots,
-        fromScript: !!scriptSettings?.lotSettings?.maxLots,
-        fromSegment: segmentSettings?.maxLots,
-        segment: orderData.segment
-      });
-      
-      // In quantity mode, validate quantity is at least 1 and within reasonable bounds
-      if (isQuantityMode) {
-        if (totalQuantity < 1) {
-          throw new Error(`Minimum quantity is 1 for ${orderData.symbol}`);
-        }
-        // Optional: validate max quantity based on maxLots * lotSize
-        const maxQuantity = maxLots * lotSize;
-        if (totalQuantity > maxQuantity) {
-          throw new Error(`Maximum quantity is ${maxQuantity} for ${orderData.symbol}`);
-        }
-      } else {
-        // Lots mode validation
-        if (lots < minLots) {
-          throw new Error(`Minimum ${minLots} quantity required for ${orderData.symbol}`);
-        }
-        if (lots > maxLots) {
-          throw new Error(`Maximum ${maxLots} quantity allowed for ${orderData.symbol}. Your limit is ${maxLots} quantity.`);
+      // Only validate if maxLots is set (no hardcoded fallback)
+      if (maxLots != null && maxLots > 0) {
+        // For quantity mode, calculate effective lots from quantity for validation
+        const effectiveLots = isQuantityMode ? Math.ceil(totalQuantity / lotSize) : lots;
+        
+        console.log('Order Validation:', {
+          isQuantityMode,
+          requestedLots: lots,
+          effectiveLots,
+          totalQuantity,
+          lotSize,
+          maxLots, minLots,
+          fromScript: !!scriptSettings?.lotSettings?.maxLots,
+          fromSegment: segmentSettings?.maxLots,
+          segment: orderData.segment
+        });
+        
+        // In quantity mode, validate quantity is at least 1 and within reasonable bounds
+        if (isQuantityMode) {
+          if (totalQuantity < 1) {
+            throw new Error(`Minimum quantity is 1 for ${orderData.symbol}`);
+          }
+          // Optional: validate max quantity based on maxLots * lotSize
+          const maxQuantity = maxLots * lotSize;
+          if (totalQuantity > maxQuantity) {
+            throw new Error(`Maximum quantity is ${maxQuantity} for ${orderData.symbol}`);
+          }
+        } else {
+          // Lots mode validation
+          if (lots < minLots) {
+            throw new Error(`Minimum ${minLots} quantity required for ${orderData.symbol}`);
+          }
+          if (lots > maxLots) {
+            throw new Error(`Maximum ${maxLots} quantity allowed for ${orderData.symbol}. Your limit is ${maxLots} quantity.`);
+          }
         }
       }
     } else if (isUsdSpot && !isBinanceCrypto) {
@@ -893,21 +934,25 @@ class TradingService {
     }
 
     // Dynamic Quantity Limit Check - validate user has enough available quantity
-    if (!isUsdSpot && segmentSettings) {
+    // Skip for MCX (uses quantity-based validation, not dynamic limits)
+    if (!isUsdSpot && !isMCX && segmentSettings) {
       const isIntraday = orderData.productType === 'MIS' || orderData.productType === 'INTRADAY';
       const maxQty = isIntraday 
-        ? (segmentSettings.maxIntradayQty || 2000) 
-        : (segmentSettings.maxCarryQty || 1000);
+        ? segmentSettings.maxIntradayQty
+        : segmentSettings.maxCarryQty;
       const availableQty = isIntraday 
-        ? (segmentSettings.availableIntradayQty ?? maxQty) 
+        ? (segmentSettings.availableIntradayQty ?? maxQty)
         : (segmentSettings.availableCarryQty ?? maxQty);
       
-      if (totalQuantity > availableQty) {
+      // Only validate if maxQty is set (no hardcoded fallbacks)
+      if (maxQty != null && maxQty > 0 && totalQuantity > availableQty) {
         const qtyType = isIntraday ? 'Intraday' : 'Carry Forward';
         throw new Error(`Insufficient ${qtyType} quantity limit. Available: ${availableQty}, Requested: ${totalQuantity}. Max allowed: ${maxQty}`);
       }
       
-      console.log(`Dynamic Qty Check: ${orderData.segment} ${orderData.productType} - Requested: ${totalQuantity}, Available: ${availableQty}, Max: ${maxQty}`);
+      if (maxQty != null && maxQty > 0) {
+        console.log(`Dynamic Qty Check: ${orderData.segment} ${orderData.productType} - Requested: ${totalQuantity}, Available: ${availableQty}, Max: ${maxQty}`);
+      }
     }
 
     const spreadPoints = TradeService.calculateUserSpread(scriptSettings, orderData.side);
