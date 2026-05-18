@@ -353,13 +353,11 @@ const cleanupExpiredDemoAccounts = async () => {
     if (expiredUsers.length > 0) {
       // Import models for cleanup
       const Position = (await import('./models/Position.js')).default;
-      const Order = (await import('./models/Order.js')).default;
       const Trade = (await import('./models/Trade.js')).default;
       
       for (const user of expiredUsers) {
         // Delete user's trading data
         await Position.deleteMany({ user: user._id });
-        await Order.deleteMany({ user: user._id });
         await Trade.deleteMany({ user: user._id });
         
         // Delete the user

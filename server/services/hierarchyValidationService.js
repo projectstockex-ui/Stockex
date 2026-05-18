@@ -117,29 +117,39 @@ class HierarchyValidationService {
       return { allowed: true };
     }
 
-    // Check current admin's own segment permissions (not parent's)
-    const currentAdminSegPerms = currentAdmin.segmentPermissions instanceof Map
-      ? Object.fromEntries(currentAdmin.segmentPermissions)
-      : (currentAdmin.segmentPermissions || {});
+    // Check if current admin's parent has this segment enabled
+    const parentAdmin = await Admin.findById(currentAdmin.parentId).select('segmentPermissions name role');
+    if (!parentAdmin) {
+      console.log('[HierarchyValidationService] Parent admin not found - allowed');
+      return { allowed: true };
+    }
 
-    console.log('[HierarchyValidationService] Current Admin segmentPermissions:', JSON.stringify(currentAdminSegPerms));
+    const parentSegPerms = parentAdmin.segmentPermissions instanceof Map
+      ? Object.fromEntries(parentAdmin.segmentPermissions)
+      : (parentAdmin.segmentPermissions || {});
 
-    // Check if current admin has this segment enabled
-    const parentSeg = currentAdminSegPerms[segmentName] || {};
-    const currentAdminSegEnabled = parentSeg.enabled ?? false;
+    console.log('[HierarchyValidationService] Parent admin:', parentAdmin.name, 'segmentPermissions:', JSON.stringify(parentSegPerms));
 
-    console.log('[HierarchyValidationService] Current Admin segment enabled for', segmentName, ':', currentAdminSegEnabled);
+    const parentSeg = parentSegPerms[segmentName] || {};
+    const parentHasSegment = parentSeg.enabled ?? false;
 
-    // EXPLICIT BLOCK: If current admin doesn't have this segment enabled, block it
-    if (!currentAdminSegEnabled) {
-      console.log('[HierarchyValidationService] BLOCKING:', segmentName, '- current admin has disabled it');
+    console.log('[HierarchyValidationService] Parent admin has', segmentName, 'enabled:', parentHasSegment);
+
+    // If parent has segment enabled, allow current admin to enable it for their children
+    if (parentHasSegment) {
+      console.log('[HierarchyValidationService] Parent has segment - allowed');
+      return { allowed: true };
+    }
+
+    // If parent doesn't have segment enabled, block
+    if (!parentHasSegment && parentAdmin.role !== 'SUPER_ADMIN') {
+      console.log('[HierarchyValidationService] BLOCKING:', segmentName, '- parent admin does not have this segment');
       return {
         allowed: false,
-        message: `Cannot enable ${segmentName} - you do not have this segment enabled. Contact your admin.`
+        message: `Cannot enable ${segmentName} - your parent does not have this segment enabled. Contact your admin.`
       };
     }
 
-    console.log('[HierarchyValidationService] Check passed - allowed');
     return { allowed: true };
   }
 }

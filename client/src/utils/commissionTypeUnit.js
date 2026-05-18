@@ -1,10 +1,10 @@
 /**
- * Client-side commission type ↔ unit (must match server/utils/commissionTypeUnit.js).
+ * Client-side commission type helpers (must match server/utils/commissionTypeUnit.js).
+ * All commission types use ₹ (INR) as the unit.
+ * PER_CRORE = ₹ per crore turnover (not percentage).
  */
 
 export function requiredUnitForCommissionType(commissionType) {
-  if (commissionType === 'PER_CRORE') return 'PERCENT';
-  if (commissionType === 'PER_LOT' || commissionType === 'PER_TRADE') return 'INR';
   return 'INR';
 }
 
@@ -16,19 +16,18 @@ export function commissionAmountLabel(commissionType) {
 export function commissionHelperText(commissionType) {
   switch (commissionType) {
     case 'PER_LOT':
-      return 'Charge per lot (₹)';
+    case 'PER_QUANTITY':
+      return 'Charge per quantity (₹)';
     case 'PER_TRADE':
       return 'Flat fee per trade';
     case 'PER_CRORE':
-      return 'Percentage of trade value';
+      return '₹ per crore turnover';
     default:
       return '';
   }
 }
 
-/** Read-only options for UX: only the valid unit is shown. */
+/** Read-only options for UX: only INR is valid now. */
 export function unitOptionsForCommissionType(commissionType) {
-  const u = requiredUnitForCommissionType(commissionType);
-  if (u === 'INR') return [{ value: 'INR', label: 'Rupees (₹)' }];
-  return [{ value: 'PERCENT', label: 'Percentage (%)' }];
+  return [{ value: 'INR', label: 'Rupees (₹)' }];
 }

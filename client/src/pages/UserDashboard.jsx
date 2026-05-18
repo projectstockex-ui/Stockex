@@ -1759,19 +1759,14 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       setSegmentTabs(mcxTabs);
       setActiveSegment('FAVORITES');
     } else {
-      // Regular trading mode: show Indian market segments (excluding MCX - MCX has separate account)
+      // Regular trading mode: show Indian market segments only (Crypto & Forex have separate wallets)
       const allTabs = [
         { id: 'FAVORITES', label: '★ Favorites' },
         { id: 'NSEFUT', label: 'NSEFUT' },
         { id: 'NSEOPT', label: 'NSEOPT' },
         { id: 'NSE-EQ', label: 'NSE-EQ' },
         { id: 'BSE-FUT', label: 'BSE-FUT' },
-        { id: 'BSE-OPT', label: 'BSE-OPT' },
-        { id: 'CRYPTO', label: '₿ Crypto' },
-        { id: 'CRYPTOFUT', label: 'Crypto Fut' },
-        { id: 'CRYPTOOPT', label: 'Crypto Opt' },
-        { id: 'FOREXFUT', label: 'Forex Fut' },
-        { id: 'FOREXOPT', label: 'Forex Opt' }
+        { id: 'BSE-OPT', label: 'BSE-OPT' }
       ];
       setSegmentTabs(allTabs);
     }
@@ -3625,14 +3620,9 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       const isMCX = selectedInstrument.exchange === 'MCX' || selectedInstrument.segment === 'MCX' || selectedInstrument.displaySegment === 'MCX';
       const isFnO = selectedInstrument.instrumentType === 'FUTURES' || selectedInstrument.instrumentType === 'OPTIONS' || isMCX;
 
-      // Always use lotSize from database (no hardcoded fallbacks)
-      const lotSize = isUsdSpot ? 1 : (selectedInstrument.lotSize || 1);
-      if (!isUsdSpot && !selectedInstrument.lotSize) {
-        setQuickError(`Lot size missing for ${selectedInstrument.symbol}`);
-        setTimeout(() => setQuickError(''), 3000);
-        return;
-      }
-      const quantity = isUsdSpot ? parseFloat(lots || 0) : (isFnO ? lots * lotSize : lots);
+      // All segments use quantity-based trading
+      const lotSize = 1;
+      const quantity = isUsdSpot ? parseFloat(lots || 0) : lots;
       const inrNotional = isUsdSpot ? quantity * spotPxToDisplayedInr(selectedInstrument, ltp, usdRate) : 0;
       
       await axios.post('/api/trading/order', {
@@ -3650,8 +3640,8 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           : isCryptoOnly ? 'CRYPTO' : (selectedInstrument.instrumentType || 'FUTURES'),
         side: side.toUpperCase(),
         quantity: quantity,
-        lots: isUsdSpot ? 1 : lots,
-        lotSize: lotSize,
+        lots: isUsdSpot ? 1 : quantity,
+        lotSize: 1,
         price: ltp,
         orderType: 'MARKET',
         productType: 'MIS',
@@ -4168,7 +4158,7 @@ const TradingPanel = ({
   const [target, setTarget] = useState('');
   const [productType, setProductType] = useState('MIS');
   const [orderMode, setOrderMode] = useState('MARKET');
-  const [inputMode, setInputMode] = useState('lots'); // 'lots' or 'quantity' - default to lots, quantity mode only for futures/equity
+  const [inputMode, setInputMode] = useState('quantity'); // always quantity mode for all segments
   const [marginPreview, setMarginPreview] = useState(null);
   const [marketStatus, setMarketStatus] = useState({ open: true });
   const [loading, setLoading] = useState(false);
@@ -4241,7 +4231,10 @@ const TradingPanel = ({
           setMarketStatus({ open: true, reason: isForex ? 'Forex quotes 24/7' : 'Crypto markets are 24/7' });
         } else {
           const { data } = await axios.get('/api/trading/market-status', {
-            params: { exchange: instrument?.exchange || 'NSE' },
+            params: { 
+              exchange: instrument?.exchange || 'NSE',
+              segment: instrument?.segment || null
+            },
             headers: { Authorization: `Bearer ${user?.token}` }
           });
           setMarketStatus(data);
@@ -4330,15 +4323,15 @@ const TradingPanel = ({
   };
   const activeWallet = getActiveWallet();
 
-  // Check if segment allows quantity mode (only equity, NOT futures)
+  // Check if segment allows quantity mode
   const segment = instrument?.displaySegment || instrument?.segment || '';
   const segmentUpper = segment.toUpperCase();
-  // Futures segments - only Lots mode allowed (no quantity toggle)
-  const isFuturesSegment = ['NSEFUT', 'MCXFUT', 'BSEFUT', 'NFO', 'BFO', 'BSE-FUT', 'MCX'].includes(segmentUpper) || 
-                           segmentUpper.includes('FUT');
+  // ALL NSE and BSE segments are now quantity-based (no lots)
+  const isNSEOrBSE = ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'NSE', 'BSE', 'BSE-FUT', 'BSE-OPT', 'NFO', 'BFO'].includes(segmentUpper) ||
+                     instrument?.exchange === 'NSE' || instrument?.exchange === 'NFO' || instrument?.exchange === 'BSE' || instrument?.exchange === 'BFO';
   const isEquitySegment = segmentUpper === 'NSE-EQ' || segmentUpper === 'EQUITY' || segmentUpper === 'NSE' || segmentUpper === 'BSE';
-  // Only allow quantity mode for Equity segments, NOT for Futures
-  const allowsQuantityMode = isEquity || isEquitySegment;
+  // All NSE/BSE/MCX segments use quantity mode
+  const allowsQuantityMode = true;
 
   // Always use lot size from DB (no hardcoded fallbacks)
   const lotSize = isUsdSpot ? 1 : (instrument?.lotSize || 1);
@@ -4347,19 +4340,10 @@ const TradingPanel = ({
     return null;
   }
   // For USD spot: use direct quantity (no lots conversion)
-  // For MCX: handle lots vs quantity modes
-  // For other segments: existing logic
+  // For all other segments: use direct quantity (quantity-based trading)
   const totalQuantity = isUsdSpot
     ? parseFloat(cryptoQuantity || 0)
-    : isMCX
-        ? (inputMode === 'quantity'
-            ? parseInt(lots || 0)  // MCX quantity mode: direct quantity
-            : parseInt(lots || 0) * lotSize)  // MCX lots mode: lots * lotSize
-        : (allowsQuantityMode && inputMode === 'quantity')
-            ? parseInt(lots || 0)  // Other segments quantity mode: direct quantity
-            : (isFnO
-                ? parseInt(lots || 0) * lotSize  // Other FnO lots mode: lots * lotSize
-                : parseInt(lots || 0));  // Other segments: direct quantity
+    : parseInt(lots || 0);  // All segments: direct quantity
 
   const buildMarginPreviewBody = (sideLower) => {
     const cryptoStep =
@@ -4379,14 +4363,14 @@ const TradingPanel = ({
       productType,
       side: String(sideLower || orderType).toUpperCase(),
       quantity: totalQuantity,
-      lotSize: isUsdSpot ? cryptoStep : lotSize,
+      lotSize: isUsdSpot ? cryptoStep : 1,
       price: isUsdSpot ? Number(livePrice) : (parseFloat(price) || Number(livePrice) || 0),
       leverage: 1,
       isCrypto: isCryptoOnly,
       isForex: isForex
     };
     if (!isUsdSpot) {
-      body.lots = parseInt(lots, 10);
+      body.lots = totalQuantity; // lots = quantity for qty-based trading
     } else {
       body.lots = 1; // For crypto/forex, lots is not used
     }
@@ -4501,7 +4485,7 @@ const TradingPanel = ({
         orderType: orderMode,
         side: sideLower.toUpperCase(),
         quantity: isUsdSpot ? parseFloat(cryptoQuantity || 0) : totalQuantity,
-        lotSize: isUsdSpot ? (instrument?.lotSize > 0 ? Number(instrument.lotSize) : baseQtyPerCryptoLot) : lotSize,
+        lotSize: isUsdSpot ? (instrument?.lotSize > 0 ? Number(instrument.lotSize) : baseQtyPerCryptoLot) : 1,
         price: isUsdSpot ? livePrice : parseFloat(price),
         bidPrice: liveBid,
         askPrice: liveAsk,
@@ -4522,7 +4506,7 @@ const TradingPanel = ({
           : null,
       };
       if (!isUsdSpot) {
-        orderData.lots = parseInt(lots, 10);
+        orderData.lots = totalQuantity; // lots = quantity for qty-based trading
       }
 
       console.log('Placing order:', orderData);
@@ -4910,41 +4894,9 @@ const TradingPanel = ({
             </div>
           </div>
         ) : (
-          /* Indian Trading: Lots/Quantity */
+          /* Indian Trading: Quantity-based */
           <div>
-            {/* Input Mode Toggle - Show for MCX (always) and other segments that allow quantity mode */}
-            {(isMCX || allowsQuantityMode) && (
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs text-gray-400">Trade by:</span>
-                <div className="flex bg-dark-700 rounded-lg p-0.5 w-full">
-                  <button
-                    onClick={() => { setInputMode('lots'); setLots('1'); }}
-                    className={`flex-1 py-2 text-sm font-medium rounded-md transition ${
-                      inputMode === 'lots' 
-                        ? 'bg-green-600 text-white shadow-lg' 
-                        : 'text-gray-400 hover:text-white hover:bg-dark-600'
-                    }`}
-                  >
-                    {isMCX ? '📊 Trade in Lots' : 'Lots'}
-                  </button>
-                  <button
-                    onClick={() => { setInputMode('quantity'); setLots('1'); }}
-                    className={`flex-1 py-2 text-sm font-medium rounded-md transition ${
-                      inputMode === 'quantity' 
-                        ? 'bg-blue-600 text-white shadow-lg' 
-                        : 'text-gray-400 hover:text-white hover:bg-dark-600'
-                    }`}
-                  >
-                    {isMCX ? '🔢 Trade in Quantity' : 'Quantity'}
-                  </button>
-                </div>
-              </div>
-            )}
-            
-            <label className="block text-xs text-gray-400 mb-2">
-              {inputMode === 'quantity' ? 'Quantity' : (isFnO ? 'Lots' : 'Quantity')} 
-              {inputMode === 'quantity' && <span className="text-blue-400">(Direct quantity)</span>}
-            </label>
+            <label className="block text-xs text-gray-400 mb-2">Quantity</label>
             <div className="flex items-center gap-2">
               <button 
                 onClick={() => setLots(Math.max(1, parseInt(lots || 1) - 1).toString())}
@@ -4962,40 +4914,18 @@ const TradingPanel = ({
                 className="w-10 h-10 bg-dark-600 hover:bg-dark-500 rounded text-xl font-bold"
               >+</button>
             </div>
-            {isFnO && inputMode === 'quantity' && (
-              <div className="flex justify-between text-xs mt-2">
-                <span className="text-gray-500">Total Qty: <span className="text-white font-medium">{totalQuantity}</span></span>
-                <span className="text-gray-500">Value: <span className="text-white">{(totalQuantity * parseFloat(price || 0)).toLocaleString()}</span></span>
-              </div>
-            )}
-            {/* Quick lot/qty buttons */}
-            {isFnO && inputMode === 'lots' && (
-              <div className="flex gap-1 mt-2">
-                {[1, 2, 5, 10, 20].map(l => (
-                  <button
-                    key={l}
-                    onClick={() => setLots(l.toString())}
-                    className={`flex-1 py-1 text-xs rounded ${lots === l.toString() ? 'bg-green-600' : 'bg-dark-600 hover:bg-dark-500'}`}
-                  >
-                    {l}L
-                  </button>
-                ))}
-              </div>
-            )}
-            {/* Quick quantity buttons for quantity mode */}
-            {(isMCX || allowsQuantityMode) && inputMode === 'quantity' && (
-              <div className="flex gap-1 mt-2">
-                {(isMCX ? [1, 5, 10, 25, 50, 100] : [1, 5, 10, 25, 50]).map(q => (
-                  <button
-                    key={q}
-                    onClick={() => setLots(q.toString())}
-                    className={`flex-1 py-1 text-xs rounded ${lots === q.toString() ? 'bg-blue-600' : 'bg-dark-600 hover:bg-dark-500'}`}
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* Quick quantity buttons */}
+            <div className="flex gap-1 mt-2">
+              {[1, 5, 10, 25, 50, 100].map(q => (
+                <button
+                  key={q}
+                  onClick={() => setLots(q.toString())}
+                  className={`flex-1 py-1 text-xs rounded ${lots === q.toString() ? 'bg-green-600' : 'bg-dark-600 hover:bg-dark-500'}`}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -6800,7 +6730,7 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
                         )}
                       </div>
                       <div className="text-xs text-gray-400 mt-1">
-                        {item.lots || Math.floor(item.quantity / (item.lotSize || 1))} lots • {item.quantity} qty
+                        {item.quantity} qty
                         {(tab === 'history' || tab === 'cancelled' || tab === 'squareOff') && getDuration() && (
                           <span className="text-blue-400 ml-2">⏱ {getDuration()}</span>
                         )}
@@ -8705,8 +8635,12 @@ const BuySellModal = ({
   const isFnO = effectiveInstrument?.segment === 'FNO' || effectiveInstrument?.instrumentType === 'OPTIONS' || effectiveInstrument?.instrumentType === 'FUTURES';
   const isMCX = effectiveInstrument?.segment === 'MCX' || effectiveInstrument?.exchange === 'MCX' || effectiveInstrument?.displaySegment === 'MCX' ||
                 effectiveInstrument?.segment === 'MCXFUT' || effectiveInstrument?.segment === 'MCXOPT';
-  // MCX uses quantity-based trading (no lots), only F&O uses lots
-  const isLotBased = isFnO && !isMCX;
+  const isNSE = effectiveInstrument?.segment === 'NSE' || effectiveInstrument?.exchange === 'NSE' || effectiveInstrument?.exchange === 'NFO' || effectiveInstrument?.displaySegment === 'NSE-EQ' ||
+                effectiveInstrument?.segment === 'NSEFUT' || effectiveInstrument?.segment === 'NSEOPT' || effectiveInstrument?.displaySegment === 'NSEFUT' || effectiveInstrument?.displaySegment === 'NSEOPT';
+  const isBSE = effectiveInstrument?.segment === 'BSE' || effectiveInstrument?.exchange === 'BSE' || effectiveInstrument?.exchange === 'BFO' || effectiveInstrument?.segment === 'BSE-FUT' ||
+                effectiveInstrument?.segment === 'BSE-OPT' || effectiveInstrument?.displaySegment === 'BSE-FUT' || effectiveInstrument?.displaySegment === 'BSE-OPT';
+  // ALL segments use quantity-based trading now - no lot-based trading
+  const isLotBased = false;
   // Determine if instrument is OPTIONS or FUTURES
   const isOptions = effectiveInstrument?.instrumentType === 'OPTIONS' || effectiveInstrument?.segment === 'MCXOPT';
   const isFutures = effectiveInstrument?.instrumentType === 'FUTURES' || effectiveInstrument?.segment === 'MCXFUT';
@@ -8742,16 +8676,14 @@ const BuySellModal = ({
   };
   const activeWallet = getWalletData();
 
-  // Always use lotSize from DB (no hardcoded fallbacks)
-  // For MCX, lotSize is not used (quantity-based trading)
-  const lotSize = isUsdSpot ? 1 : (isMCX ? 1 : (effectiveInstrument?.lotSize || 1));
+  // Always use lotSize = 1 for quantity-based trading
+  const lotSize = 1;
 
-  // For crypto: quantity is in units (BTC, ETH, etc.)
-  // For MCX: quantity is direct (no lot multiplication)
-  // For F&O: quantity = lots * lotSize (if lot mode) or direct quantity (if qty mode for FUT)
+  // All segments use quantity-based trading now
+  // quantity is direct - no lot multiplication needed
   const totalQuantity = isUsdSpot
     ? parseFloat(quantity || 0.001)
-    : (isMCX ? parseFloat(quantity || 1) : (isLotBased && (quantityMode === 'lot' || isOptions) ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1)));
+    : parseFloat(quantity || 1);
   const orderValue = ltp * totalQuantity;
   const marginRequired = orderValue;
 
@@ -8788,8 +8720,8 @@ const BuySellModal = ({
           productType,
           side: orderType.toUpperCase(),
           quantity: totalQuantity,
-          lots: parseFloat(quantity),
-          lotSize: lotSize,
+          lots: totalQuantity,
+          lotSize: 1,
           price: parseFloat(ltp),
           leverage: 1,
           isCrypto: isCryptoOnly,
@@ -8892,8 +8824,8 @@ const BuySellModal = ({
         orderType: orderPriceType,
         side: orderType.toUpperCase(),
         quantity: cryptoQuantity,
-        lots: isUsdSpot ? 1 : parseFloat(quantity),
-        lotSize: lotSize,
+        lots: isUsdSpot ? 1 : totalQuantity,
+        lotSize: 1,
         price: ltp,
         bidPrice: liveBid,
         askPrice: liveAsk,
@@ -9237,7 +9169,7 @@ const BuySellModal = ({
 
           {/* Footer Info */}
           <div className="px-3 pb-4 text-center text-xs text-gray-500">
-            <div>{quantity} {isLotBased ? 'lots' : 'quantity'} @ {ltp?.toLocaleString()}</div>
+            <div>{quantity} qty @ {ltp?.toLocaleString()}</div>
           </div>
         </div>
       </div>
@@ -9340,36 +9272,10 @@ const BuySellModal = ({
 
         {/* Form */}
         <div className="p-4 pt-0 space-y-4">
-          {/* Lots/Quantity */}
+          {/* Quantity */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm text-gray-400">
-                {isLotBased ? `Lots (1 Lot = ${lotSize} qty)` : 'Quantity'}
-              </label>
-              {isFutures && (
-                <div className="flex bg-dark-700 rounded-lg border border-dark-600">
-                  <button
-                    onClick={() => setQuantityMode('lot')}
-                    className={`px-3 py-1 text-xs font-medium transition ${
-                      quantityMode === 'lot'
-                        ? 'bg-green-600 text-white'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    Lot
-                  </button>
-                  <button
-                    onClick={() => setQuantityMode('qty')}
-                    className={`px-3 py-1 text-xs font-medium transition ${
-                      quantityMode === 'qty'
-                        ? 'bg-green-600 text-white'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    Qty
-                  </button>
-                </div>
-              )}
+              <label className="block text-sm text-gray-400">Quantity</label>
             </div>
             <div className="flex gap-2">
               <button 
@@ -9393,7 +9299,7 @@ const BuySellModal = ({
               </button>
             </div>
             <div className="text-right text-xs text-gray-500 mt-1">
-              {quantityMode === 'lot' || isOptions ? `${quantity} lot` : `${quantity} qty`}
+              {quantity} qty
             </div>
           </div>
 

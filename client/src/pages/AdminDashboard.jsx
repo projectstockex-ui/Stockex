@@ -10980,31 +10980,6 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                             </select>
 
-                            <label className="block text-xs text-gray-400 mt-2 mb-1">Amount unit</label>
-
-                            <select
-
-                              value={requiredUnitForCommissionType(s.commissionType || 'PER_LOT')}
-
-                              disabled
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm opacity-90 cursor-not-allowed"
-
-                              title="Unit follows commission type"
-
-                            >
-
-                              {unitOptionsForCommissionType(s.commissionType || 'PER_LOT').map((o) => (
-
-                                <option key={o.value} value={o.value}>
-
-                                  {o.label}
-
-                                </option>
-
-                              ))}
-
-                            </select>
 
                           </div>
 
@@ -34847,27 +34822,6 @@ const SystemDefaultSettings = () => {
 
                         </select>
 
-                        <label className="block text-xs text-gray-400 mt-2 mb-1">Amount unit</label>
-
-                        <select
-
-                          value={requiredUnitForCommissionType(s.commissionType || 'PER_LOT')}
-
-                          disabled
-
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm opacity-90 cursor-not-allowed"
-
-                          title="Unit follows commission type"
-
-                        >
-
-                          {unitOptionsForCommissionType(s.commissionType || 'PER_LOT').map((o) => (
-
-                            <option key={o.value} value={o.value}>{o.label}</option>
-
-                          ))}
-
-                        </select>
 
                       </div>
 

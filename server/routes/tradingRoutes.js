@@ -294,7 +294,7 @@ router.post('/margin-preview', protect, async (req, res) => {
     let brokerage = 0;
     let spread = 0;
     try {
-      const baseBrokerage = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
+      const baseBrokerage = await TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
       const extraBrokerage = TradeService.instrumentAdditionalCommission(instrumentDoc, effectiveLots, tradeValue);
       const oneWayBrokerage = baseBrokerage + extraBrokerage;
       brokerage = Math.round(oneWayBrokerage * 2 * 100) / 100;
@@ -432,7 +432,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       minLots,
       perOrderLots,
       lotsValid,
-      lotsError: !lotsValid ? (lotsError || `Lots must be between ${minLots} and ${maxLots}`) : null,
+      lotsError: !lotsValid ? (lotsError || `Quantity must be between ${minLots} and ${maxLots}`) : null,
       shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
       exposureIntraday: segmentSettingsForMargin?.exposureIntraday || null,
       exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null,
@@ -447,10 +447,12 @@ router.post('/margin-preview', protect, async (req, res) => {
 });
 
 // Get market status
-router.get('/market-status', async (req, res) => {
+router.get('/market-status', protect, async (req, res) => {
   try {
     const exchange = req.query.exchange || 'NSE';
-    const status = await TradingService.getMarketStatus(exchange);
+    const segment = req.query.segment || null;
+    const user = req.user;
+    const status = await TradingService.getMarketStatus(exchange, segment, user);
     res.json(status);
   } catch (error) {
     console.error('Error getting market status:', error);

@@ -208,8 +208,9 @@ class TradingService {
     return this.getLotSize(symbol, null, exchange);
   }
 
-  // Check if market is open - now uses MarketState from database
-  static async isMarketOpen(exchange = 'NSE') {
+  // Check if market is open - simplified: only check user's segment permissions
+  // If user has segment enabled, allow trading (subject to market hours)
+  static async isMarketOpen(exchange = 'NSE', userSegment = null, user = null) {
     // Crypto/Binance is always open 24/7
     if (exchange === 'BINANCE') {
       return { open: true, reason: 'Crypto markets are open 24/7' };
@@ -217,15 +218,48 @@ class TradingService {
     if (exchange === 'FOREX') {
       return { open: true, reason: 'Forex (synthetic) quotes available 24/7' };
     }
-    
+
+    // Check if user has the specific segment enabled in their segment permissions
+    if (user && userSegment) {
+      let userSegUpper = String(userSegment || '').toUpperCase();
+
+      // Map FNO (Futures & Options product) to NSEFUT/NSEOPT (NSE segments)
+      // FNO is the product category, NSEFUT/NSEOPT are the actual exchange segments under NSE
+      if (userSegUpper === 'FNO' || userSegUpper === 'NFO') {
+        const userSegPerms = user.segmentPermissions;
+        if (userSegPerms) {
+          const nseFutPerm = userSegPerms instanceof Map ? userSegPerms.get('NSEFUT') : userSegPerms['NSEFUT'];
+          const nseOptPerm = userSegPerms instanceof Map ? userSegPerms.get('NSEOPT') : userSegPerms['NSEOPT'];
+          if ((nseFutPerm && nseFutPerm.enabled) || (nseOptPerm && nseOptPerm.enabled)) {
+            console.log(`[isMarketOpen] User has NSEFUT or NSEOPT enabled, allowing FNO trading`);
+            return { open: true, reason: 'User has NSEFUT/NSEOPT enabled' };
+          } else {
+            console.log(`[isMarketOpen] User does NOT have NSEFUT/NSEOPT enabled, blocking FNO trading`);
+            return { open: false, reason: 'NSEFUT/NSEOPT segment is not enabled for this user' };
+          }
+        }
+      }
+
+      const userSegPerms = user.segmentPermissions;
+      if (userSegPerms) {
+        const segPerm = userSegPerms instanceof Map ? userSegPerms.get(userSegUpper) : userSegPerms[userSegUpper];
+        if (segPerm && segPerm.enabled) {
+          console.log(`[isMarketOpen] User has ${userSegUpper} enabled in segment permissions, allowing trading`);
+          return { open: true, reason: `User has ${userSegUpper} enabled` };
+        } else {
+          console.log(`[isMarketOpen] User does NOT have ${userSegUpper} enabled, blocking trading`);
+          return { open: false, reason: `${userSegUpper} segment is not enabled for this user` };
+        }
+      }
+    }
+
+    // Fallback: check market hours only if no user segment check
     try {
-      // Map exchange to segment for MarketState lookup
+      // Map exchange to segment for MarketState lookup (time-based check only)
       let segment = 'EQUITY';
       if (exchange === 'NFO' || exchange === 'NSE') {
-        // Check if it's FNO based on the context - default to checking both
         const fnoResult = await MarketState.isTradingAllowed('FNO');
         const equityResult = await MarketState.isTradingAllowed('EQUITY');
-        // If either is open, allow trading
         if (fnoResult.allowed || equityResult.allowed) {
           return { open: true, reason: 'Market open' };
         }
@@ -235,12 +269,10 @@ class TradingService {
       } else if (exchange === 'BSE') {
         segment = 'EQUITY';
       }
-      
+
       const result = await MarketState.isTradingAllowed(segment);
-      // MCX should follow actual session clock even if admin forgot to toggle segment switch.
       if (exchange === 'MCX' && !result.allowed) {
         const fallback = this.isMarketOpenFallback('MCX');
-        // Always use fallback result for MCX (time-window based), not database state
         return fallback.open
           ? { open: true, reason: 'MCX session open (time-window fallback)' }
           : { open: false, reason: fallback.reason || result.reason };
@@ -248,7 +280,6 @@ class TradingService {
       return { open: result.allowed, reason: result.reason };
     } catch (error) {
       console.error('Error checking market state:', error);
-      // Fallback to hardcoded hours if database check fails
       return this.isMarketOpenFallback(exchange);
     }
   }
@@ -539,9 +570,9 @@ class TradingService {
 
     // ==================== STEP 2: MARKET HOURS CHECK ====================
     const exchange = orderData.exchange || 'NSE';
-    const marketStatus = await this.isMarketOpen(exchange);
+    const marketStatus = await this.isMarketOpen(exchange, orderData.segment, user);
     const allowOutsideHours = admin?.tradingSettings?.allowTradingOutsideMarketHours || false;
-    
+
     if (orderData.orderType === 'MARKET' && !marketStatus.open && !allowOutsideHours) {
       throw new Error(marketStatus.reason);
     }
@@ -766,9 +797,9 @@ class TradingService {
       lotSize = await this.getLotSizeAsync(orderData.symbol, orderData.token, orderData.exchange);
     }
     const segU = String(orderData.segment || '').toUpperCase();
-    // CRYPTOFUT and CRYPTOOPT: No lot system - use quantity directly
-    if (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT') {
-      lotSize = 1; // Force lotSize to 1 for crypto futures/options
+    // CRYPTOFUT, CRYPTOOPT, NSE, NSE-EQ, NSEFUT, NSEOPT, BSE, BSE-FUT, BSE-OPT: No lot system - use quantity directly
+    if (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT' || segU === 'NSE' || segU === 'NSE-EQ' || segU === 'NSEFUT' || segU === 'NSEOPT' || segU === 'BSE' || segU === 'BSE-FUT' || segU === 'BSE-OPT') {
+      lotSize = 1; // Force lotSize to 1 for quantity-based segments
     }
 
     if (isBinanceCrypto && instrument?.lotSize > 0) {
@@ -851,10 +882,10 @@ class TradingService {
       } else {
         // Lots mode validation
         if (lots < minLots) {
-          throw new Error(`Minimum ${minLots} lots required for ${orderData.symbol}`);
+          throw new Error(`Minimum ${minLots} quantity required for ${orderData.symbol}`);
         }
         if (lots > maxLots) {
-          throw new Error(`Maximum ${maxLots} lots allowed for ${orderData.symbol}. Your limit is ${maxLots} lots.`);
+          throw new Error(`Maximum ${maxLots} quantity allowed for ${orderData.symbol}. Your limit is ${maxLots} quantity.`);
         }
       }
     } else if (isUsdSpot && !isBinanceCrypto) {
@@ -912,7 +943,7 @@ class TradingService {
     const tradeValue = price * totalQuantity + segmentSpreadMarkupInr;
 
     const oneWayBrokerage =
-      TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, orderData, lots) +
+      await TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, orderData, lots) +
       TradeService.instrumentAdditionalCommission(instrument, lots, tradeValue);
     let totalCommission = Math.round(oneWayBrokerage * 2 * 100) / 100;
     
@@ -1288,23 +1319,21 @@ class TradingService {
     newMcxBalance = Math.max(0, newMcxBalance);
     
     // Use updateOne to avoid validation issues with segmentPermissions
-    const updateFields = { 
-      'wallet.tradingBalance': newTradingBalance,
-      'wallet.usedMargin': newUsedMargin,
-      'wallet.blocked': newBlocked
-    };
-    
+    // Update only the relevant wallet based on trade type
+    const updateFields = {};
+
     if (isCryptoWallet) {
       updateFields['cryptoWallet.balance'] = newCryptoBalance;
-    }
-    if (isForexWallet) {
+    } else if (isForexWallet) {
       updateFields['forexWallet.balance'] = newForexBalance;
-    }
-    
-    // Update MCX wallet if it's an MCX trade
-    if (isMCXTrade) {
+    } else if (isMCXTrade) {
       updateFields['mcxWallet.balance'] = newMcxBalance;
       updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
+    } else {
+      // Regular trading wallet (NSE/BSE)
+      updateFields['wallet.tradingBalance'] = newTradingBalance;
+      updateFields['wallet.usedMargin'] = newUsedMargin;
+      updateFields['wallet.blocked'] = newBlocked;
     }
     
     // Update pledge margin usage for NFO trades
@@ -1697,13 +1726,25 @@ class TradingService {
       ? (user.wallet.realizedPnL || 0)
       : (user.wallet.realizedPnL || 0) + netPnL;
     
-    const updateFields = { 
-      'wallet.usedMargin': newUsedMargin,
-      'wallet.blocked': newBlocked,
-      'wallet.tradingBalance': newTradingBalance,
-      'wallet.realizedPnL': newRealizedPnL
-    };
-    
+    const updateFields = {};
+
+    if (trade.isCrypto) {
+      updateFields['cryptoWallet.balance'] = newCryptoBalance;
+      updateFields['cryptoWallet.realizedPnL'] = newCryptoRealizedPnL;
+    } else if (trade.isForex) {
+      updateFields['forexWallet.balance'] = newForexBalance;
+      updateFields['forexWallet.realizedPnL'] = newForexRealizedPnL;
+    } else if (isMCXTrade) {
+      updateFields['mcxWallet.balance'] = newMcxBalance;
+      updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
+      updateFields['mcxWallet.realizedPnL'] = newMcxRealizedPnL;
+    } else {
+      // Regular trading wallet (NSE/BSE)
+      updateFields['wallet.blocked'] = newBlocked;
+      updateFields['wallet.tradingBalance'] = newTradingBalance;
+      updateFields['wallet.realizedPnL'] = newRealizedPnL;
+    }
+
     // Release pledge margin if it was used for this trade (NFO/Futures)
     const pledgeMarginUsed = trade.pledgeMarginUsed || 0;
     if (pledgeMarginUsed > 0) {
@@ -1711,22 +1752,6 @@ class TradingService {
       updateFields['deliveryPledge.usedMargin'] = Math.max(0, currentPledgeUsedMargin - pledgeMarginUsed);
       updateFields['deliveryPledge.lastUpdated'] = new Date();
       console.log(`NFO Trade Close: Released ₹${pledgeMarginUsed.toLocaleString()} pledge margin. P&L: ₹${netPnL.toLocaleString()} (from wallet)`);
-    }
-    
-    if (trade.isCrypto) {
-      updateFields['cryptoWallet.balance'] = newCryptoBalance;
-      updateFields['cryptoWallet.realizedPnL'] = newCryptoRealizedPnL;
-    }
-    
-    if (trade.isForex) {
-      updateFields['forexWallet.balance'] = newForexBalance;
-      updateFields['forexWallet.realizedPnL'] = newForexRealizedPnL;
-    }
-    
-    if (isMCXTrade) {
-      updateFields['mcxWallet.balance'] = newMcxBalance;
-      updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
-      updateFields['mcxWallet.realizedPnL'] = newMcxRealizedPnL;
     }
     
     // Dynamic Quantity Adjustment based on P&L
@@ -2142,8 +2167,8 @@ class TradingService {
     return filled;
   }
 
-  static async getMarketStatus(exchange = 'NSE') {
-    return await this.isMarketOpen(exchange);
+  static async getMarketStatus(exchange = 'NSE', segment = null, user = null) {
+    return await this.isMarketOpen(exchange, segment, user);
   }
 
   // Recalculate and sync margin based on actual open positions

@@ -55,64 +55,9 @@ class AdminSegmentSettingsController {
 
       console.log('[Segment Settings GET] Current segments:', Object.keys(segmentPermissions));
 
-      // Filter segment permissions based on parent's enabled segments
-      // If parent has disabled a segment, child cannot enable it
-      // Skip filtering if admin is viewing their own settings
+      // Return actual segment permissions without filtering
+      // The viewer should see the actual permissions of the target admin, not filtered by viewer's parent
       let filteredSegmentPermissions = segmentPermissions;
-      const isViewingOwnSettings = req.admin._id.toString() === targetAdmin._id.toString();
-      
-      if (req.admin.role !== 'SUPER_ADMIN' && req.admin.parentId && !isViewingOwnSettings) {
-        console.log('[Segment Settings GET] Checking parent permissions...');
-        const parentAdmin = await Admin.findById(req.admin.parentId).select('name segmentPermissions');
-        if (parentAdmin) {
-          const parentSegPerms = parentAdmin.segmentPermissions instanceof Map
-            ? Object.fromEntries(parentAdmin.segmentPermissions)
-            : (parentAdmin.segmentPermissions || {});
-
-          console.log('[Segment Settings GET] Filtering segments based on parent permissions');
-          console.log('[Segment Settings GET] Parent:', parentAdmin.name || 'Unknown', 'Parent segments:', Object.keys(parentSegPerms));
-          console.log('[Segment Settings GET] Parent segment permissions with enabled status:', JSON.stringify(parentSegPerms));
-
-          // Filter out segments that parent has disabled
-          filteredSegmentPermissions = {};
-          for (const [segName, segData] of Object.entries(segmentPermissions)) {
-            const parentSeg = parentSegPerms[segName] || {};
-            const parentSegEnabled = parentSeg.enabled ?? false;
-
-            if (parentSegEnabled) {
-              // Parent has this segment enabled, child can manage it
-              filteredSegmentPermissions[segName] = segData;
-            } else {
-              // Parent has this segment disabled, force it to disabled for child
-              filteredSegmentPermissions[segName] = {
-                ...segData,
-                enabled: false
-              };
-              console.log('[Segment Settings GET] Forced disabled for child:', segName, '- parent has it disabled');
-            }
-          }
-
-          // Also add any segments that parent has but child doesn't
-          for (const [segName, parentSegData] of Object.entries(parentSegPerms)) {
-            if (!filteredSegmentPermissions[segName]) {
-              filteredSegmentPermissions[segName] = {
-                ...parentSegData,
-                enabled: false // Child should explicitly enable if needed
-              };
-            }
-          }
-
-          console.log('[Segment Settings GET] Filtered segments:', Object.keys(filteredSegmentPermissions));
-        } else {
-          console.log('[Segment Settings GET] Parent admin not found');
-        }
-      } else {
-        if (isViewingOwnSettings) {
-          console.log('[Segment Settings GET] Skipping filtering - viewing own settings');
-        } else {
-          console.log('[Segment Settings GET] Skipping filtering - SuperAdmin or no parent');
-        }
-      }
 
       // Also return adminSegmentDefaults if available from system settings
       let adminSegmentDefaults = {};
@@ -209,23 +154,16 @@ class AdminSegmentSettingsController {
 
           const parentSeg = parentSegPerms[segName] || {};
 
-          // EXPLICIT CHECK: If trying to enable a segment, check if child admin's direct parent has it enabled
+          // Check if current admin has the segment enabled before enabling it for child
           if (segData.enabled === true) {
-            // Check if child admin's direct parent has the segment enabled
-            const childDirectParent = await Admin.findById(childAdmin.parentId).select('segmentPermissions name role');
-            if (childDirectParent) {
-              const childParentSegPerms = childDirectParent.segmentPermissions instanceof Map
-                ? Object.fromEntries(childDirectParent.segmentPermissions)
-                : (childDirectParent.segmentPermissions || {});
-              const parentHasSegment = childParentSegPerms[segName]?.enabled ?? false;
-              console.log('[AdminSegmentSettings] Checking if child parent admin has', segName, 'enabled:', parentHasSegment);
-              console.log('[AdminSegmentSettings] Child parent admin:', childDirectParent.name, 'has segments:', Object.keys(childParentSegPerms).filter(k => childParentSegPerms[k]?.enabled));
-              if (!parentHasSegment && childDirectParent.role !== 'SUPER_ADMIN') {
-                console.log('[AdminSegmentSettings] BLOCKING:', segName, '- child parent admin does not have this segment');
-                return res.status(400).json({
-                  message: `Cannot enable ${segName} - child admin's direct parent does not have this segment enabled. Contact your broker.`
-                });
-              }
+            const currentAdminHasSegment = parentSeg.enabled ?? false;
+            console.log('[AdminSegmentSettings] Checking if current admin has', segName, 'enabled:', currentAdminHasSegment);
+            console.log('[AdminSegmentSettings] Current admin:', currentAdmin.name, 'has segments:', Object.keys(parentSegPerms).filter(k => parentSegPerms[k]?.enabled));
+            if (!currentAdminHasSegment && currentAdmin.role !== 'SUPER_ADMIN') {
+              console.log('[AdminSegmentSettings] BLOCKING:', segName, '- current admin does not have this segment');
+              return res.status(400).json({
+                message: `Cannot enable ${segName} - you do not have this segment enabled. Enable it for yourself first.`
+              });
             }
           }
 
@@ -331,6 +269,11 @@ class AdminSegmentSettingsController {
         // Preserve new leverage and quantity limit fields that might be stripped by alignment
         for (const [segName, segData] of Object.entries(plain)) {
           if (!segData || typeof segData !== 'object') continue;
+          // Preserve enabled field
+          if (segData.enabled !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].enabled = segData.enabled;
+          }
           if (segData.intradayLeverage !== undefined) {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].intradayLeverage = segData.intradayLeverage;

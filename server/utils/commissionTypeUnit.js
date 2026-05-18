@@ -1,62 +1,43 @@
 /**
- * Commission type ↔ allowed amount unit (₹ vs %).
- * Reusable on API save paths and in brokerage math.
+ * Commission type helpers.
+ * All commission types use ₹ (INR) as the unit.
+ * PER_CRORE = ₹ per crore turnover (not percentage).
  */
 
 export const COMMISSION_TYPES = ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'];
 
-/** @param {'PER_LOT'|'PER_QUANTITY'|'PER_TRADE'|'PER_CRORE'} commissionType */
+/** All commission types use INR — no PERCENT mode. */
 export function requiredUnitForCommissionType(commissionType) {
-  if (commissionType === 'PER_CRORE') return 'PERCENT';
-  if (commissionType === 'PER_LOT' || commissionType === 'PER_TRADE' || commissionType === 'PER_QUANTITY') {
-    return 'INR';
-  }
-  return null;
+  return 'INR';
 }
 
 /**
- * @param {'PER_LOT'|'PER_TRADE'|'PER_CRORE'} commissionType
- * @param {'INR'|'PERCENT'} unit
+ * @param {'PER_LOT'|'PER_QUANTITY'|'PER_TRADE'|'PER_CRORE'} commissionType
+ * @param {'INR'|'PERCENT'|null} unit
  * @returns {{ ok: boolean, error?: string }}
  */
 export function validateCommissionTypeUnit(commissionType, unit) {
-  const u = unit === 'PERCENT' || unit === 'INR' ? unit : null;
-  if (!u) return { ok: false, error: `Invalid unit "${unit}" (use INR or PERCENT)` };
-  const need = requiredUnitForCommissionType(commissionType);
-  if (!need) return { ok: false, error: `Invalid commission type "${commissionType}"` };
-  if (u !== need) {
-    return {
-      ok: false,
-      error: `${commissionType} requires ${need === 'INR' ? 'fixed ₹ (INR)' : 'percentage (PERCENT)'}; got ${u}`,
-    };
-  }
+  // All types are INR now, accept anything
   return { ok: true };
 }
 
 export function assertValidCommissionTypeUnit(commissionType, unit) {
-  const r = validateCommissionTypeUnit(commissionType, unit);
-  if (!r.ok) {
-    const e = new Error(r.error);
-    e.name = 'CommissionTypeUnitError';
-    throw e;
-  }
+  // No-op: all units are valid (INR-based)
 }
 
 /**
- * Ensures segment slice has commissionUnit aligned with commissionType.
+ * Ensures segment slice has commissionUnit set to INR.
  * @param {Record<string, unknown>} seg
  * @returns {Record<string, unknown>}
  */
 export function withAlignedSegmentCommissionUnit(seg) {
   if (!seg || typeof seg !== 'object') return seg;
   const out = { ...seg };
-  const ct = out.commissionType || 'PER_LOT';
-  out.commissionUnit = requiredUnitForCommissionType(ct);
+  out.commissionUnit = 'INR';
   for (const key of ['optionBuy', 'optionSell']) {
     if (out[key] && typeof out[key] === 'object') {
       const opt = { ...out[key] };
-      const oct = opt.commissionType || 'PER_LOT';
-      opt.commissionUnit = requiredUnitForCommissionType(oct);
+      opt.commissionUnit = 'INR';
       out[key] = opt;
     }
   }
