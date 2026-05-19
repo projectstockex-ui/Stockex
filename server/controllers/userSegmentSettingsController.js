@@ -166,7 +166,7 @@ class UserSegmentSettingsController {
         }
 
         const parentMaxLeverage = parentAdmin.role === 'SUPER_ADMIN'
-          ? 2000
+          ? (parentAdmin.leverageSettings?.maxLeverageFromParent || 2000)
           : (parentAdmin.leverageSettings?.maxLeverageFromParent || 10);
 
         for (const [segName, segData] of Object.entries(plain)) {
@@ -339,6 +339,21 @@ class UserSegmentSettingsController {
             }
           }
         }
+
+        // Map commissionLot to commission when commissionType is PER_CRORE
+        // Frontend sends commissionLot but backend expects commission for PER_CRORE
+        console.log('[UserSegmentSettings] Before mapping - plain data:', JSON.stringify(plain, null, 2));
+        for (const [segName, segData] of Object.entries(plain)) {
+          if (!segData || typeof segData !== 'object') continue;
+          if (segData.commissionType === 'PER_CRORE') {
+            console.log('[UserSegmentSettings] Mapping for', segName, '- commissionLot:', segData.commissionLot, 'commission:', segData.commission);
+            if (segData.commissionLot !== undefined && (segData.commission === undefined || segData.commission === 0)) {
+              segData.commission = segData.commissionLot;
+              console.log('[UserSegmentSettings] Mapped commissionLot to commission for', segName, '- new commission:', segData.commission);
+            }
+          }
+        }
+        console.log('[UserSegmentSettings] After mapping - plain data:', JSON.stringify(plain, null, 2));
 
         // For user segment settings, save directly without alignSegmentDefaultsMap to preserve custom values
         // alignSegmentDefaultsMap is only for admin settings where defaults need to be aligned

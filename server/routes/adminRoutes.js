@@ -756,6 +756,14 @@ router.post('/users', protectAdmin, async (req, res) => {
       scriptSettings: inheritedScriptSettings
     });
 
+    console.log('[adminRoutes] User created:', {
+      userId: user.userId,
+      admin: user.admin,
+      adminCode: user.adminCode,
+      creatorRole: user.creatorRole,
+      hierarchyPath: user.hierarchyPath
+    });
+
     res.status(201).json({
       _id: user._id,
       username: user.username,
@@ -993,6 +1001,61 @@ router.post('/users/:id/force-logout', protectAdmin, async (req, res) => {
 
     res.json({ message: 'User has been logged out successfully' });
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Assign admin to user (fix for users without admin assigned)
+router.post('/users/:id/assign-admin', protectAdmin, async (req, res) => {
+  try {
+    const { adminCode } = req.body;
+    
+    if (!adminCode) {
+      return res.status(400).json({ message: 'Admin code is required' });
+    }
+    
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const admin = await Admin.findOne({ adminCode: adminCode.trim().toUpperCase() });
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    if (admin.status !== 'ACTIVE') {
+      return res.status(400).json({ message: 'Admin is not active' });
+    }
+    
+    // Build hierarchy path
+    const hierarchyPath = [admin.adminCode];
+    let currentAdmin = admin;
+    while (currentAdmin.parentId) {
+      currentAdmin = await Admin.findById(currentAdmin.parentId);
+      if (currentAdmin) {
+        hierarchyPath.push(currentAdmin.adminCode);
+      } else {
+        break;
+      }
+    }
+    
+    // Update user with admin
+    await User.updateOne(
+      { _id: req.params.id },
+      {
+        admin: admin._id,
+        adminCode: admin.adminCode,
+        hierarchyPath: hierarchyPath,
+        creatorRole: admin.role
+      }
+    );
+    
+    console.log('[assign-admin] Assigned admin', admin.adminCode, 'to user', user.userId, 'hierarchyPath:', hierarchyPath);
+    
+    res.json({ message: 'Admin assigned successfully', adminCode: admin.adminCode, hierarchyPath });
+  } catch (error) {
+    console.error('[assign-admin] Error:', error);
     res.status(500).json({ message: error.message });
   }
 });

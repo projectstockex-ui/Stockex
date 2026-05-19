@@ -338,22 +338,25 @@ class WalletService {
       return { action: 'NONE', marginLevel: null, status: 'HEALTHY' };
     }
     
-    const stopOutLevel = riskConfig?.STOP_OUT_LEVEL || 50;
-    const marginCallLevel = riskConfig?.MARGIN_CALL_LEVEL || 100;
-    const healthyLevel = riskConfig?.HEALTHY_LEVEL || 200;
+    // Use segment-specific settings if set, otherwise skip check (no hardcoded fallbacks)
+    const stopOutLevel = riskConfig?.STOP_OUT_LEVEL;
+    const marginCallLevel = riskConfig?.MARGIN_CALL_LEVEL;
     
-    if (marginLevel <= stopOutLevel) {
+    // Only check if thresholds are explicitly set
+    if (stopOutLevel != null && stopOutLevel > 0 && marginLevel <= stopOutLevel) {
       return { action: 'STOP_OUT', marginLevel, status: 'CRITICAL' };
     }
     
-    if (marginLevel <= marginCallLevel) {
+    if (marginCallLevel != null && marginCallLevel > 0 && marginLevel <= marginCallLevel) {
       return { action: 'MARGIN_CALL', marginLevel, status: 'WARNING' };
     }
     
-    if (marginLevel < healthyLevel) {
-      return { action: 'NONE', marginLevel, status: 'CAUTION' };
+    // If no thresholds set, consider healthy
+    if (stopOutLevel == null && marginCallLevel == null) {
+      return { action: 'NONE', marginLevel, status: 'HEALTHY' };
     }
     
+    // Default to healthy if above thresholds
     return { action: 'NONE', marginLevel, status: 'HEALTHY' };
   }
   

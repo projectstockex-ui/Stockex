@@ -62,6 +62,7 @@ const LedgerView = () => {
         headers: { Authorization: `Bearer ${admin.token}` },
         params,
       });
+      console.log('[LedgerView] API returned', data.length, 'entries:', data.map(e => ({ reason: e.reason, amount: e.amount, type: e.type })));
       setLedger(data);
     } catch (error) {
       console.error('Error:', error);

@@ -5134,7 +5134,7 @@ const TradingPanel = ({
                 <div className="text-xs text-amber-400/95 mb-2">Loading margin preview…</div>
               )}
               {[
-                [(isCryptoOnly || instrument?.exchange === 'MCX') ? 'Break/order qty' : 'Breakup / order lots', confirmBreakupCapLabel],
+                ['Breakup / order qty', confirmBreakupCapLabel],
                 [(isCryptoOnly || instrument?.exchange === 'MCX') ? 'Max qty' : 'Max lot', marginPreview?.maxQuantity != null ? String(marginPreview.maxQuantity) : (marginPreview?.maxLots != null ? String(marginPreview.maxLots) : '—')],
                 [(isCryptoOnly || instrument?.exchange === 'MCX') ? 'Qty step' : 'Lot size', marginPreview?.quantityStep != null ? String(marginPreview.quantityStep) : (marginPreview?.lotSize != null ? String(marginPreview.lotSize) : String(lotSize ?? '—'))],
                 ['Time', confirmTickTimeLabel],
@@ -5165,7 +5165,7 @@ const TradingPanel = ({
               ].map(([label, val]) => (
                 <div key={label} className="flex justify-between gap-3 border-b border-dark-700/80 pb-2 last:border-0">
                   <span className="text-gray-400">{label}</span>
-                  <span className="text-white text-right font-medium tabular-nums">{val}</span>
+                  <span className={`${label === 'Breakup / order qty' ? 'text-red-400' : 'text-white'} text-right font-medium tabular-nums`}>{val}</span>
                 </div>
               ))}
               {marginPreview?.lotsError && (

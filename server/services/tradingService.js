@@ -488,7 +488,7 @@ class TradingService {
   static calculateMargin(order, user, leverage = 1) {
     const { segment, productType, side, quantity, price, lotSize = 1, lots = 1 } = order;
     
-    // Crypto / synthetic forex: live quote in USD; margin uses INR notional
+    // Crypto / synthetic forex: live quote in USD; margin uses USD notional (no INR conversion)
     const isUsdSpot = orderIsUsdSpot({ ...order, segment });
     const effectivePrice = price;
     
@@ -498,7 +498,7 @@ class TradingService {
     let baseMargin = 0;
 
     if (isUsdSpot) {
-      // Spot USD book (crypto / forex) — same margin template as crypto
+      // Spot USD book (crypto / forex) — use USD notional directly (no INR conversion)
       baseMargin = tradeValue;
       if (productType === 'MIS') baseMargin *= 0.1; // 10% margin for intraday
     } else if (segment === 'EQUITY' || segment === 'equity') {
@@ -888,9 +888,14 @@ class TradingService {
     const isMCX = orderData.exchange === 'MCX' || ['MCXFUT', 'MCXOPT'].includes(String(orderData.segment || '').toUpperCase());
     if (!isUsdSpot && !isBinanceCrypto && !isMCX) {
       // Validate lot limits from user settings
-      // Script settings override segment settings, segment settings are the default
-      const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots;
-      const minLots = scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1;
+      // Prefer quantityModeSettings for all exchanges when set
+      const qtyModeSettings = segmentSettings?.quantityModeSettings;
+      const maxLots = (qtyModeSettings?.maxQuantity > 0)
+        ? qtyModeSettings.maxQuantity
+        : (scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots);
+      const minLots = (qtyModeSettings?.minQuantity > 0)
+        ? qtyModeSettings.minQuantity
+        : (scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1);
       
       // Only validate if maxLots is set (no hardcoded fallback)
       if (maxLots != null && maxLots > 0) {
@@ -975,17 +980,27 @@ class TradingService {
     let leverage = 1;
     leverage = TradeService.capLeverageFromInstrument(instrument, leverage, isIntraday, isOptionBuy);
     const marginCalc = this.calculateMargin({ ...orderData, quantity: totalQuantity }, user, leverage);
-    
+
+    console.log('[OrderPlacement] Margin calculation debug:', {
+      isCryptoWallet,
+      isForexWallet,
+      totalQuantity,
+      leverage,
+      marginCalcMargin: marginCalc.marginRequired,
+      marginCalcTradeValue: marginCalc.tradeValue
+    });
+
     const price = orderData.price || 0;
     const spreadUsdSide = Number(segmentSettings?.cryptoSpreadUsdPerSide);
-    const segmentSpreadMarkupInr =
+    // For crypto/forex, use USD spread only (no INR conversion)
+    const segmentSpreadMarkupUsd =
       (isCryptoWallet || isForexWallet) &&
       orderData.orderType === 'MARKET' &&
       orderData.side === 'BUY' &&
-      Number(segmentSettings?.cryptoSpreadInr) > 0
-        ? (Number(segmentSettings.cryptoSpreadInr) / 2) * totalQuantity
+      spreadUsdSide > 0
+        ? spreadUsdSide * totalQuantity
         : 0;
-    const tradeValue = price * totalQuantity + segmentSpreadMarkupInr;
+    const tradeValue = price * totalQuantity + segmentSpreadMarkupUsd;
 
     const oneWayBrokerage =
       await TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, orderData, lots) +
@@ -1034,9 +1049,20 @@ class TradingService {
         if (Number.isFinite(n) && n > 1) { exposureNum = n; break; }
       }
 
+      console.log('[OrderPlacement] Margin calculation debug:', {
+        isCryptoWallet,
+        isForexWallet,
+        tradeValue,
+        exposureNum,
+        leverage,
+        candidates,
+        marginRequiredBefore: marginRequired
+      });
+
       if (exposureNum > 1) {
         marginRequired = tradeValue / exposureNum / leverage;
         marginSource = 'segment_exposure';
+        console.log('[OrderPlacement] Margin after segment_exposure:', marginRequired);
       }
     }
     
@@ -1047,13 +1073,14 @@ class TradingService {
     }
     
     // Determine if MCX trade - check before applying minimum margin
-    const isMCXTrade = orderData.exchange === 'MCX' || orderData.segment === 'MCX' || 
+    const isMCXTrade = orderData.exchange === 'MCX' || orderData.segment === 'MCX' ||
                        orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
-    
+    const isCryptoTrade = isCryptoWallet || isForexWallet;
+
     // CRITICAL: Ensure minimum margin is required (prevent 0 margin trades)
     // Minimum margin should be at least 1% of trade value or ₹100, whichever is higher
-    // EXCLUDE MCX trades from minimum margin enforcement - they use leverage-based calculation
-    if (!isMCXTrade) {
+    // EXCLUDE MCX trades AND crypto/forex trades from minimum margin enforcement - they use leverage-based calculation
+    if (!isMCXTrade && !isCryptoTrade) {
       const minMargin = Math.max(tradeValue * 0.01, 100);
       if (marginRequired < minMargin && tradeValue > 0) {
         console.log(`[Trade] Margin too low (${marginRequired}), setting minimum margin: ${minMargin}`);
@@ -1063,26 +1090,26 @@ class TradingService {
     }
 
     // Determine if MCX trade - check before balance validation
-    const isMCXTradeEarly = orderData.exchange === 'MCX' || orderData.segment === 'MCX' || 
+    const isMCXTradeEarly = orderData.exchange === 'MCX' || orderData.segment === 'MCX' ||
                            orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
-    
-    const spotTradeCostInr =
-      isCryptoWallet || isForexWallet ? price * totalQuantity + segmentSpreadMarkupInr : 0;
-    
+
+    // For crypto/forex, use USD cost (no INR conversion)
+    const spotTradeCostUsd =
+      isCryptoWallet || isForexWallet ? price * totalQuantity + segmentSpreadMarkupUsd : 0;
+
     // Use appropriate wallet based on trade type
     let availableBalance;
     if (isCryptoWallet) {
       availableBalance = user.cryptoWallet?.balance || 0;
-      // For leveraged crypto trades (MIS), only require marginRequired + commission, not full trade value
-      const totalRequired = marginRequired + totalCommission;
-      if (totalRequired > availableBalance) {
-        throw new Error(`Insufficient crypto wallet balance. Required: ${totalRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
+      // Only check marginRequired, don't include commission in balance check
+      if (marginRequired > availableBalance) {
+        throw new Error(`Insufficient crypto wallet balance. Required: ${marginRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
       }
     } else if (isForexWallet) {
       availableBalance = user.forexWallet?.balance || 0;
-      const totalRequired = marginRequired + totalCommission;
-      if (totalRequired > availableBalance) {
-        throw new Error(`Insufficient forex wallet balance. Required: ${totalRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
+      // Only check marginRequired, don't include commission in balance check
+      if (marginRequired > availableBalance) {
+        throw new Error(`Insufficient forex wallet balance. Required: ${marginRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
       }
     } else {
       // Regular trades use trading balance with margin system
@@ -1242,26 +1269,28 @@ class TradingService {
     
     if (isCryptoWallet) {
       const cryptoBalance = user.cryptoWallet?.balance || 0;
-      const totalDeduction = marginRequired + totalCommission;
+      // Only deduct marginRequired, don't include commission in balance check
+      const totalDeduction = marginRequired;
       newCryptoBalance = cryptoBalance - totalDeduction;
-      
+
       if (newCryptoBalance < 0) {
         throw new Error(`Insufficient crypto wallet balance. Required: ${totalDeduction.toFixed(2)}, Available: ${cryptoBalance.toFixed(2)}`);
       }
-      
+
       newTradingBalance = user.wallet.tradingBalance || 0;
       newUsedMargin = user.wallet.usedMargin || 0;
       newBlocked = user.wallet.blocked || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       console.log(`Crypto trade: Deducting ${totalDeduction.toFixed(2)} from crypto wallet`);
-      
+
       trade.marginUsed = marginRequired;
     } else if (isForexWallet) {
       const forexBalance = user.forexWallet?.balance || 0;
-      const totalDeduction = marginRequired + totalCommission;
+      // Only deduct marginRequired, don't include commission in balance check
+      const totalDeduction = marginRequired;
       newForexBalance = forexBalance - totalDeduction;
-      
+
       if (newForexBalance < 0) {
         throw new Error(`Insufficient forex wallet balance. Required: ${totalDeduction.toFixed(2)}, Available: ${forexBalance.toFixed(2)}`);
       }
@@ -1432,9 +1461,22 @@ class TradingService {
     
     await trade.save();
 
+    console.log('[placeOrder] Before brokerage distribution check:', {
+      status: trade.status,
+      bookType: trade.bookType,
+      admin: admin ? admin.adminCode : null,
+      adminRole: admin ? admin.role : null,
+      isDemo: user.isDemo,
+      commission: trade.commission || 0,
+      userId: user.userId,
+      tradeId: trade._id,
+      isCryptoWallet,
+      isForexWallet
+    });
+
     if (trade.status === 'OPEN' && trade.bookType === 'B_BOOK' && admin && !user.isDemo) {
       const brk = trade.commission || 0;
-      console.log('[placeOrder] Brokerage distribution check:', {
+      console.log('[placeOrder] Brokerage distribution check PASSED:', {
         status: trade.status,
         bookType: trade.bookType,
         admin: admin ? admin.adminCode : null,

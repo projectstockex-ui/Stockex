@@ -129,8 +129,21 @@ class MarginMonitorService {
       const user = await User.findById(userId);
       if (!user) return;
       
-      // Get risk config for this user's admin
-      const riskConfig = await RiskConfig.getConfig(user.adminCode);
+      // Get segment from first position
+      const segment = positions[0].segment;
+      const segUpper = String(segment || '').toUpperCase();
+      
+      // Get segment-specific settings for autosquare/notification (no hardcoded fallbacks)
+      const userSegmentSettings = user.segmentPermissions?.[segUpper];
+      const segmentAutosquarePercent = userSegmentSettings?.lotSettings?.autosquarePercent;
+      const segmentNotificationPercent = userSegmentSettings?.lotSettings?.notificationPercent;
+      
+      // Build risk config with segment-specific settings only if set (no hardcoded fallbacks)
+      const riskConfig = {
+        STOP_OUT_LEVEL: segmentAutosquarePercent != null && segmentAutosquarePercent > 0 ? segmentAutosquarePercent : null,
+        MARGIN_CALL_LEVEL: segmentNotificationPercent != null && segmentNotificationPercent > 0 ? segmentNotificationPercent : null,
+        HEALTHY_LEVEL: null
+      };
       
       // 4a. Update PnL for each position
       const bulkOps = [];
@@ -155,15 +168,13 @@ class MarginMonitorService {
       }
       
       // 4b. Recalculate wallet for this user
-      // Determine segment from first position
-      const segment = positions[0].segment;
       const walletField = WalletService.getWalletFieldFromTrade(positions[0]);
       const walletState = await WalletService.recalculateWallet(userId, segment);
       
       const currentWalletState = walletState[walletField];
       if (!currentWalletState) return;
       
-      // 4c. Check margin status
+      // 4c. Check margin status with segment-specific settings (only if set)
       const marginStatus = WalletService.checkMarginStatus(currentWalletState, riskConfig);
       
       // 4d. Handle STOP-OUT (most critical - check first)

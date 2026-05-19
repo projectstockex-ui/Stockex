@@ -1,5 +1,6 @@
 server/.zerodha-session.json
 .zerodha-session.json
 .env
+.env.production
 node_modules
 dist

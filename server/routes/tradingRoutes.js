@@ -152,6 +152,9 @@ router.post('/margin-preview', protect, async (req, res) => {
       effectiveSegment = instrumentType === 'OPTIONS' ? 'FOREXOPT' : 'FOREXFUT';
     }
     
+    // Set req.body.segment to effectiveSegment so calculateUserBrokerage receives correct segment
+    req.body.segment = effectiveSegment;
+    
     // Import TradeService for user settings helpers
     const TradeService = (await import('../services/tradeService.js')).default;
     
@@ -329,6 +332,15 @@ router.post('/margin-preview', protect, async (req, res) => {
     const isMCX = segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || 
                   segment === 'COMMODITY' || req.body.exchange === 'MCX';
     
+    console.log('[MarginPreview] Wallet selection:', {
+      segment: effectiveSegment,
+      effectiveSegment,
+      exchange: req.body.exchange,
+      isCrypto,
+      isForex,
+      isMCX
+    });
+    
     // CRITICAL FIX: Recalculate usedMargin from actual open positions
     // This ensures usedMargin is always accurate, not stale from database
     const recalculatedMargin = await recalculateUsedMargin(req.user._id);
@@ -347,24 +359,24 @@ router.post('/margin-preview', protect, async (req, res) => {
       usedMarginDisplay = recalculatedMargin.mcxWallet;
       availableBalance = tradingBalance - usedMarginDisplay;
     } else {
+      // For NSE/BSE, use DB usedMargin instead of recalculated to avoid issues with quantity mode
       tradingBalance = req.user.wallet?.tradingBalance || req.user.wallet?.cashBalance || 0;
-      usedMarginDisplay = recalculatedMargin.wallet;
+      usedMarginDisplay = req.user.wallet?.usedMargin || 0;
       availableBalance = tradingBalance - usedMarginDisplay;
     }
     
-    // Get lot/qty limits from settings - for crypto prefer quantityModeSettings
+    // Get lot/qty limits from settings - prefer quantityModeSettings for all exchanges
     const qtyModeSettings = segmentSettings?.quantityModeSettings;
-    const maxLots = (isCrypto && qtyModeSettings?.maxQuantity > 0)
+    const maxLots = (qtyModeSettings?.maxQuantity > 0)
       ? qtyModeSettings.maxQuantity
       : (scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots);
-    const minLots = (isCrypto && qtyModeSettings?.minQuantity > 0)
+    const minLots = (qtyModeSettings?.minQuantity > 0)
       ? qtyModeSettings.minQuantity
       : (scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1);
     
-    // Get breakup quantity and max bid limits - for crypto prefer quantityModeSettings.breakupQuantity
-    // For MCX also use qtyModeSettings like crypto
+    // Get breakup quantity and max bid limits - prefer quantityModeSettings.breakupQuantity for all exchanges
     const instrumentBreakupQuantity = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.breakupQuantity;
-    const segmentBreakupQuantity = ((isCrypto || isMCX) && qtyModeSettings?.breakupQuantity > 0)
+    const segmentBreakupQuantity = (qtyModeSettings?.breakupQuantity > 0)
       ? qtyModeSettings.breakupQuantity
       : (segmentSettings?.quantitySettings?.breakupQuantity || 0);
     const breakupQuantity = instrumentBreakupQuantity || segmentBreakupQuantity || 0;
@@ -423,7 +435,21 @@ router.post('/margin-preview', protect, async (req, res) => {
     const segmentOrderLots = segmentSettings?.lotSettings?.breakupLots ?? segmentSettings?.orderLots;
     const perOrderLots = scriptOrderLots || segmentOrderLots || maxLots;
     
-    const totalRequired = marginRequired + brokerage;
+    // For crypto/forex, only check marginRequired, don't include brokerage in required check
+    const totalRequired = (isCrypto || isForex) ? marginRequired : marginRequired + brokerage;
+    
+    console.log('[MarginPreview] Debug:', {
+      segment: effectiveSegment,
+      exchange,
+      isCrypto,
+      isForex,
+      isMCX,
+      tradingBalance,
+      usedMarginDisplay,
+      availableBalance,
+      totalRequired,
+      shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0
+    });
     
     res.json({
       marginRequired: Math.round(marginRequired * 100) / 100,
@@ -440,7 +466,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       spread,
       minQuantity: (isCrypto || isForex || isMCX) ? minQuantity : undefined,
       maxQuantity: (isCrypto || isForex || isMCX) ? maxQuantity : undefined,
-      quantityStep: (isCrypto || isForex || isMCX) ? quantityStep : undefined,
+      quantityStep: (isCrypto || isForex || isMCX) ? (perOrderLots * lotSize || quantityStep) : undefined,
       lotSize: isMCX ? undefined : lotSize,
       effectiveLots: isMCX ? undefined : Math.round(effectivePreviewLots * 1e8) / 1e8,
       maxLots: isMCX ? undefined : maxLots,

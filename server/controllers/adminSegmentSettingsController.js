@@ -264,6 +264,22 @@ class AdminSegmentSettingsController {
         }
 
         const { alignSegmentDefaultsMap } = await import('../utils/commissionTypeUnit.js');
+        
+        // Map commissionLot to commission when commissionType is PER_CRORE
+        // Frontend sends commissionLot but backend expects commission for PER_CRORE
+        console.log('[AdminSegmentSettings] Before mapping - plain data:', JSON.stringify(plain, null, 2));
+        for (const [segName, segData] of Object.entries(plain)) {
+          if (!segData || typeof segData !== 'object') continue;
+          if (segData.commissionType === 'PER_CRORE') {
+            console.log('[AdminSegmentSettings] Mapping for', segName, '- commissionLot:', segData.commissionLot, 'commission:', segData.commission);
+            if (segData.commissionLot !== undefined && (segData.commission === undefined || segData.commission === 0)) {
+              segData.commission = segData.commissionLot;
+              console.log('[AdminSegmentSettings] Mapped commissionLot to commission for', segName, '- new commission:', segData.commission);
+            }
+          }
+        }
+        console.log('[AdminSegmentSettings] After mapping - plain data:', JSON.stringify(plain, null, 2));
+        
         const aligned = alignSegmentDefaultsMap(plain);
 
         // Preserve new leverage and quantity limit fields that might be stripped by alignment
@@ -299,6 +315,23 @@ class AdminSegmentSettingsController {
           if (segData.quantityModeSettings !== undefined) {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].quantityModeSettings = segData.quantityModeSettings;
+          }
+          // Preserve commission fields
+          if (segData.commission !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].commission = segData.commission;
+          }
+          if (segData.commissionType !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].commissionType = segData.commissionType;
+          }
+          if (segData.commissionLot !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].commissionLot = segData.commissionLot;
+          }
+          if (segData.commissionUnit !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].commissionUnit = segData.commissionUnit;
           }
         }
 
