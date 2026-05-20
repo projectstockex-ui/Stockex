@@ -649,117 +649,9 @@ class TradingService {
     const denyCtx = buildInstrumentDenyContext(orderData, instrument || null);
     await assertHierarchyInstrumentNotDenied(user, denyCtx);
 
-    // POSITION NETTING: Check if there's an existing opposite position for same symbol
-    // If user has BUY position and places SELL order (or vice versa), net the positions
-    // Works for ALL segments: NSE, MCX, F&O, Crypto, etc.
-    // NOTE: Only apply netting for MARKET orders. LIMIT/SL orders should create pending orders
-    if (orderData.orderType === 'MARKET') {
-      const oppositeSide = orderData.side === 'BUY' ? 'SELL' : 'BUY';
-      const nettingQuery = {
-        user: userId,
-        symbol: orderData.symbol,
-        side: oppositeSide,
-        status: 'OPEN'
-      };
-      // Also match exchange if provided to handle same symbol on different exchanges
-      if (orderData.exchange) {
-        nettingQuery.exchange = orderData.exchange;
-      }
-      
-      // Find ALL opposite positions for this symbol (to handle multiple positions)
-      const existingPositions = await Trade.find(nettingQuery).sort({ createdAt: 1 });
-      
-      if (existingPositions.length > 0) {
-        // Calculate total existing opposite quantity
-        const totalExistingQty = existingPositions.reduce((sum, p) => sum + p.quantity, 0);
-        const newOrderQty = orderData.quantity || (orderData.lots * (orderData.lotSize || 1));
-        
-        const exitPrice = orderData.side === 'BUY' 
-          ? (orderData.askPrice || orderData.price) 
-          : (orderData.bidPrice || orderData.price);
-        
-        console.log(`Position netting: Found ${existingPositions.length} ${oppositeSide} position(s) for ${orderData.symbol}, total qty: ${totalExistingQty}, new order qty: ${newOrderQty}`);
-        
-        if (newOrderQty >= totalExistingQty) {
-          // New order qty >= existing: Close all existing positions, create new position with remaining qty
-          let totalPnL = 0;
-          for (const pos of existingPositions) {
-            const result = await this.squareOffPosition(pos._id, 'NETTING', exitPrice);
-            totalPnL += result.trade?.realizedPnL || 0;
-          }
-          
-          const remainingQty = newOrderQty - totalExistingQty;
-          if (remainingQty > 0) {
-            // Create new position with remaining quantity
-            orderData.quantity = remainingQty;
-            orderData.lots = remainingQty / (orderData.lotSize || 1);
-            // Continue to create new position below
-            console.log(`Netting: Creating new ${orderData.side} position with remaining qty: ${remainingQty}`);
-          } else {
-            // Fully netted - no remaining position
-            return {
-              success: true,
-              trade: existingPositions[existingPositions.length - 1],
-              action: 'POSITION_CLOSED',
-              message: `All ${oppositeSide} positions closed via netting`,
-              pnl: totalPnL
-            };
-          }
-        } else {
-          // New order qty < existing: Partial close - reduce existing position(s)
-          let qtyToClose = newOrderQty;
-          let totalPnL = 0;
-          
-          for (const pos of existingPositions) {
-            if (qtyToClose <= 0) break;
-            
-            if (pos.quantity <= qtyToClose) {
-              // Close this entire position
-              const result = await this.squareOffPosition(pos._id, 'NETTING', exitPrice);
-              totalPnL += result.trade?.realizedPnL || 0;
-              qtyToClose -= pos.quantity;
-            } else {
-              // Partial close - reduce this position's quantity
-              const closedQty = qtyToClose;
-              const remainingQty = pos.quantity - closedQty;
-              
-              // Calculate P&L for the closed portion
-              const pnlPerUnit = pos.side === 'BUY' 
-                ? (exitPrice - pos.entryPrice) 
-                : (pos.entryPrice - exitPrice);
-              const partialPnL = pnlPerUnit * closedQty;
-              totalPnL += partialPnL;
-              
-              // Update the position with reduced quantity
-              await Trade.findByIdAndUpdate(pos._id, {
-                quantity: remainingQty,
-                // Optionally track partial close history
-                $push: {
-                  partialCloses: {
-                    quantity: closedQty,
-                    exitPrice: exitPrice,
-                    pnl: partialPnL,
-                    closedAt: new Date(),
-                    reason: 'NETTING'
-                  }
-                }
-              });
-              
-              console.log(`Partial netting: Reduced ${pos.side} position from ${pos.quantity} to ${remainingQty}`);
-              qtyToClose = 0;
-            }
-          }
-          
-          return {
-            success: true,
-            action: 'POSITION_REDUCED',
-            message: `Position reduced by ${newOrderQty} via netting`,
-            pnl: totalPnL,
-            remainingQty: totalExistingQty - newOrderQty
-          };
-        }
-      }
-    }
+    // POSITION NETTING DISABLED - Allow hedging (both BUY and SELL positions can coexist)
+    // Previously, opposite positions would be netted automatically. Now disabled for all segments
+    // to allow users to hedge their positions across NSE, BSE, MCX, Crypto, Forex, etc.
 
     // Get user's segment and script settings (crypto/forex spread inherits Super Admin default when unset)
     let segmentSettings = await TradeService.getUserSegmentSettings(user, orderData.segment, orderData.instrumentType);
@@ -1111,11 +1003,24 @@ class TradingService {
       if (marginRequired > availableBalance) {
         throw new Error(`Insufficient forex wallet balance. Required: ${marginRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
       }
+    } else if (isMCXTradeEarly) {
+      // MCX trades use MCX wallet balance
+      // Re-fetch user to get latest MCX wallet balance
+      const freshUser = await User.findById(user._id).select('mcxWallet');
+      const mcxBalance = freshUser?.mcxWallet?.balance || 0;
+      console.log('[MCX Trade] FRESH mcxWallet:', JSON.stringify(freshUser?.mcxWallet), 'mcxBalance:', mcxBalance);
+
+      // SIMPLE CHECK: If MCX wallet balance > 0, allow trade (margin check done separately)
+      if (mcxBalance <= 0) {
+        throw new Error(`Cannot place trade. Your MCX wallet balance is ₹${mcxBalance}. Please add funds to your MCX wallet.`);
+      }
+      // Update user object with fresh MCX wallet data
+      user.mcxWallet = freshUser.mcxWallet;
     } else {
-      // Regular trades use trading balance with margin system
+      // Regular trades (NSE/BSE) use trading balance with margin system
       const walletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || user.wallet?.balance || 0;
       const blockedMargin = user.wallet?.usedMargin || user.wallet?.blocked || 0;
-      
+
       // CRITICAL: Check if wallet balance is 0 or negative - reject trade immediately
       if (walletBalance <= 0) {
         throw new Error(`Cannot place trade. Your trading balance is ₹0. Please add funds to your trading account.`);
@@ -1144,21 +1049,21 @@ class TradingService {
       
       // Get user's leverage for this segment
       const leverage = await this.getUserLeverageForSegment(user, orderData.segment);
-      
+
       // For Cash/Delivery trades: 1:1 leverage, no pledge benefit
       // For NFO/Futures trades: wallet + pledge margin available for margin requirement
       // UPDATED: Use leverage-based calculation: (balance * leverage) - usedMargin + pledge
       availableBalance = (walletBalance * leverage) - blockedMargin + Math.max(0, usablePledge);
-      
-      // CRITICAL: Ensure available balance is positive
-      if (availableBalance <= 0) {
-        throw new Error(`Insufficient available margin. Your available balance is ${availableBalance.toLocaleString()}. Please close some positions or add funds.`);
-      }
-      
+
+      // CRITICAL CHANGE: Compare required margin against total wallet balance instead of available balance
+      // This allows trades as long as required margin <= total balance, regardless of used margin
+      const totalWalletBalance = walletBalance;
+      const totalRequired = marginRequired + totalCommission;
+
       // Check if user has enough for margin + commission
-      if ((marginRequired + totalCommission) > availableBalance) {
-        const pledgeMsg = isNFOTrade && usablePledge > 0 ? ` (Pledge: ${Math.max(0, usablePledge).toLocaleString()} used FIRST, then Wallet)` : '';
-        throw new Error(`Insufficient funds. Required: ${(marginRequired + totalCommission).toLocaleString()}, Available: ${availableBalance.toLocaleString()}${pledgeMsg}`);
+      if (totalRequired > totalWalletBalance) {
+        const pledgeMsg = isNFOTrade && usablePledge > 0 ? ` (Pledge: ${Math.max(0, usablePledge).toLocaleString()} available)` : '';
+        throw new Error(`Insufficient funds. Required: ${totalRequired.toLocaleString()}, Available: ${totalWalletBalance.toLocaleString()}${pledgeMsg}`);
       }
     }
 
@@ -1306,29 +1211,24 @@ class TradingService {
       trade.marginUsed = marginRequired;
     } else if (isMCXTrade) {
       // MCX trades: Block margin in usedMargin, deduct only commission from balance
-      // Available = (balance * leverage) - usedMargin, so we only track margin in usedMargin (not deduct from balance)
       const mcxBalance = user.mcxWallet?.balance || 0;
-      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      // Get MCX leverage
-      const mcxLeverage = await this.getUserLeverageForSegment(user, orderData.segment);
-      const mcxAvailable = (mcxBalance * mcxLeverage) - mcxUsedMargin;
       
-      // Check if user has enough in MCX wallet
-      if ((marginRequired + totalCommission) > mcxAvailable) {
-        throw new Error(`Insufficient MCX wallet balance. Required: ${(marginRequired + totalCommission).toLocaleString()}, Available: ${mcxAvailable.toLocaleString()}`);
+      // SIMPLE CHECK: If MCX wallet balance > required margin, allow trade
+      if (marginRequired > mcxBalance) {
+        throw new Error(`Insufficient MCX wallet balance. Required: ${marginRequired.toLocaleString()}, Available: ${mcxBalance.toLocaleString()}`);
       }
       
-      // Update MCX wallet - only deduct commission from balance, margin is tracked in usedMargin
-      newMcxBalance = mcxBalance - totalCommission; // Only commission deducted
-      newMcxUsedMargin = mcxUsedMargin + marginRequired; // Block margin (available = balance * leverage - usedMargin)
-      
+      // Update MCX wallet - do NOT deduct anything from balance, only track margin in usedMargin
+      newMcxBalance = mcxBalance; // Balance unchanged
+      newMcxUsedMargin = (user.mcxWallet?.usedMargin || 0) + marginRequired; // Block margin
+
       // Regular wallet unchanged for MCX trades
       newTradingBalance = user.wallet.tradingBalance || 0;
       newUsedMargin = user.wallet.usedMargin || 0;
       newBlocked = user.wallet.blocked || 0;
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newForexBalance = user.forexWallet?.balance || 0;
-      console.log(`MCX trade: Blocking ₹${marginRequired.toLocaleString()} margin, deducting ₹${totalCommission.toLocaleString()} commission. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`);
+      console.log(`MCX trade: Blocking ₹${marginRequired.toLocaleString()} margin. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`);
     } else {
       // Regular trades: Block margin in usedMargin, deduct only commission from balance
       // Available = tradingBalance - usedMargin, so margin is only tracked in usedMargin
@@ -1741,7 +1641,8 @@ class TradingService {
       amount: Math.abs(netPnL),
       balanceAfter: balanceAfter + netPnL,
       reference: { type: 'Trade', id: trade._id },
-      description: `${trade.symbol} ${trade.side} P&L${trade.isCrypto ? ' (Crypto)' : trade.isForex ? ' (Forex)' : (isMCXTrade ? ' (MCX)' : '')}`
+      description: `${trade.symbol} ${trade.side} P&L${trade.isCrypto ? ' (Crypto)' : trade.isForex ? ' (Forex)' : (isMCXTrade ? ' (MCX)' : '')}`,
+      isAutoSquare: trade.closeReason === 'AUTO_SQUARE'
     });
 
     // Release blocked margin and add/subtract P&L to appropriate wallet

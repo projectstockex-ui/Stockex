@@ -6,11 +6,8 @@ import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { io } from 'socket.io-client';
 import {
-  Search, LogOut, Wallet, RefreshCw, Plus, TrendingUp,
-  ChevronRight, Settings, Bell, User, X,
-  BarChart2, History, ListOrdered, UserCircle, Menu,
-  ArrowDownCircle, ArrowUpCircle, CreditCard, Copy, Check, Building2,
-  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft, Share2
+  Search, 
+  ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, RefreshCw, Settings, Share2, Wallet, X, Copy, Check, Building2, User, Home, ChevronRight, LogOut, Bell, History, ClipboardList, ListOrdered, BarChart2, TrendingUp, Plus, Star, Info, UserCircle, CreditCard, ArrowDown
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
@@ -505,13 +502,13 @@ const UserDashboard = () => {
   const { user, logoutUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  
+
   // Check if we're in crypto-only or mcx-only mode from URL query param
   const searchParams = new URLSearchParams(location.search);
   const cryptoOnly = searchParams.get('mode') === 'crypto';
   const mcxOnly = searchParams.get('mode') === 'mcx';
   const forexOnly = searchParams.get('mode') === 'forex';
-  
+
   const [selectedInstrument, setSelectedInstrument] = useState(null);
   const hydratingInstrumentRef = useRef(false);
   const [walletData, setWalletData] = useState(null);
@@ -1197,7 +1194,7 @@ const UserDashboard = () => {
                 </span>
               </span>
             ) : mcxOnly ? (
-              <span className="text-yellow-400 font-medium">{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
+              <span className="text-yellow-400 font-medium">{((walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)).toLocaleString()}</span>
             ) : (
               <span className="text-green-400 font-medium">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
             )}
@@ -1245,7 +1242,7 @@ const UserDashboard = () => {
                 </span>
               </span>
             ) : mcxOnly ? (
-              <span className="text-yellow-400 font-medium text-sm">{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
+              <span className="text-yellow-400 font-medium text-sm">{((walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)).toLocaleString()}</span>
             ) : (
               <span className="text-green-400 font-medium text-sm">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
             )}
@@ -3299,90 +3296,12 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       const filteredPending = filterByMode(pendingRes.data);
       const filteredHistory = filterByMode(historyRes.data, true);
       
-      // Apply netting logic - aggregate positions by symbol and net BUY vs SELL
+      // POSITION NETTING DISABLED - Allow hedging (both BUY and SELL positions can coexist)
+      // Previously, opposite positions would be netted automatically. Now disabled for all segments
+      // to allow users to hedge their positions across NSE, BSE, MCX, Crypto, Forex, etc.
       const netPositions = (positions) => {
-        // Step 1: Group by symbol (not symbol+side)
-        const bySymbol = {};
-        for (const pos of positions) {
-          const key = `${pos.symbol}_${pos.exchange || 'NSE'}`;
-          if (!bySymbol[key]) {
-            bySymbol[key] = { buys: [], sells: [] };
-          }
-          if (pos.side === 'BUY') {
-            bySymbol[key].buys.push(pos);
-          } else {
-            bySymbol[key].sells.push(pos);
-          }
-        }
-        
-        // Step 2: Net each symbol's positions
-        const netted = [];
-        for (const key of Object.keys(bySymbol)) {
-          const { buys, sells } = bySymbol[key];
-          
-          // Calculate total BUY quantity and weighted avg price
-          let buyQty = 0, buyValue = 0, buyIds = [], buyCommission = 0;
-          for (const b of buys) {
-            buyQty += b.quantity;
-            buyValue += b.quantity * b.entryPrice;
-            buyIds.push(b._id);
-            buyCommission += b.commission || 0;
-          }
-          const buyAvgPrice = buyQty > 0 ? buyValue / buyQty : 0;
-          
-          // Calculate total SELL quantity and weighted avg price
-          let sellQty = 0, sellValue = 0, sellIds = [], sellCommission = 0;
-          for (const s of sells) {
-            sellQty += s.quantity;
-            sellValue += s.quantity * s.entryPrice;
-            sellIds.push(s._id);
-            sellCommission += s.commission || 0;
-          }
-          const sellAvgPrice = sellQty > 0 ? sellValue / sellQty : 0;
-          
-          // Net the positions
-          const netQty = buyQty - sellQty;
-          
-          if (netQty === 0) {
-            // Fully netted - no open position (but we still track for display if needed)
-            continue;
-          }
-          
-          // Use the first position as template
-          const template = buys[0] || sells[0];
-          
-          if (netQty > 0) {
-            // Net BUY position
-            netted.push({
-              ...template,
-              side: 'BUY',
-              quantity: netQty,
-              entryPrice: buyAvgPrice,
-              _ids: buyIds,
-              _sellIds: sellIds, // Track sell IDs for reference
-              commission: buyCommission,
-              isNetted: true,
-              originalBuyQty: buyQty,
-              originalSellQty: sellQty
-            });
-          } else {
-            // Net SELL position
-            netted.push({
-              ...template,
-              side: 'SELL',
-              quantity: Math.abs(netQty),
-              entryPrice: sellAvgPrice,
-              _ids: sellIds,
-              _buyIds: buyIds, // Track buy IDs for reference
-              commission: sellCommission,
-              isNetted: true,
-              originalBuyQty: buyQty,
-              originalSellQty: sellQty
-            });
-          }
-        }
-        
-        return netted;
+        // Return all positions as-is (no netting)
+        return positions;
       };
       
       setPositions(netPositions(filteredPositions));
@@ -3768,57 +3687,57 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
             </button>
           ))}
         </div>
-        
+
+        {/* Quick Trade Section - Always Visible */}
+        <div className="flex items-center gap-2 flex-1">
+          <span className={`text-xs font-medium ${selectedInstrument ? 'text-green-400' : 'text-gray-500'}`}>
+            {selectedInstrument?.symbol || 'No Symbol'}
+          </span>
+          <span className="text-xs text-gray-400">
+            {(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
+          </span>
+          <button
+            onClick={() => executeQuickTrade('sell')}
+            disabled={quickTrading || !selectedInstrument}
+            className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-xs font-bold transition-colors"
+            title={selectedInstrument ? 'Sell' : 'Select an instrument first'}
+          >
+            S
+          </button>
+          <input
+            type="text"
+            value={quickQty}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                setQuickQty(val);
+              }
+            }}
+            onBlur={(e) => {
+              const num = parseFloat(e.target.value);
+              if (isNaN(num) || num <= 0) setQuickQty('1');
+            }}
+            placeholder="Qty"
+            className="w-16 h-8 bg-dark-700 rounded text-center text-sm focus:outline-none focus:ring-1 focus:ring-green-500"
+          />
+          <button
+            onClick={() => executeQuickTrade('buy')}
+            disabled={quickTrading || !selectedInstrument}
+            className="w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-xs font-bold transition-colors"
+            title={selectedInstrument ? 'Buy' : 'Select an instrument first'}
+          >
+            B
+          </button>
+          {quickError && <span className="text-xs text-red-400">{quickError}</span>}
+        </div>
         <div className="flex items-center gap-4">
-          {/* Quick Trade Section - Always Visible */}
-          <div className="flex items-center gap-2">
-            <span className={`text-xs font-medium ${selectedInstrument ? 'text-green-400' : 'text-gray-500'}`}>
-              {selectedInstrument?.symbol || 'No Symbol'}
-            </span>
-            <span className="text-xs text-gray-400">
-              {(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
-            </span>
-            <button 
-              onClick={() => executeQuickTrade('sell')}
-              disabled={quickTrading || !selectedInstrument}
-              className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-xs font-bold transition-colors"
-              title={selectedInstrument ? 'Sell' : 'Select an instrument first'}
-            >
-              S
-            </button>
-            <input
-              type="text"
-              value={quickQty}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                  setQuickQty(val);
-                }
-              }}
-              onBlur={(e) => {
-                const num = parseFloat(e.target.value);
-                if (isNaN(num) || num <= 0) setQuickQty('1');
-              }}
-              placeholder="Qty"
-              className="w-16 h-8 bg-dark-700 rounded text-center text-sm focus:outline-none focus:ring-1 focus:ring-green-500"
-            />
-            <button 
-              onClick={() => executeQuickTrade('buy')}
-              disabled={quickTrading || !selectedInstrument}
-              className="w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-xs font-bold transition-colors"
-              title={selectedInstrument ? 'Buy' : 'Select an instrument first'}
-            >
-              B
-            </button>
-            {quickError && <span className="text-xs text-red-400">{quickError}</span>}
-          </div>
           <div className="text-sm">
             <span className="text-gray-400">P/L: </span>
             <span className={`font-medium ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {totalPnL >= 0 ? '+' : '-'}{Math.abs(parseFloat(totalPnL) || 0).toFixed(2)}
             </span>
           </div>
-          
+
           {/* Bulk Close Buttons */}
           {activeTab === 'positions' && positions.length > 0 && (
             <div className="flex items-center gap-2 ml-4">
@@ -4307,19 +4226,22 @@ const TradingPanel = ({
         usedMargin: 0,
         available: walletData?.forexWallet?.balance || 0
       };
-    } else if (isMCX) {
+    }
+    if (isMCX) {
+      const mcxBalance = walletData?.mcxWallet?.balance || 0;
+      const mcxUsedMargin = walletData?.mcxWallet?.usedMargin || 0;
       return {
-        balance: walletData?.mcxWallet?.balance || 0,
-        usedMargin: walletData?.mcxWallet?.usedMargin || 0,
-        available: (walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)
-      };
-    } else {
-      return {
-        balance: walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0,
-        usedMargin: walletData?.usedMargin || walletData?.wallet?.usedMargin || 0,
-        available: walletData?.marginAvailable || ((walletData?.tradingBalance || 0) - (walletData?.usedMargin || 0))
+        balance: mcxBalance,
+        usedMargin: mcxUsedMargin,
+        available: mcxBalance - mcxUsedMargin
       };
     }
+    // Default: regular trading wallet (NSE/BSE)
+    return {
+      balance: walletData?.tradingBalance || 0,
+      usedMargin: walletData?.usedMargin || walletData?.wallet?.usedMargin || 0,
+      available: walletData?.marginAvailable || ((walletData?.tradingBalance || 0) - (walletData?.usedMargin || 0))
+    };
   };
   const activeWallet = getActiveWallet();
 
@@ -4454,7 +4376,13 @@ const TradingPanel = ({
     }
 
     if (previewGate && !previewGate.canPlace) {
-      setError(`Insufficient funds. Need ${previewGate.shortfall?.toLocaleString()} more`);
+      // Simple: required margin - wallet balance
+      const shortfall = Number(previewGate.marginRequired || 0) - Number(previewGate.tradingBalance || 0);
+      if (shortfall > 0) {
+        setError(`Insufficient funds. Need ${shortfall.toLocaleString()} more`);
+      } else {
+        setError('Cannot place trade. Please check your balance.');
+      }
       return;
     }
 
@@ -5040,7 +4968,7 @@ const TradingPanel = ({
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
                 <span className={isMCX ? 'text-yellow-400' : 'text-green-400'}>
-                  {activeWallet.balance.toLocaleString()}
+                  {(activeWallet.balance - activeWallet.usedMargin).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
@@ -6340,7 +6268,7 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
           >
             SELL
           </button>
-          <button 
+          <button
             onClick={() => onBuySell('buy', selectedInstrument)}
             className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold"
           >
@@ -6352,232 +6280,28 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
   );
 };
 
-const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false, mcxOnly = false, forexOnly = false, walletData, usdRate = 83.5 }) => {
-  const [tab, setTab] = useState(activeTab || 'positions');
-  const [positions, setPositions] = useState([]);
-  const [pendingOrders, setPendingOrders] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [cancelledOrders, setCancelledOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [todayPnL, setTodayPnL] = useState({ realized: 0, unrealized: 0 });
-
-  // Helper to check if trade is MCX
-  const isMcxTrade = (item) => {
-    const segment = item?.segment?.toUpperCase() || '';
-    const exchange = item?.exchange?.toUpperCase() || '';
-    return segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || exchange === 'MCX';
-  };
-
-  const isForexTrade = (item) => isForexInstrument(item);
-
-  // Filter by mode - crypto, forex, mcx, or regular
-  const filterByMode = (items) => {
-    if (cryptoOnly) {
-      return (items || []).filter(item => item.isCrypto === true);
-    }
-    if (forexOnly) {
-      return (items || []).filter(item => isForexTrade(item));
-    }
-    if (mcxOnly) {
-      return (items || []).filter(item => isMcxTrade(item));
-    }
-    return (items || []).filter(
-      item => item.isCrypto !== true && !isMcxTrade(item) && !isForexTrade(item)
-    );
-  };
-
-  useEffect(() => {
-    if (user?.token) {
-      fetchAllData();
-      const interval = setInterval(fetchAllData, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [user?.token, cryptoOnly, mcxOnly, forexOnly]);
-
-  const fetchAllData = async () => {
-    try {
-      const headers = { Authorization: `Bearer ${user.token}` };
-      const [posRes, pendingRes, historyRes] = await Promise.all([
-        axios.get('/api/trading/positions?status=OPEN', { headers }),
-        axios.get('/api/trading/pending-orders', { headers }),
-        axios.get('/api/trading/history?limit=100', { headers })
-      ]);
-      const allPositions = filterByMode(posRes.data);
-      const allPending = filterByMode(pendingRes.data);
-      const allHistory = filterByMode(historyRes.data);
-      
-      // Apply netting logic - aggregate positions by symbol and net BUY vs SELL
-      const netPositions = (positions) => {
-        const bySymbol = {};
-        for (const pos of positions) {
-          const key = `${pos.symbol}_${pos.exchange || 'NSE'}`;
-          if (!bySymbol[key]) {
-            bySymbol[key] = { buys: [], sells: [] };
-          }
-          if (pos.side === 'BUY') {
-            bySymbol[key].buys.push(pos);
-          } else {
-            bySymbol[key].sells.push(pos);
-          }
-        }
-        
-        const netted = [];
-        for (const key of Object.keys(bySymbol)) {
-          const { buys, sells } = bySymbol[key];
-          
-          let buyQty = 0, buyValue = 0, buyIds = [], buyCommission = 0;
-          for (const b of buys) {
-            buyQty += b.quantity;
-            buyValue += b.quantity * b.entryPrice;
-            buyIds.push(b._id);
-            buyCommission += b.commission || 0;
-          }
-          const buyAvgPrice = buyQty > 0 ? buyValue / buyQty : 0;
-          
-          let sellQty = 0, sellValue = 0, sellIds = [], sellCommission = 0;
-          for (const s of sells) {
-            sellQty += s.quantity;
-            sellValue += s.quantity * s.entryPrice;
-            sellIds.push(s._id);
-            sellCommission += s.commission || 0;
-          }
-          const sellAvgPrice = sellQty > 0 ? sellValue / sellQty : 0;
-          
-          const netQty = buyQty - sellQty;
-          if (netQty === 0) continue;
-          
-          const template = buys[0] || sells[0];
-          if (netQty > 0) {
-            netted.push({
-              ...template,
-              side: 'BUY',
-              quantity: netQty,
-              entryPrice: buyAvgPrice,
-              _ids: buyIds,
-              _sellIds: sellIds,
-              commission: buyCommission,
-              isNetted: true
-            });
-          } else {
-            netted.push({
-              ...template,
-              side: 'SELL',
-              quantity: Math.abs(netQty),
-              entryPrice: sellAvgPrice,
-              _ids: sellIds,
-              _buyIds: buyIds,
-              commission: sellCommission,
-              isNetted: true
-            });
-          }
-        }
-        return netted;
-      };
-      
-      setPositions(netPositions(allPositions));
-      setPendingOrders(allPending.filter(o => o.status === 'PENDING'));
-      setCancelledOrders(allHistory.filter(o => o.status === 'CANCELLED' || o.closeReason === 'REJECTED'));
-      setHistory(allHistory.filter(o => o.status === 'CLOSED'));
-      
-// ...
-      // Calculate Today's P&L
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayTrades = allHistory.filter(t => new Date(t.closedAt) >= today);
-      const realizedToday = todayTrades.reduce((sum, t) => sum + (t.realizedPnL || t.netPnL || 0), 0);
-      
-      // Calculate unrealized P&L from open positions
-      let unrealizedToday = 0;
-      allPositions.forEach(pos => {
-        const ltp = getCurrentPrice(pos) || pos.currentPrice || pos.entryPrice;
-        const pnl = pos.side === 'BUY' 
-          ? (ltp - pos.entryPrice) * pos.quantity 
-          : (pos.entryPrice - ltp) * pos.quantity;
-        unrealizedToday += pnl;
-      });
-      
-      setTodayPnL({ realized: realizedToday, unrealized: unrealizedToday });
-    } catch (error) {
-      console.error('Error:', error);
-    }
-  };
-
-  const handleClose = async (id, item) => {
-    try {
-      setLoading(true);
-      const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, item);
-      const isCryptoOnly = !!(item?.isCrypto || item?.exchange === 'BINANCE');
-      const isForexPos = !!isForexInstrument(item);
-
-      const idsToClose = item?._ids || [id];
-      for (const posId of idsToClose) {
-        await axios.post(`/api/trading/close/${posId}`, {
-          bidPrice,
-          askPrice,
-          isCrypto: isCryptoOnly,
-          isForex: isForexPos
-        }, { headers: { Authorization: `Bearer ${user.token}` } });
-      }
-      fetchAllData();
-    } catch (error) {
-      alert(error.response?.data?.message || 'Error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCancelOrder = async (id) => {
-    try {
-      setLoading(true);
-      await axios.post(`/api/trading/cancel/${id}`, {}, { 
-        headers: { Authorization: `Bearer ${user.token}` } 
-      });
-      fetchAllData();
-    } catch (error) {
-      alert(error.response?.data?.message || 'Error cancelling order');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getCurrentPrice = (position) => {
-    const side = position.side;
-    const isC = isUsdSpotInstrument(position);
-    if (isC) {
-      const q = getCryptoMarketQuote(marketData, position);
-      if (!q) return 0;
-      const raw =
-        side === 'BUY'
-          ? Number(q.bid || q.ltp || q.close || 0)
-          : Number(q.ask || q.ltp || q.close || 0);
-      return raw;
-    }
-
-    const token = position.token;
-    const symbol = position.symbol;
-
-    let data = null;
-    if (token && marketData?.[token]) {
-      data = marketData[token];
-    } else if (symbol && marketData?.[symbol]) {
-      data = marketData[symbol];
-    } else {
-      for (const [, mData] of Object.entries(marketData || {})) {
-        if (mData.symbol === symbol) {
-          data = mData;
-          break;
-        }
-      }
-    }
-
-    if (!data) return 0;
-
-    if (side === 'BUY') {
-      return data.bid || data.ltp || data.last_price || 0;
-    }
-    return data.ask || data.ltp || data.last_price || 0;
-  };
-
+// DesktopTradingPanel component
+const DesktopTradingPanel = ({
+  positions,
+  pendingOrders,
+  history,
+  tab,
+  setTab,
+  todayPnL,
+  loading,
+  handleClose,
+  handleCancelOrder,
+  getCurrentPrice,
+  isMcxTrade,
+  isForexInstrument,
+  isUsdSpotInstrument,
+  getCryptoMarketQuote,
+  getUsdSpotBidAsk,
+  marketData,
+  user,
+  fetchAllData,
+  cancelledOrders
+}) => {
   // Filter history to show only manually squared off positions
   const squaredOffHistory = history.filter(item => item.closeReason === 'MANUAL');
 
@@ -8315,8 +8039,8 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
           <button
             onClick={() => { setActiveTab('deposit'); setMessage(null); }}
             className={`flex-1 py-3 font-medium flex items-center justify-center gap-2 ${
-              activeTab === 'deposit' 
-                ? 'text-green-400 border-b-2 border-green-400' 
+              activeTab === 'deposit'
+                ? 'text-green-400 border-b-2 border-green-400'
                 : 'text-gray-400 hover:text-white'
             }`}
           >
@@ -8326,8 +8050,8 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
           <button
             onClick={() => { setActiveTab('withdraw'); setMessage(null); }}
             className={`flex-1 py-3 font-medium flex items-center justify-center gap-2 ${
-              activeTab === 'withdraw' 
-                ? 'text-red-400 border-b-2 border-red-400' 
+              activeTab === 'withdraw'
+                ? 'text-red-400 border-b-2 border-red-400'
                 : 'text-gray-400 hover:text-white'
             }`}
           >
@@ -8389,6 +8113,15 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
                 </div>
               </div>
             </div>
+
+            {/* View Transaction History Button */}
+            <button
+              onClick={() => setActiveTab('history')}
+              className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-lg flex items-center justify-center gap-2 text-white font-medium transition-colors"
+            >
+              <History size={18} />
+              View Transaction History
+            </button>
 
             {/* Referral Amount */}
             <div className="bg-dark-700 rounded-lg p-4">
@@ -9336,7 +9069,7 @@ const BuySellModal = ({
           <div className="bg-dark-700 rounded-lg p-3 space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
-              <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>{activeWallet.balance.toLocaleString()}</span>
+              <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>{(activeWallet.balance - activeWallet.usedMargin).toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Used Margin</span>
@@ -9348,14 +9081,14 @@ const BuySellModal = ({
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Required Margin</span>
-              <span className={`font-medium ${Number(marginPreview?.marginRequired || 0) > Number(activeWallet.available || 0) ? 'text-red-400' : 'text-green-400'}`}>
+              <span className={`font-medium ${Number(marginPreview?.marginRequired || 0) > Number(activeWallet.balance || 0) ? 'text-red-400' : 'text-green-400'}`}>
                 {marginPreview?.marginRequired?.toLocaleString() || '--'}
               </span>
             </div>
-            {Number(marginPreview?.marginRequired || 0) > Number(activeWallet.available || 0) && (
+            {Number(marginPreview?.marginRequired || 0) > Number(activeWallet.balance || 0) && (
               <div className="text-xs text-red-400 flex items-center gap-1">
                 <span>⚠</span>
-                <span>Insufficient funds. Need {(Number(marginPreview?.marginRequired || 0) - Number(activeWallet.available || 0)).toLocaleString()} more</span>
+                <span>Insufficient funds. Need {(Number(marginPreview?.marginRequired || 0) - Number(activeWallet.balance || 0)).toLocaleString()} more</span>
               </div>
             )}
             <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
@@ -9804,4 +9537,3 @@ function generateVolumeData() {
 }
 
 export default UserDashboard;
-  

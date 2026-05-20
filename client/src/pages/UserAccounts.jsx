@@ -55,6 +55,9 @@ const UserAccounts = () => {
   const [showTradingTransferLedger, setShowTradingTransferLedger] = useState(false);
   const [tradingTransferLedger, setTradingTransferLedger] = useState([]);
   const [tradingTransferLedgerLoading, setTradingTransferLedgerLoading] = useState(false);
+  const [showTradingWalletLedger, setShowTradingWalletLedger] = useState(false);
+  const [tradingWalletLedger, setTradingWalletLedger] = useState([]);
+  const [tradingWalletLedgerLoading, setTradingWalletLedgerLoading] = useState(false);
   const [showMcxTransferLedger, setShowMcxTransferLedger] = useState(false);
   const [mcxTransferLedger, setMcxTransferLedger] = useState([]);
   const [mcxTransferLedgerLoading, setMcxTransferLedgerLoading] = useState(false);
@@ -256,6 +259,22 @@ const UserAccounts = () => {
     }
   }, [user?.token]);
 
+  const fetchTradingWalletLedger = useCallback(async () => {
+    if (!user?.token) return;
+    setTradingWalletLedgerLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/wallet-ledger?limit=50', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setTradingWalletLedger(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('Trading wallet ledger:', e);
+      setTradingWalletLedger([]);
+    } finally {
+      setTradingWalletLedgerLoading(false);
+    }
+  }, [user?.token]);
+
   const fetchMcxTransferLedger = useCallback(async () => {
     if (!user?.token) return;
     setMcxTransferLedgerLoading(true);
@@ -419,6 +438,72 @@ const UserAccounts = () => {
             <button
               type="button"
               onClick={() => {
+                setShowTradingWalletLedger((prev) => {
+                  const next = !prev;
+                  if (next) fetchTradingWalletLedger();
+                  return next;
+                });
+              }}
+              className="mt-4 w-full py-2.5 text-sm font-medium text-green-200 border border-green-500/35 rounded-lg hover:bg-green-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <History size={16} />
+              {showTradingWalletLedger ? 'Hide' : 'View'} transaction history
+            </button>
+
+            {showTradingWalletLedger && (
+              <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden max-h-72 overflow-y-auto">
+                {tradingWalletLedgerLoading ? (
+                  <div className="p-6 text-center text-gray-500 text-sm">Loading transaction history…</div>
+                ) : tradingWalletLedger.length === 0 ? (
+                  <div className="p-6 text-center text-gray-500 text-sm">
+                    No transactions yet.
+                  </div>
+                ) : (
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="sticky top-0 bg-dark-800 text-gray-500">
+                      <tr>
+                        <th className="px-2 py-2 font-medium whitespace-nowrap">When (IST)</th>
+                        <th className="px-2 py-2 font-medium">Reason</th>
+                        <th className="px-2 py-2 font-medium text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-dark-700">
+                      {tradingWalletLedger.map((row) => (
+                        <tr key={row._id} className="hover:bg-dark-800/60">
+                          <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{formatIstLedgerTime(row.createdAt)}</td>
+                          <td className="px-2 py-2 align-top">
+                            <div className={`text-gray-200 font-medium ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
+                              {row.reason}
+                            </div>
+                            {row.description && (
+                              <div className="text-[10px] text-gray-500 mt-1">{row.description}</div>
+                            )}
+                            {row.isAutoSquare && (
+                              <div className="text-[10px] px-1.5 py-0.5 rounded bg-orange-900/30 text-orange-400 mt-1 inline-block">
+                                Autosquare
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-2 py-2 text-right align-top tabular-nums">
+                            <span className={row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
+                              {row.type === 'CREDIT' ? '+' : '-'}₹
+                              {Number(row.amount || 0).toLocaleString('en-IN', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
                 setShowTradingTransferLedger((prev) => {
                   const next = !prev;
                   if (next) fetchTradingTransferLedger();
@@ -571,12 +656,12 @@ const UserAccounts = () => {
             </div>
             
             <div className="text-4xl font-bold mb-1">
-              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              ₹{mcxAvailableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
             <div className="text-sm text-gray-500">MCX Trading Balance</div>
             {mcxUsedMargin > 0 && (
               <div className="text-xs text-yellow-400 mt-1">
-                Margin Used: ₹{mcxUsedMargin.toLocaleString()} | Available: ₹{mcxAvailableBalance.toLocaleString()}
+                Margin Used: ₹{mcxUsedMargin.toLocaleString()} | Total: ₹{mcxBalance.toLocaleString()}
               </div>
             )}
             {mcxRealizedPnL !== 0 && (
@@ -1504,7 +1589,7 @@ const UserAccounts = () => {
           <div>
             <div className="text-sm text-gray-400 mb-1">MCX Account</div>
             <div className="text-2xl font-bold text-yellow-400">
-              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              ₹{mcxAvailableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div>

@@ -269,41 +269,27 @@ class TradeService {
     const isNSE = segU === 'NSE' || segU === 'NSE-EQ' || segU === 'NSEFUT' || segU === 'NSEOPT';
     const isBSE = segU === 'BSE' || segU === 'BSE-FUT' || segU === 'BSE-OPT';
 
-    let availableMargin;
+    let totalWalletBalance;
     let walletType;
 
     if (isMcx) {
-      const mcxBalance = user.mcxWallet?.balance || 0;
-      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      // MCX uses leverage-based calculation
-      const mcxLeverage = await this.getUserLeverageForSegment(user, segment);
-      availableMargin = (mcxBalance * mcxLeverage) - mcxUsedMargin;
+      totalWalletBalance = user.mcxWallet?.balance || 0;
       walletType = 'MCX';
     } else if (isCrypto) {
-      const cryptoBalance = user.cryptoWallet?.balance || 0;
-      const cryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
-      const cryptoLeverage = await this.getUserLeverageForSegment(user, segment);
-      availableMargin = (cryptoBalance * cryptoLeverage) - cryptoUsedMargin;
+      totalWalletBalance = user.cryptoWallet?.balance || 0;
       walletType = 'Crypto';
     } else if (isForex) {
-      const forexBalance = user.forexWallet?.balance || 0;
-      const forexUsedMargin = user.forexWallet?.usedMargin || 0;
-      const forexLeverage = await this.getUserLeverageForSegment(user, segment);
-      availableMargin = (forexBalance * forexLeverage) - forexUsedMargin;
+      totalWalletBalance = user.forexWallet?.balance || 0;
       walletType = 'Forex';
     } else {
-      const walletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
-      const usedMargin = user.wallet?.usedMargin || 0;
-      const collateralValue = user.wallet?.collateralValue || 0;
-      // Get user's leverage for this segment
-      const leverage = await this.getUserLeverageForSegment(user, segment);
-      // Available margin = (balance * leverage) - usedMargin + collateralValue
-      availableMargin = (walletBalance * leverage) - usedMargin + collateralValue;
+      totalWalletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
       walletType = 'Main';
     }
 
-    if (availableMargin < requiredMargin) {
-      throw new Error(`Insufficient margin in ${walletType} Account. Required: ${requiredMargin.toFixed(2)}, Available: ${availableMargin.toFixed(2)}`);
+    // CRITICAL CHANGE: Compare required margin against total wallet balance instead of available balance
+    // This allows trades as long as required margin <= total balance, regardless of used margin
+    if (totalWalletBalance < requiredMargin) {
+      throw new Error(`Insufficient margin in ${walletType} Account. Required: ${requiredMargin.toFixed(2)}, Available: ${totalWalletBalance.toFixed(2)}`);
     }
   }
 
@@ -1541,13 +1527,17 @@ static _SEGMENT_MERGE_FALLBACK = {
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase());
 
     if (isMcx) {
+      // MCX: Release usedMargin and add P&L to balance
+      const currentMcxBalance = user.mcxWallet?.balance || 0;
+      const newMcxBalance = currentMcxBalance + trade.netPnL;
       await User.updateOne(
         { _id: user._id },
         { $inc: {
           'mcxWallet.usedMargin': -trade.marginUsed,
-          'mcxWallet.balance': trade.netPnL,
           'mcxWallet.realizedPnL': trade.netPnL,
           'mcxWallet.todayRealizedPnL': trade.netPnL
+        }, $set: {
+          'mcxWallet.balance': newMcxBalance
         }}
       );
     } else if (isCrypto) {
@@ -2012,7 +2002,7 @@ static _SEGMENT_MERGE_FALLBACK = {
       });
       return;
     }
-    
+
     console.log('[creditBrokerageToAdmin] Crediting brokerage:', {
       admin: admin.name,
       role: admin.role,
@@ -2020,11 +2010,21 @@ static _SEGMENT_MERGE_FALLBACK = {
       tradeId: trade._id,
       description: description
     });
-    
+
     admin.wallet.balance += amount;
     admin.stats.totalBrokerage += amount;
     await admin.save();
-    
+
+    // Determine trading segment for ledger
+    let tradingSegment = 'NSE/BSE';
+    if (trade.exchange === 'MCX' || trade.segment === 'MCX' || trade.segment === 'MCXFUT' || trade.segment === 'MCXOPT') {
+      tradingSegment = 'MCX';
+    } else if (trade.isCrypto || trade.exchange === 'BINANCE') {
+      tradingSegment = 'CRYPTO';
+    } else if (trade.isForex || trade.exchange === 'FOREX') {
+      tradingSegment = 'FOREX';
+    }
+
     await WalletLedger.create({
       ownerType: 'ADMIN',
       ownerId: admin._id,
@@ -2034,7 +2034,14 @@ static _SEGMENT_MERGE_FALLBACK = {
       amount: amount,
       balanceAfter: admin.wallet.balance,
       reference: { type: 'Trade', id: trade._id },
-      description: `Brokerage from ${trade.tradeId} - ${description}`
+      description: `Brokerage from ${trade.tradeId} - ${description}`,
+      meta: {
+        relatedUserId: trade.user,
+        segment: tradingSegment,
+        tradeSymbol: trade.symbol,
+        tradeSide: trade.side,
+        tradeQuantity: trade.quantity
+      }
     });
     
     console.log('[creditBrokerageToAdmin] Brokerage credited successfully:', {
@@ -2342,14 +2349,19 @@ static _SEGMENT_MERGE_FALLBACK = {
         // Update user wallet - release margin for closed portion, add P&L
         // Use separate wallets for crypto and forex
         if (isMcx) {
+          // MCX: Release usedMargin and add P&L to balance
+          const currentMcxBalance = user.mcxWallet?.balance || 0;
+          const newMcxBalance = currentMcxBalance + closedPnL;
           await User.updateOne(
             { _id: user._id },
             {
               $inc: {
                 'mcxWallet.usedMargin': -marginToRelease,
-                'mcxWallet.balance': closedPnL,
                 'mcxWallet.realizedPnL': closedPnL,
                 'mcxWallet.todayRealizedPnL': closedPnL
+              },
+              $set: {
+                'mcxWallet.balance': newMcxBalance
               }
             }
           );

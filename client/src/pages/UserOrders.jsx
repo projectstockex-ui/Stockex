@@ -275,10 +275,11 @@ const UserOrders = () => {
     const data = getCurrentData();
     if (data.length === 0) return;
 
-    const headers = ['Symbol', 'Side', 'Qty', 'Entry Price', 'Exit Price', 'P&L', 'Status', 'Date'];
+    const headers = ['Symbol', 'Side', 'Product', 'Qty', 'Entry Price', 'Exit Price', 'P&L', 'Status', 'Date'];
     const rows = data.map(item => [
       item.symbol,
       item.side,
+      item.productType || '-',
       item.quantity || item.lots,
       item.entryPrice || item.price,
       item.exitPrice || '-',
@@ -523,11 +524,21 @@ const UserOrders = () => {
                       <div>
                         <div className="text-gray-500 text-xs mb-1">Side</div>
                         <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-semibold ${
-                          item.side === 'BUY' 
-                            ? 'bg-green-500/20 text-green-500' 
+                          item.side === 'BUY'
+                            ? 'bg-green-500/20 text-green-500'
                             : 'bg-red-500/20 text-red-500'
                         }`}>
                           {item.side}
+                        </span>
+                      </div>
+                      <div>
+                        <div className="text-gray-500 text-xs mb-1">Product</div>
+                        <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-semibold ${
+                          item.productType === 'MIS' || item.productType === 'INTRADAY' ? 'bg-yellow-500/20 text-yellow-500' :
+                          item.productType === 'NRML' || item.productType === 'CNC' ? 'bg-blue-500/20 text-blue-500' :
+                          'bg-gray-500/20 text-gray-400'
+                        }`}>
+                          {item.productType || '-'}
                         </span>
                       </div>
                       <div>

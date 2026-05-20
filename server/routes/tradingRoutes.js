@@ -435,28 +435,19 @@ router.post('/margin-preview', protect, async (req, res) => {
     const segmentOrderLots = segmentSettings?.lotSettings?.breakupLots ?? segmentSettings?.orderLots;
     const perOrderLots = scriptOrderLots || segmentOrderLots || maxLots;
     
-    // For crypto/forex, only check marginRequired, don't include brokerage in required check
-    const totalRequired = (isCrypto || isForex) ? marginRequired : marginRequired + brokerage;
-    
-    console.log('[MarginPreview] Debug:', {
-      segment: effectiveSegment,
-      exchange,
-      isCrypto,
-      isForex,
-      isMCX,
-      tradingBalance,
-      usedMarginDisplay,
-      availableBalance,
-      totalRequired,
-      shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0
-    });
-    
+    // For crypto/forex/MCX, only check marginRequired, don't include brokerage in required check
+    const totalRequired = (isCrypto || isForex || isMCX) ? marginRequired : marginRequired + brokerage;
+
+    // SIMPLE RULE for ALL segments: If wallet balance > required margin, allow trade
+    const canPlace = lotsValid && totalRequired <= tradingBalance;
+    const shortfall = totalRequired > tradingBalance ? totalRequired - tradingBalance : 0;
+
     res.json({
       marginRequired: Math.round(marginRequired * 100) / 100,
       tradeValue: Math.round(tradeValue * 100) / 100,
       effectiveMargin: marginCalc.effectiveMargin,
       leverage,
-      canPlace: lotsValid && totalRequired <= availableBalance,
+      canPlace,
       availableBalance,
       tradingBalance,
       usedFixedMargin,
@@ -474,7 +465,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       perOrderLots: isMCX ? undefined : perOrderLots,
       lotsValid,
       lotsError: !lotsValid ? (lotsError || (isMCX ? 'Invalid quantity' : `Quantity must be between ${minLots} and ${maxLots}`)) : null,
-      shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
+      shortfall,
       exposureIntraday: segmentSettingsForMargin?.exposureIntraday || null,
       exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null,
       defaultIntradayOnly: segmentSettings?.defaultIntradayOnly === true,

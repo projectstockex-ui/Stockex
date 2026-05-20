@@ -78,35 +78,31 @@ function labelForGameKey(gameKey) {
 
 export async function assertHierarchyGameNotDenied(user, gameKey) {
   if (!ALLOWED.has(gameKey)) return;
-  
-  // Check if games are enabled globally and if the specific game is enabled
+
+  // Only check if games are enabled globally and if the specific game is enabled
+  // Hierarchy-based game blocking has been removed - only superadmin can enable/disable games
   try {
     const gameSettings = await GameSettings.getSettings();
     const globalGamesEnabled = gameSettings?.gamesEnabled ?? true; // Default to enabled if not set
     const gameEnabled = gameSettings?.games?.[gameKey]?.enabled ?? true; // Default to enabled if not set
-    
-    // If both global games and specific game are enabled, allow access regardless of deny list
-    // This allows superadmin to enable games globally and override deny lists
-    if (globalGamesEnabled && gameEnabled) {
-      console.log('[GameRestriction] Games are globally enabled and', gameKey, 'is enabled in GameSettings, allowing access');
-      return;
-    }
-    
+
+    // If games are globally disabled or specific game is disabled, block access
     if (!globalGamesEnabled) {
       console.log('[GameRestriction] Games are globally disabled in GameSettings');
-    } else if (!gameEnabled) {
-      console.log('[GameRestriction] Game', gameKey, 'is disabled in GameSettings');
+      throw new Error('Games are currently unavailable');
     }
+
+    if (!gameEnabled) {
+      console.log('[GameRestriction] Game', gameKey, 'is disabled in GameSettings');
+      throw new Error(`${labelForGameKey(gameKey)} is currently disabled`);
+    }
+
+    console.log('[GameRestriction] Games are globally enabled and', gameKey, 'is enabled in GameSettings, allowing access');
   } catch (error) {
+    if (error.message.includes('disabled') || error.message.includes('unavailable')) {
+      throw error;
+    }
     console.error('[GameRestriction] Error checking GameSettings:', error.message);
-    // Continue with deny list check if GameSettings check fails
-  }
-  
-  const merged = await getMergedGameDenylistForPrincipal(user);
-  if (merged.includes(gameKey)) {
-    throw new Error(
-      `${labelForGameKey(gameKey)} is blocked under your hierarchy restrictions. Contact your administrator.`
-    );
   }
 }
 

@@ -778,8 +778,6 @@ const adminSchema = new mongoose.Schema({
         tradingSymbol: { type: String, trim: true, default: '' },
       },
     ],
-    /** Game keys (GameSettings.games.*) merged with ancestors — subtree cannot play if denied */
-    gameDenylist: [{ type: String, trim: true }],
   },
 
   // Hierarchy patti: per-segment share for this admin vs parent (parent % = 100 − this admin %)

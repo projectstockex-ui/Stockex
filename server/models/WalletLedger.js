@@ -90,7 +90,13 @@ const walletLedgerSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
-  
+
+  // Auto-square flag - true if this ledger entry is from an auto-squared trade
+  isAutoSquare: {
+    type: Boolean,
+    default: false
+  },
+
   // Performed by (admin who made the transaction)
   performedBy: {
     type: mongoose.Schema.Types.ObjectId,

@@ -284,12 +284,30 @@ const AdminWallet = () => {
           <div className="space-y-2">
             {walletData.ledger.slice(0, 10).map(entry => (
               <div key={entry._id} className="flex items-center justify-between bg-dark-700 rounded p-3">
-                <div>
-                  <div className="text-sm">{entry.reason}</div>
+                <div className="flex-1">
+                  <div className="text-sm font-medium">{entry.reason}</div>
                   <div className="text-xs text-gray-400">{entry.description}</div>
+                  {/* Show user name and segment for brokerage entries */}
+                  {entry.reason === 'BROKERAGE' && (
+                    <div className="flex items-center gap-2 mt-1">
+                      {entry.userName && (
+                        <span className="text-xs text-blue-400">User: {entry.userName}</span>
+                      )}
+                      {entry.meta?.segment && (
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          entry.meta.segment === 'MCX' ? 'bg-orange-500/20 text-orange-400' :
+                          entry.meta.segment === 'CRYPTO' ? 'bg-purple-500/20 text-purple-400' :
+                          entry.meta.segment === 'FOREX' ? 'bg-cyan-500/20 text-cyan-400' :
+                          'bg-blue-500/20 text-blue-400'
+                        }`}>
+                          {entry.meta.segment}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="text-xs text-gray-500">{new Date(entry.createdAt).toLocaleString()}</div>
                 </div>
-                <div className="text-right">
+                <div className="text-right ml-4">
                   <div className={entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
                     {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
                   </div>

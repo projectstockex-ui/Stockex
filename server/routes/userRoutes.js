@@ -145,10 +145,9 @@ import {
   sumBracketSideTicketsInDay,
 } from '../utils/gameStakeSideLimits.js';
 import { plainSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
-import TradeService from '../services/tradeService.js';
+import TradeService from '../services/tradingService.js';
 import {
   assertHierarchyGameNotDeniedForUserId,
-  getMergedGameDenylistForPrincipal,
 } from '../services/gameRestrictionService.js';
 
 // ==================== MODEL IMPORTS ====================
@@ -1184,6 +1183,26 @@ router.get('/games-wallet/ledger', protectUser, async (req, res) => {
     }));
 
     res.json(enrichedRows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get user's wallet transaction history (main trading wallet)
+// Query: ?limit=50
+router.get('/wallet-ledger', protectUser, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+
+    const ledger = await WalletLedger.find({
+      ownerType: 'USER',
+      ownerId: req.user._id,
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    res.json(ledger);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -2458,33 +2477,9 @@ router.get('/phone-verification-settings', async (req, res) => {
 // PUBLIC: Get game settings for frontend (user-facing)
 router.get('/game-settings', protectUser, async (req, res) => {
   try {
-    const principal = await User.findById(req.user._id).populate({
-      path: 'admin',
-      select: 'restrictions hierarchyPath role adminCode',
-    });
-    const hierarchyDeniedGameKeys = await getMergedGameDenylistForPrincipal(principal);
-
     const settings = await GameSettings.getSettings();
     const settingsObj = settings.toObject();
-    
-    // Filter out games that are enabled globally in GameSettings from the hierarchy denied list
-    // This allows superadmin to enable games globally and override hierarchy deny lists
-    const globalGamesEnabled = settingsObj.gamesEnabled ?? true;
-    const filteredHierarchyDeniedGameKeys = [];
-    
-    if (globalGamesEnabled) {
-      for (const gameKey of hierarchyDeniedGameKeys) {
-        const gameEnabled = settingsObj.games?.[gameKey]?.enabled ?? true;
-        // If game is enabled in GameSettings, don't include it in the denied list
-        if (!gameEnabled) {
-          filteredHierarchyDeniedGameKeys.push(gameKey);
-        }
-      }
-    } else {
-      // If games are globally disabled, keep all games in the denied list
-      filteredHierarchyDeniedGameKeys.push(...hierarchyDeniedGameKeys);
-    }
-    
+
     // Return only what the frontend needs (no internal/admin fields)
     const games = {};
     if (settingsObj.games) {
@@ -2584,7 +2579,6 @@ router.get('/game-settings', protectUser, async (req, res) => {
         Number.isFinite(Number(settingsObj.gamePositionExpiryGraceSeconds))
           ? Number(settingsObj.gamePositionExpiryGraceSeconds)
           : 3600,
-      hierarchyDeniedGameKeys: filteredHierarchyDeniedGameKeys,
       games,
     });
   } catch (error) {

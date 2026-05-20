@@ -11,9 +11,8 @@
  * 4. Request preprocessing
  */
 
-import { 
+import {
   assertHierarchyGameNotDeniedForUserId,
-  getMergedGameDenylistForPrincipal,
 } from '../services/gameRestrictionService.js';
 
 // ==================== GAME VALIDATION MIDDLEWARE ====================

@@ -11,9 +11,8 @@
  * 4. Error handling for validation failures
  */
 
-import { 
+import {
   assertHierarchyGameNotDeniedForUserId,
-  getMergedGameDenylistForPrincipal,
 } from '../services/gameRestrictionService.js';
 
 // ==================== GAME VALIDATION MIDDLEWARE ====================

@@ -42,6 +42,7 @@ import { runInstrumentAvailabilityTicks } from './services/instrumentAvailabilit
 import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryService.js';
 import { autoSquareIntradayOnlyTrades } from './services/eodAutoSquareOffService.js';
 import { runDailyPlatformCharges } from './services/platformChargeService.js';
+import EODSettlement from './cron/eodSettlement.js';
 import cron from 'node-cron';
 // Side-effect import: registers process-level uncaughtException / unhandledRejection
 // handlers so a single bad request (e.g. ERR_HTTP_HEADERS_SENT in a controller)
@@ -389,6 +390,9 @@ cron.schedule('30 15 * * 1-5', async () => {
 });
 
 console.log('[Cron] Scheduled auto-square for intraday-only trades at 3:30 PM IST (Mon-Fri)');
+
+// Initialize EOD Settlement cron jobs (MCX MIS square-off at 11:30 PM, NSE/BSE MIS square-off at 3:30 PM, etc.)
+EODSettlement.init();
 
 // Platform daily fee — 00:00:01 IST every calendar day
 cron.schedule(

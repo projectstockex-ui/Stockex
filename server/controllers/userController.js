@@ -30,9 +30,8 @@ import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import WalletLedger from '../models/WalletLedger.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
-import { 
+import {
   assertHierarchyGameNotDeniedForUserId,
-  getMergedGameDenylistForPrincipal,
 } from '../services/gameRestrictionService.js';
 import { 
   createTransactionSlip, 

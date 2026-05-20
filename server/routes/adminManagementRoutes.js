@@ -180,8 +180,6 @@ import {
 
 import { sanitizeInstrumentDenylist } from '../services/instrumentRestrictionService.js';
 
-import { sanitizeGameDenylist } from '../services/gameRestrictionService.js';
-
 import hierarchyValidationService from '../services/hierarchyValidationService.js';
 
 import { protectAdmin, superAdminOnly } from '../middleware/auth.js';
@@ -383,12 +381,8 @@ function normalizeRestrictionsPayload(body, callerRole) {
 
   restrictions.instrumentDenylist = sanitizeInstrumentDenylist(body.instrumentDenylist);
 
-  // Only SuperAdmin may set the game deny-list
-  if (callerRole === 'SUPER_ADMIN') {
-    restrictions.gameDenylist = sanitizeGameDenylist(body.gameDenylist);
-  } else {
-    delete restrictions.gameDenylist;
-  }
+  // Game denylist functionality removed - only superadmin can enable/disable games via GameSettings
+  delete restrictions.gameDenylist;
 
   return restrictions;
 
@@ -6702,6 +6696,29 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
         } catch (error) {
 
           console.warn('Failed to fetch user name from meta.relatedUserId:', error);
+
+        }
+
+      }
+
+      // For brokerage entries, fetch user details from meta.relatedUserId
+      if (entry.reason === 'BROKERAGE' && entry.meta?.relatedUserId && !userName) {
+
+        try {
+
+          const User = (await import('../models/User.js')).default;
+
+          const user = await User.findById(entry.meta.relatedUserId).select('fullName username');
+
+          if (user) {
+
+            userName = user.fullName || user.username;
+
+          }
+
+        } catch (error) {
+
+          console.warn('Failed to fetch user name for brokerage entry:', error);
 
         }
 

@@ -25,14 +25,13 @@ import {
 } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../utils/istDate.js';
-import { 
+import {
   sumUpDownSideTicketsInWindow,
   sumBracketSideTicketsInDay,
 } from '../utils/gameStakeSideLimits.js';
 import GameSettings from '../models/GameSettings.js';
-import { 
+import {
   assertHierarchyGameNotDeniedForUserId,
-  getMergedGameDenylistForPrincipal,
 } from '../services/gameRestrictionService.js';
 import { 
   createTransactionSlip, 
