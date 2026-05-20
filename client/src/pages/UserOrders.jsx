@@ -29,6 +29,7 @@ const UserOrders = () => {
   const [positions, setPositions] = useState([]);
   const [closedTrades, setClosedTrades] = useState([]);
   const [cancelledOrders, setCancelledOrders] = useState([]);
+  const [autoSquareOrders, setAutoSquareOrders] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [closingPosition, setClosingPosition] = useState(null);
@@ -149,6 +150,7 @@ const UserOrders = () => {
       setPositions(filteredPositions);
       setClosedTrades(filteredHistory.filter(t => t.status === 'CLOSED'));
       setCancelledOrders(filteredHistory.filter(t => t.status === 'CANCELLED'));
+      setAutoSquareOrders(filteredHistory.filter(t => t.closeReason === 'AUTO_SQUARE'));
       setPendingOrders(filteredPending);
 
       // Calculate stats from filtered data
@@ -240,6 +242,7 @@ const UserOrders = () => {
     { id: 'pending', label: 'Pending Orders', count: pendingOrders.length, icon: Timer, color: 'text-yellow-400' },
     { id: 'closed', label: 'Closed Trades', count: closedTrades.length, icon: CheckCircle, color: 'text-green-400' },
     { id: 'cancelled', label: 'Cancelled', count: cancelledOrders.length, icon: XCircle, color: 'text-red-400' },
+    { id: 'autosquare', label: 'Autosquare', count: autoSquareOrders.length, icon: AlertCircle, color: 'text-orange-400' },
   ];
 
   const dateFilters = [
@@ -267,6 +270,7 @@ const UserOrders = () => {
       case 'pending': return pendingOrders;
       case 'closed': return closedTrades;
       case 'cancelled': return cancelledOrders;
+      case 'autosquare': return autoSquareOrders;
       default: return [];
     }
   };
@@ -479,7 +483,7 @@ const UserOrders = () => {
               <AlertCircle size={32} className="text-gray-500" />
             </div>
             <p className="text-gray-500 text-center">
-              No {activeTab === 'positions' ? 'open positions' : activeTab === 'pending' ? 'pending orders' : activeTab === 'closed' ? 'closed trades' : 'cancelled orders'} found
+              No {activeTab === 'positions' ? 'open positions' : activeTab === 'pending' ? 'pending orders' : activeTab === 'closed' ? 'closed trades' : activeTab === 'autosquare' ? 'auto-squared orders' : 'cancelled orders'} found
             </p>
           </div>
         ) : (
@@ -518,59 +522,57 @@ const UserOrders = () => {
                     </div>
                   </div>
                   
-                  {/* Card Body */}
+                  {/* Card Body - Table View */}
                   <div className="px-4 py-3">
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">Side</div>
-                        <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-semibold ${
-                          item.side === 'BUY'
-                            ? 'bg-green-500/20 text-green-500'
-                            : 'bg-red-500/20 text-red-500'
-                        }`}>
-                          {item.side}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">Product</div>
-                        <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-semibold ${
-                          item.productType === 'MIS' || item.productType === 'INTRADAY' ? 'bg-yellow-500/20 text-yellow-500' :
-                          item.productType === 'NRML' || item.productType === 'CNC' ? 'bg-blue-500/20 text-blue-500' :
-                          'bg-gray-500/20 text-gray-400'
-                        }`}>
-                          {item.productType || '-'}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">Quantity</div>
-                        <div className="font-medium text-white">{item.quantity || item.lots || 1}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">Entry</div>
-                        <div className="font-medium text-white">₹{(item.entryPrice || item.price || 0).toLocaleString()}</div>
-                      </div>
-                      {activeTab === 'closed' && (
-                        <div>
-                          <div className="text-gray-500 text-xs mb-1">Exit</div>
-                          <div className="font-medium text-white">₹{(item.exitPrice || 0).toLocaleString()}</div>
-                        </div>
-                      )}
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">Status</div>
-                        <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-semibold ${
-                          item.status === 'OPEN' ? 'bg-blue-500/20 text-blue-500' :
-                          item.status === 'CLOSED' ? 'bg-green-500/20 text-green-500' :
-                          item.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-500' :
-                          'bg-red-500/20 text-red-500'
-                        }`}>
-                          {item.status}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-gray-500 text-xs mb-1">Date</div>
-                        <div className="font-medium text-gray-400 text-xs">{formatDate(item.createdAt || item.openedAt)}</div>
-                      </div>
-                    </div>
+                    <table className="w-full text-left text-xs">
+                      <thead className="text-gray-500 border-b border-white/5">
+                        <tr>
+                          <th className="pb-2">Side</th>
+                          <th className="pb-2">Product</th>
+                          <th className="pb-2 text-right">Qty</th>
+                          <th className="pb-2 text-right">Entry</th>
+                          {activeTab === 'closed' && <th className="pb-2 text-right">Exit</th>}
+                          <th className="pb-2">Status</th>
+                          <th className="pb-2">Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="py-2">
+                            <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
+                              item.side === 'BUY'
+                                ? 'bg-green-500/20 text-green-500'
+                                : 'bg-red-500/20 text-red-500'
+                            }`}>
+                              {item.side}
+                            </span>
+                          </td>
+                          <td className="py-2">
+                            <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
+                              item.productType === 'MIS' || item.productType === 'INTRADAY' ? 'bg-yellow-500/20 text-yellow-500' :
+                              item.productType === 'NRML' || item.productType === 'CNC' ? 'bg-blue-500/20 text-blue-500' :
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {item.productType || '-'}
+                            </span>
+                          </td>
+                          <td className="py-2 text-right">{item.quantity || item.lots || 1}</td>
+                          <td className="py-2 text-right">₹{(item.entryPrice || item.price || 0).toLocaleString()}</td>
+                          {activeTab === 'closed' && <td className="py-2 text-right">₹{(item.exitPrice || 0).toLocaleString()}</td>}
+                          <td className="py-2">
+                            <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
+                              item.status === 'OPEN' ? 'bg-blue-500/20 text-blue-500' :
+                              item.status === 'CLOSED' ? 'bg-green-500/20 text-green-500' :
+                              item.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-500' :
+                              'bg-red-500/20 text-red-500'
+                            }`}>
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className="py-2 text-gray-400">{formatDate(item.createdAt || item.openedAt)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                   
                   {/* Action Button for Open Positions */}

@@ -724,6 +724,7 @@ const UserAccounts = () => {
                           <th className="px-2 py-2 font-medium text-right">Entry</th>
                           <th className="px-2 py-2 font-medium text-right">Exit</th>
                           <th className="px-2 py-2 font-medium text-right">P/L</th>
+                          <th className="px-2 py-2 font-medium">Autosquare</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-dark-700">
@@ -785,6 +786,13 @@ const UserAccounts = () => {
                                   </span>
                                 ) : (
                                   <span className="text-gray-600">—</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 align-top">
+                                {row.closeReason === 'AUTO_SQUARE' ? (
+                                  <span className="text-orange-400 text-xs font-medium">Yes</span>
+                                ) : (
+                                  <span className="text-gray-600 text-xs">No</span>
                                 )}
                               </td>
                             </tr>
