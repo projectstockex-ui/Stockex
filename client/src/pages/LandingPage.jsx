@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { 
-  Gamepad2, 
-  TrendingUp, 
-  LayoutDashboard, 
-  Users, 
-  Activity, 
+import {
+  Gamepad2,
+  TrendingUp,
+  LayoutDashboard,
+  Users,
+  Activity,
   MessageCircle,
   Star,
   CheckCircle,
@@ -263,7 +263,7 @@ const LandingPage = () => {
                 <span className="text-blue-500">Stock</span><span className="text-green-400">Ex</span>
               </span>
             </div>
-            
+
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center space-x-8">
               {navLinks.map((link) => (
@@ -345,7 +345,7 @@ const LandingPage = () => {
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
               <a href="#" className="flex items-center justify-center gap-3 bg-dark-800 hover:bg-dark-700 border border-dark-600 px-6 py-3 rounded-xl transition group">
                 <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18.71 19.5C17.88 20.74 17 21.95 15.66 21.97C14.32 22 13.89 21.18 12.37 21.18C10.84 21.18 10.37 21.95 9.1 22C7.79 22.05 6.8 20.68 5.96 19.47C4.25 17 2.94 12.45 4.7 9.39C5.57 7.87 7.13 6.91 8.82 6.88C10.1 6.86 11.32 7.75 12.11 7.75C12.89 7.75 14.37 6.68 15.92 6.84C16.57 6.87 18.39 7.1 19.56 8.82C19.47 8.88 17.39 10.1 17.41 12.63C17.44 15.65 20.06 16.66 20.09 16.67C20.06 16.74 19.67 18.11 18.71 19.5ZM13 3.5C13.73 2.67 14.94 2.04 15.94 2C16.07 3.17 15.6 4.35 14.9 5.19C14.21 6.04 13.07 6.7 11.95 6.61C11.8 5.46 12.36 4.26 13 3.5Z"/>
+                  <path d="M18.71 19.5C17.88 20.74 17 21.95 15.66 21.97C14.32 22 13.89 21.18 12.37 21.18C10.84 21.18 10.37 21.95 9.1 22C7.79 22.05 6.8 20.68 5.96 19.47C4.25 17 2.94 12.45 4.7 9.39C5.57 7.87 7.13 6.91 8.82 6.88C10.1 6.86 11.32 7.75 12.11 7.75C12.89 7.75 14.37 6.68 15.92 6.84C16.57 6.87 18.39 7.1 19.56 8.82C19.47 8.88 17.39 10.1 17.41 12.63C17.44 15.65 20.06 16.66 20.09 16.67C20.06 16.74 19.67 18.11 18.71 19.5ZM13 3.5C13.73 2.67 14.94 2.04 15.94 2C16.07 3.17 15.6 4.35 14.9 5.19C14.21 6.04 13.07 6.7 11.95 6.61C11.8 5.46 12.36 4.26 13 3.5Z" />
                 </svg>
                 <div className="text-left">
                   <p className="text-xs text-gray-400">Download on the</p>
@@ -430,7 +430,7 @@ const LandingPage = () => {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             {services.map((service, index) => (
-              <div 
+              <div
                 key={index}
                 className="bg-dark-800 border border-dark-600 rounded-2xl p-8 hover:border-green-500/50 hover:transform hover:-translate-y-1 transition-all duration-300 group"
               >
@@ -603,7 +603,7 @@ const LandingPage = () => {
             <div>
               <div className="bg-dark-800 border border-dark-600 rounded-2xl p-8 mb-8">
                 <h4 className="text-xl font-bold mb-6">Usage Guidelines</h4>
-                
+
                 <div className="mb-6">
                   <div className="flex items-center gap-2 mb-4">
                     <CheckCircle className="w-6 h-6 text-green-500" />
@@ -660,7 +660,7 @@ const LandingPage = () => {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             {testimonials.map((testimonial, index) => (
-              <div 
+              <div
                 key={index}
                 className="bg-dark-800 border border-dark-600 rounded-2xl p-8 hover:border-green-500/50 transition"
               >
@@ -726,9 +726,8 @@ const LandingPage = () => {
                     {quizQuestions.map((_, idx) => (
                       <div
                         key={idx}
-                        className={`w-3 h-3 rounded-full transition ${
-                          idx < currentQuestion ? 'bg-green-500' : idx === currentQuestion ? 'bg-purple-500 animate-pulse' : 'bg-dark-600'
-                        }`}
+                        className={`w-3 h-3 rounded-full transition ${idx < currentQuestion ? 'bg-green-500' : idx === currentQuestion ? 'bg-purple-500 animate-pulse' : 'bg-dark-600'
+                          }`}
                       />
                     ))}
                   </div>
@@ -739,11 +738,10 @@ const LandingPage = () => {
                     <button
                       key={idx}
                       onClick={() => handleAnswerSelect(currentQuestion, idx)}
-                      className={`w-full text-left px-5 py-4 rounded-xl border-2 transition ${
-                        selectedAnswers[currentQuestion] === idx
+                      className={`w-full text-left px-5 py-4 rounded-xl border-2 transition ${selectedAnswers[currentQuestion] === idx
                           ? 'border-purple-500 bg-purple-500/20 text-white'
                           : 'border-dark-600 bg-dark-700 hover:border-purple-500/50 text-gray-300'
-                      }`}
+                        }`}
                     >
                       <span className="font-bold mr-3 text-purple-400">{String.fromCharCode(65 + idx)}.</span>
                       {option}
@@ -782,7 +780,7 @@ const LandingPage = () => {
 
           <div className="grid md:grid-cols-3 gap-8">
             {blogPosts.map((post, index) => (
-              <div 
+              <div
                 key={index}
                 className="bg-dark-800 border border-dark-600 rounded-2xl overflow-hidden hover:border-green-500/50 transition group"
               >
@@ -813,7 +811,7 @@ const LandingPage = () => {
               <h2 className="text-3xl sm:text-4xl font-bold mb-4">Join The Community</h2>
               <p className="text-xl mb-2">Download the App Now</p>
               <p className="text-white/80 mb-8">Trade Like a Pro—Without the Complexity</p>
-              
+
               <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
                 <a href="#" className="flex items-center justify-center gap-3 bg-white text-dark-900 px-6 py-3 rounded-xl font-medium hover:bg-gray-100 transition">
                   <Download className="w-5 h-5" />
@@ -890,7 +888,7 @@ const LandingPage = () => {
                     <input
                       type="text"
                       value={formData.firstName}
-                      onChange={(e) => setFormData({...formData, firstName: e.target.value})}
+                      onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
                       className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
                       required
                     />
@@ -900,7 +898,7 @@ const LandingPage = () => {
                     <input
                       type="text"
                       value={formData.lastName}
-                      onChange={(e) => setFormData({...formData, lastName: e.target.value})}
+                      onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
                       className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
                       required
                     />
@@ -911,7 +909,7 @@ const LandingPage = () => {
                   <input
                     type="email"
                     value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
                     required
                   />
@@ -921,7 +919,7 @@ const LandingPage = () => {
                   <textarea
                     rows={4}
                     value={formData.message}
-                    onChange={(e) => setFormData({...formData, message: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, message: e.target.value })}
                     className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition resize-none"
                     required
                   ></textarea>

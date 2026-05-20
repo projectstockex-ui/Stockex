@@ -51,19 +51,18 @@ export async function fetchNifty50LastPriceFromKite() {
 }
 
 /**
- * NIFTY 50 index OHLCV from Kite historical API (instrument_token 256265).
- * Same source as Kite charts when interval matches.
- *
- * @param {{ interval?: string, daysBack?: number, maxCandles?: number }} [opts]
+ * Fetch historical candle data for any Zerodha instrument by token
+ * @param {string} instrumentToken - The instrument token
+ * @param {string} interval - Kite interval (minute, 5minute, 15minute, 30minute, 60minute, day)
+ * @param {number} daysBack - Number of days to fetch
+ * @param {number} maxCandles - Maximum candles to return
  * @returns {Promise<Array<{time:number,timestamp:string,open:number,high:number,low:number,close:number,volume:number}>|null>}
  */
-export async function fetchNifty50HistoricalFromKite(opts = {}) {
-  const { interval = '5minute', daysBack = 15, maxCandles = 120 } = opts;
+export async function fetchZerodhaHistoricalByToken(instrumentToken, interval = '15minute', daysBack = 15, maxCandles = 120) {
   const session = loadZerodhaSessionFromFile();
   const apiKey = process.env.ZERODHA_API_KEY;
   if (!session?.accessToken || !apiKey) return null;
 
-  const instrumentToken = 256265;
   const now = new Date();
   const to = now.toISOString().split('T')[0];
   const fromDate = new Date(now);
@@ -90,13 +89,25 @@ export async function fetchNifty50HistoricalFromKite(opts = {}) {
       high: Number(c[2]),
       low: Number(c[3]),
       close: Number(c[4]),
-      volume: c[5] != null ? Number(c[5]) : 0,
+      volume: Number(c[5]),
     }));
     return candles.slice(-maxCandles);
-  } catch (e) {
-    console.warn('[kiteNiftyQuote] historical failed:', e.response?.data?.message || e.message);
+  } catch (error) {
+    console.error(`Error fetching historical data for token ${instrumentToken}:`, error.message);
     return null;
   }
+}
+
+/**
+ * Fetch historical candle data for NIFTY 50
+ * Same source as Kite charts when interval matches.
+ *
+ * @param {{ interval?: string, daysBack?: number, maxCandles?: number }} [opts]
+ * @returns {Promise<Array<{time:number,timestamp:string,open:number,high:number,low:number,close:number,volume:number}>|null>}
+ */
+export async function fetchNifty50HistoricalFromKite(opts = {}) {
+  const { interval = '5minute', daysBack = 15, maxCandles = 120 } = opts;
+  return await fetchZerodhaHistoricalByToken('256265', interval, daysBack, maxCandles);
 }
 
 /** YYYY-MM-DD in Asia/Kolkata for a given Date (default: now). */

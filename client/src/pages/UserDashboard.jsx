@@ -517,6 +517,19 @@ const UserDashboard = () => {
   const [mobileView, setMobileView] = useState('quotes');
   const [showBuySellModal, setShowBuySellModal] = useState(false);
   const [orderType, setOrderType] = useState('buy');
+
+  // Refresh segment permissions when modal opens
+  useEffect(() => {
+    if (showBuySellModal && user?.token) {
+      axios.get('/api/user/settings', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      }).then(({ data }) => {
+        if (data?.segmentPermissions) {
+          setSegmentPermissionsGate(data.segmentPermissions);
+        }
+      }).catch(() => {});
+    }
+  }, [showBuySellModal, user?.token]);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [tradeInstrument, setTradeInstrument] = useState(null); // For trading panel
   const [showWalletModal, setShowWalletModal] = useState(false);
@@ -548,7 +561,7 @@ const UserDashboard = () => {
   useEffect(() => {
     if (!user?.token) return;
     let cancelled = false;
-    (async () => {
+    const fetchSettings = async () => {
       try {
         const { data } = await axios.get('/api/user/settings', {
           headers: { Authorization: `Bearer ${user.token}` },
@@ -558,9 +571,13 @@ const UserDashboard = () => {
       } catch {
         /* ignore */
       }
-    })();
+    };
+    fetchSettings();
+    // Refresh segment permissions every 30 seconds to pick up backend changes
+    const interval = setInterval(fetchSettings, 30000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [user?.token]);
 
@@ -2900,12 +2917,33 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
 
     setLoading(true);
     try {
-      // For Zerodha instruments, use live WebSocket data directly
+      // For Zerodha instruments, fetch historical data from Kite API
       if (!instrument.isCrypto && instrument.exchange !== 'BINANCE' && !isForexInstrument(instrument)) {
-        // Get current live price from marketData (WebSocket data)
+        const binanceInterval = getBinanceInterval(interval);
         const tokenKey = String(instrument.token || '');
-        const liveData = tokenKey ? marketData[tokenKey] : null;
         
+        if (!tokenKey) {
+          console.warn('No instrument token for historical data:', instrument.symbol);
+          return null;
+        }
+
+        // Fetch historical data from backend
+        const { data } = await axios.get('/api/market/zerodha-history', {
+          params: { 
+            token: tokenKey, 
+            interval: binanceInterval,
+            daysBack: 15,
+            maxCandles: 500
+          },
+        });
+
+        if (data?.success && Array.isArray(data?.data) && data.data.length > 0) {
+          console.log(`📊 Historical chart data loaded for ${instrument.symbol}:`, data.data.length, 'candles');
+          return { candles: data.data, nativeInr: true };
+        }
+
+        // Fallback: Create a single current candle with live WebSocket data if historical fails
+        const liveData = tokenKey ? marketData[tokenKey] : null;
         if (!liveData || !liveData.ltp) {
           console.warn('No live WebSocket data available for', instrument.symbol);
           return null;
@@ -2925,7 +2963,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           volume: Number(liveData.volume) || 0
         };
         
-        console.log('📡 LIVE CHART DATA:', {
+        console.log('📡 LIVE CHART DATA (fallback):', {
           symbol: instrument.symbol,
           price: currentPrice,
           open: currentCandle.open,
@@ -3206,6 +3244,17 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
             <BarChart2 size={48} className="mb-4 opacity-30" />
             <p>Select an instrument to view chart</p>
+          </div>
+        ) : loading ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+            <RefreshCw size={48} className="mb-4 opacity-30 animate-spin" />
+            <p>Loading chart data...</p>
+          </div>
+        ) : !livePrice && !fallbackPrice ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+            <BarChart2 size={48} className="mb-4 opacity-30" />
+            <p>No live data available</p>
+            <p className="text-sm mt-2">Market may be closed or data not available</p>
           </div>
         ) : (
           <div ref={chartContainerRef} className="absolute inset-0" />
@@ -4087,10 +4136,43 @@ const TradingPanel = ({
   const [tradeConfirmOpen, setTradeConfirmOpen] = useState(false);
   
   // Crypto: lots-mode for USD spot trading
-  
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.exchange === 'BINANCE');
   const isForex = isForexInstrument(instrument);
   const isUsdSpot = isCryptoOnly || isForex;
+  
+  // Simple time check - disable crypto trading after closing time from backend
+  const [isCryptoTradingBlocked, setIsCryptoTradingBlocked] = useState(false);
+  const [currentTimeStr, setCurrentTimeStr] = useState('');
+  
+  useEffect(() => {
+    if (!isCryptoOnly) {
+      setIsCryptoTradingBlocked(false);
+      setCurrentTimeStr('');
+      return;
+    }
+    
+    const checkTime = () => {
+      const now = new Date();
+      const nowIST = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const hours = nowIST.getHours();
+      const minutes = nowIST.getMinutes();
+      const totalMinutes = hours * 60 + minutes;
+      
+      // Get closing time from backend segment permissions
+      const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || segmentPermissionsGate?.CRYPTOOPT || {};
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '19:30';
+      const [closeHours, closeMinutes] = closeTimeStr.split(':').map(Number);
+      const closeTime = closeHours * 60 + closeMinutes;
+      
+      const blocked = totalMinutes >= closeTime;
+      setIsCryptoTradingBlocked(blocked);
+      setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (Close: ${closeTimeStr})`);
+    };
+    
+    checkTime();
+    const interval = setInterval(checkTime, 1000);
+    return () => clearInterval(interval);
+  }, [isCryptoOnly, segmentPermissionsGate]);
   
   const cryptoQuote = isUsdSpot ? getCryptoMarketQuote(marketData, instrument) : null;
   const liveData = isUsdSpot ? (cryptoQuote || {}) : (marketDataRowForInstrumentToken(marketData, instrument?.token, instrument) || {});
@@ -4342,6 +4424,13 @@ const TradingPanel = ({
 
   // Place order (optional explicitSide when confirming from modal with opposite side vs current stripe highlight)
   const handlePlaceOrder = async (explicitSide) => {
+    // Check crypto time window
+    if (isCryptoTradingBlocked) {
+      const closeTimeStr = segmentPermissionsGate?.CRYPTOFUT?.cryptoClosingTime || segmentPermissionsGate?.CRYPTOOPT?.cryptoClosingTime || '19:30';
+      setError(`Crypto trading closed at ${closeTimeStr} IST`);
+      return;
+    }
+    
     const sideLower =
       explicitSide === 'buy' || explicitSide === 'sell'
         ? explicitSide
@@ -8312,6 +8401,54 @@ const BuySellModal = ({
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.exchange === 'BINANCE');
   const isUsdSpot = isUsdSpotInstrument(instrument);
 
+  // Simple time check - disable crypto trading after closing time from backend
+  const [isCryptoTradingBlocked, setIsCryptoTradingBlocked] = useState(false);
+  const [currentTimeStr, setCurrentTimeStr] = useState('');
+  const [localSegmentPermissions, setLocalSegmentPermissions] = useState(segmentPermissionsGate);
+
+  // Fetch latest settings when modal opens
+  useEffect(() => {
+    if (isCryptoOnly && user?.token) {
+      axios.get('/api/user/settings', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      }).then(({ data }) => {
+        if (data?.segmentPermissions) {
+          setLocalSegmentPermissions(data.segmentPermissions);
+        }
+      }).catch(() => {});
+    }
+  }, [isCryptoOnly, user?.token]);
+
+  useEffect(() => {
+    if (!isCryptoOnly) {
+      setIsCryptoTradingBlocked(false);
+      setCurrentTimeStr('');
+      return;
+    }
+
+    const checkTime = () => {
+      const now = new Date();
+      const nowIST = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const hours = nowIST.getHours();
+      const minutes = nowIST.getMinutes();
+      const totalMinutes = hours * 60 + minutes;
+
+      // Get closing time from backend segment permissions (use local copy)
+      const cryptoSettings = localSegmentPermissions?.CRYPTOFUT || localSegmentPermissions?.CRYPTOOPT || {};
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '19:30';
+      const [closeHours, closeMinutes] = closeTimeStr.split(':').map(Number);
+      const closeTime = closeHours * 60 + closeMinutes;
+
+      const blocked = totalMinutes >= closeTime;
+      setIsCryptoTradingBlocked(blocked);
+      setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (Close: ${closeTimeStr})`);
+    };
+
+    checkTime();
+    const interval = setInterval(checkTime, 1000);
+    return () => clearInterval(interval);
+  }, [isCryptoOnly, localSegmentPermissions]);
+
   // Fetch fresh instrument data with lastBid/lastAsk when modal opens
   useEffect(() => {
     const fetchFreshInstrument = async () => {
@@ -8522,6 +8659,13 @@ const BuySellModal = ({
   const handlePlaceOrder = async () => {
     if (!user?.token) {
       setError('Please login to place orders');
+      return;
+    }
+
+    // Check crypto time window
+    if (isCryptoTradingBlocked) {
+      const closeTimeStr = localSegmentPermissions?.CRYPTOFUT?.cryptoClosingTime || localSegmentPermissions?.CRYPTOOPT?.cryptoClosingTime || '19:30';
+      setError(`Crypto trading closed at ${closeTimeStr} IST`);
       return;
     }
 
@@ -8887,7 +9031,7 @@ const BuySellModal = ({
           <div className="p-3 pt-0">
             <button
               onClick={handlePlaceOrder}
-              disabled={loading || estMarginInr > activeWallet.available}
+              disabled={loading || estMarginInr > activeWallet.available || isCryptoTradingBlocked}
               className={`w-full py-4 rounded-lg font-bold text-lg transition ${
                 orderType === 'buy' 
                   ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:opacity-50' 
@@ -9112,7 +9256,7 @@ const BuySellModal = ({
           {/* Submit Button */}
           <button
             onClick={handlePlaceOrder}
-            disabled={loading}
+            disabled={loading || isCryptoTradingBlocked}
             className={`w-full py-4 rounded-lg font-bold text-lg transition ${
               orderType === 'buy' 
                 ? 'bg-green-600 hover:bg-green-700 disabled:bg-green-800' 

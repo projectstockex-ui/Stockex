@@ -133,10 +133,14 @@ class MarginMonitorService {
       const segment = positions[0].segment;
       const segUpper = String(segment || '').toUpperCase();
       
-      // Get segment-specific settings for autosquare/notification (no hardcoded fallbacks)
-      const userSegmentSettings = user.segmentPermissions?.[segUpper];
-      const segmentAutosquarePercent = userSegmentSettings?.lotSettings?.autosquarePercent;
-      const segmentNotificationPercent = userSegmentSettings?.lotSettings?.notificationPercent;
+      // Get segment-specific settings for autosquare/notification (inherit from admin hierarchy)
+      // Use TradeService.getUserSegmentSettings to get merged settings with inheritance
+      const TradeService = (await import('./tradeService.js')).default;
+      const segmentSettings = await TradeService.getUserSegmentSettings(user, segment);
+      const segmentAutosquarePercent = segmentSettings?.lotSettings?.autosquarePercent;
+      const segmentNotificationPercent = segmentSettings?.lotSettings?.notificationPercent;
+      
+      console.log(`[MarginMonitor] Segment: ${segUpper}, Autosquare: ${segmentAutosquarePercent}%, Notification: ${segmentNotificationPercent}%`);
       
       // Build risk config with segment-specific settings only if set (no hardcoded fallbacks)
       const riskConfig = {

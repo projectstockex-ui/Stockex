@@ -141,7 +141,9 @@ class TradeService {
     const nm = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
     const ns = parseInt(parts.find((p) => p.type === 'second')?.value || '0', 10);
     const nowSecOfDay = nh * 3600 + nm * 60 + ns;
-    return nowSecOfDay >= targetSecOfDay;
+    const result = nowSecOfDay >= targetSecOfDay;
+    console.log(`[CryptoTimeCheck] Time comparison - Target: ${hms} (${targetSecOfDay}s), Now: ${nh}:${nm}:${ns} (${nowSecOfDay}s), Result: ${result}`);
+    return result;
   }
 
   /**
@@ -159,6 +161,7 @@ class TradeService {
 
     // 1. Try to get from the Super Admin at the top of this user's hierarchy
     const superAdmin = await this._getSuperAdminForUser(user);
+    console.log(`[CryptoTimeCheck] Super Admin for user ${user?.username || user?._id}: ${superAdmin?.username || superAdmin?._id}`);
     if (superAdmin) {
       const saSegPerms = superAdmin.segmentPermissions instanceof Map
         ? superAdmin.segmentPermissions.get(segU)
@@ -167,19 +170,26 @@ class TradeService {
       if (saSlice) {
         start = (saSlice.cryptoStartTime || '').toString().trim();
         close = (saSlice.cryptoClosingTime || '').toString().trim();
+        console.log(`[CryptoTimeCheck] From Super Admin segmentPermissions: start=${start}, close=${close}, segment=${segU}`);
+      } else {
+        console.log(`[CryptoTimeCheck] Super Admin segmentPermissions not found for ${segU}`);
       }
     }
 
     // 2. Fallback to system defaults if Super Admin hasn't set them
     if (!start && !close) {
+      console.log(`[CryptoTimeCheck] Falling back to system defaults`);
       const sys = await SystemSettings.getSettings();
       const m = this._segmentMapPlain(sys.adminSegmentDefaults);
       const def = m[segU];
       if (def) {
         start = (def.cryptoStartTime || '').toString().trim();
         close = (def.cryptoClosingTime || '').toString().trim();
+        console.log(`[CryptoTimeCheck] From system defaults: start=${start}, close=${close}, segment=${segU}`);
       }
     }
+
+    console.log(`[CryptoTimeCheck] Final values - Segment: ${segU}, StartTime: ${start}, CloseTime: ${close}, User: ${user?.username || user?._id}`);
 
     // Check start time gate
     if (start && !this._isNowAtOrAfterIstClock(start)) {
@@ -188,8 +198,11 @@ class TradeService {
 
     // Check end time gate
     if (close && this._isNowAtOrAfterIstClock(close)) {
+      console.log(`[CryptoTimeCheck] BLOCKING - Current time is at or after ${close} IST`);
       throw new Error(`${segU} trading closed at ${close} IST (crypto session end).`);
     }
+
+    console.log(`[CryptoTimeCheck] PASSED - Trading window is open`);
   }
 
   /** Walk up the hierarchy to find the Super Admin for a given user. */
@@ -2147,12 +2160,10 @@ static _SEGMENT_MERGE_FALLBACK = {
     const user = await User.findById(trade.user).populate('admin');
     if (!user) throw new Error('User not found');
     
-    const admin = await Admin.findOne({ adminCode: trade.adminCode });
-    if (!admin) throw new Error('Admin not found');
-    
-    // Get leverage values
-    const intradayLeverage = trade.leverage || admin.charges?.intradayLeverage || 5;
-    const carryForwardLeverage = admin.charges?.deliveryLeverage || 1;
+    // Get segment-specific leverage settings (no hardcoding)
+    const segmentSettings = await this.getUserSegmentSettings(user, trade.segment, trade.instrumentType);
+    const intradayLeverage = trade.leverage || segmentSettings?.lotSettings?.intradayLeverage || 5;
+    const carryForwardLeverage = segmentSettings?.lotSettings?.carryForwardLeverage || 1;
     
     // Calculate current margin used (intraday)
     const currentMarginUsed = trade.marginUsed;
@@ -2320,13 +2331,13 @@ static _SEGMENT_MERGE_FALLBACK = {
       const lotsCanConvert = Math.floor(totalAvailableForConversion / marginPerLot);
       
       if (lotsCanConvert <= 0) {
-        // Cannot convert any lots - close the entire position
+        // Cannot convert any lots - close the entire position with AUTO_SQUARE reason
         const exitPrice = trade.currentPrice || trade.entryPrice;
-        await this.closeTrade(trade._id, exitPrice, 'MARGIN_INSUFFICIENT');
+        await this.closeTrade(trade._id, exitPrice, 'AUTO_SQUARE');
         
         result.fullyConverted = false;
         result.action = 'CLOSED';
-        result.message = 'Position closed - insufficient margin for carry forward';
+        result.message = 'Position auto-squared - insufficient margin for carry forward';
         result.closedQuantity = trade.quantity;
         
       } else {
@@ -2416,7 +2427,7 @@ static _SEGMENT_MERGE_FALLBACK = {
               closedQuantity: quantityToClose,
               closedLots: lotsToClose,
               closedPnL,
-              closeReason: 'MARGIN_INSUFFICIENT_PARTIAL'
+              closeReason: 'AUTO_SQUARE'
             }
           }
         );

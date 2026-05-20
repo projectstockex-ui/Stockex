@@ -1,6 +1,6 @@
 import express from 'express';
 import axios from 'axios';
-import { fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
+import { fetchNifty50HistoricalFromKite, fetchZerodhaHistoricalByToken } from '../utils/kiteNiftyQuote.js';
 
 const router = express.Router();
 
@@ -157,6 +157,46 @@ router.get('/nifty-history', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch NIFTY historical data',
+      data: [],
+    });
+  }
+});
+
+// Generic Zerodha instrument history by token — for MCX, NSE, BSE instruments
+// ?token=220822&interval=15minute&daysBack=15&maxCandles=120
+router.get('/zerodha-history', async (req, res) => {
+  try {
+    const { token, interval = '15minute', daysBack = 15, maxCandles = 120 } = req.query;
+    
+    if (!token) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Instrument token is required',
+        data: []
+      });
+    }
+
+    const fromKite = await fetchZerodhaHistoricalByToken(
+      token,
+      interval,
+      parseInt(daysBack, 10),
+      parseInt(maxCandles, 10)
+    );
+    
+    if (fromKite && fromKite.length > 0) {
+      return res.json({ success: true, source: 'zerodha', interval, data: fromKite });
+    }
+
+    res.json({
+      success: false,
+      message: 'Zerodha not connected or history unavailable',
+      data: [],
+    });
+  } catch (error) {
+    console.error('Error fetching Zerodha instrument history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch instrument historical data',
       data: [],
     });
   }

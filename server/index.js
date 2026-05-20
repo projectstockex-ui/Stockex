@@ -40,7 +40,6 @@ import { btcJackpotAutoTick } from './jobs/btcJackpotScheduler.js';
 import GameSettings from './models/GameSettings.js';
 import { runInstrumentAvailabilityTicks } from './services/instrumentAvailabilityJobs.js';
 import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryService.js';
-import { autoSquareIntradayOnlyTrades } from './services/eodAutoSquareOffService.js';
 import { runDailyPlatformCharges } from './services/platformChargeService.js';
 import EODSettlement from './cron/eodSettlement.js';
 import cron from 'node-cron';
@@ -376,22 +375,7 @@ const cleanupExpiredDemoAccounts = async () => {
 // First run is inside httpServer.listen after Mongo connects; then hourly
 setInterval(cleanupExpiredDemoAccounts, 60 * 60 * 1000); // Every hour
 
-// Auto-square intraday-only trades at 3:30 PM IST (Monday-Friday)
-cron.schedule('30 15 * * 1-5', async () => {
-  try {
-    console.log('[Cron] Running auto-square for intraday-only trades at 3:30 PM IST');
-    const result = await autoSquareIntradayOnlyTrades();
-    console.log('[Cron] Auto-square result:', result);
-  } catch (error) {
-    console.error('[Cron] Error in auto-square intraday-only trades:', error);
-  }
-}, {
-  timezone: 'Asia/Kolkata'
-});
-
-console.log('[Cron] Scheduled auto-square for intraday-only trades at 3:30 PM IST (Mon-Fri)');
-
-// Initialize EOD Settlement cron jobs (MCX MIS square-off at 11:30 PM, NSE/BSE MIS square-off at 3:30 PM, etc.)
+// Initialize EOD Settlement cron jobs (dynamic auto-square based on backend settings)
 EODSettlement.init();
 
 // Platform daily fee — 00:00:01 IST every calendar day

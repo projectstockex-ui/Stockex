@@ -246,9 +246,9 @@ const AdminCreateUser = () => {
         {/* Settings Inheritance Info - Full Width */}
         <div className="lg:col-span-2 bg-dark-800 rounded-lg p-6">
           <div className="p-4 bg-blue-900/20 border border-blue-600/30 rounded-lg">
-            <h3 className="text-sm font-semibold text-blue-400 mb-2">Segment & Script Settings</h3>
+            <h3 className="text-sm font-semibold text-blue-400 mb-2">Segment Settings</h3>
             <p className="text-xs text-gray-400">
-              Segment permissions and script settings are automatically inherited from your admin account settings. 
+              Segment permissions are automatically inherited from your admin account settings. 
               To change these defaults, go to <strong className="text-blue-300">My Settings</strong> in the admin panel. 
               After creating a user, you can also customize their individual settings from the user management page.
             </p>

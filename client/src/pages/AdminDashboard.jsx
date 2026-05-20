@@ -10431,11 +10431,13 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
           </button>
 
-          <button type="button" onClick={() => setActiveTab('scripts')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'scripts' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
+          {viewerRole === 'SUPER_ADMIN' && (
+            <button type="button" onClick={() => setActiveTab('scripts')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'scripts' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
 
-            Script Settings
+              Script Settings
 
-          </button>
+            </button>
+          )}
 
         </div>
 
@@ -34307,17 +34309,19 @@ const SystemDefaultSettings = () => {
 
             </button>
 
-            <button
+            {isSuperAdmin && (
+              <button
 
-              onClick={() => setAdminDefTab('scripts')}
+                onClick={() => setAdminDefTab('scripts')}
 
-              className={`px-4 py-2 rounded font-medium ${adminDefTab === 'scripts' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}
+                className={`px-4 py-2 rounded font-medium ${adminDefTab === 'scripts' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}
 
-            >
+              >
 
-              Script Settings
+                Script Settings
 
-            </button>
+              </button>
+            )}
 
           </div>
 
@@ -45628,17 +45632,19 @@ const MySegmentSettings = () => {
 
         </button>
 
-        <button
+        {admin?.role === 'SUPER_ADMIN' && (
+          <button
 
-          onClick={() => setActiveTab('scripts')}
+            onClick={() => setActiveTab('scripts')}
 
-          className={`px-4 py-2 rounded-lg text-sm font-medium ${activeTab === 'scripts' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${activeTab === 'scripts' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}
 
-        >
+          >
 
-          Script Settings
+            Script Settings
 
-        </button>
+          </button>
+        )}
 
       </div>
 
@@ -56582,49 +56588,50 @@ const UserManagement = () => {
 
             </div>
 
-            {/* Script Settings */}
+            {/* Script Settings - Only for SUPER_ADMIN */}
 
-            <div className="mb-6">
+            {isSuperAdmin && (
+              <div className="mb-6">
 
-              <h3 className="text-lg font-semibold text-purple-400 mb-3">Script Settings</h3>
+                <h3 className="text-lg font-semibold text-purple-400 mb-3">Script Settings</h3>
 
-              <div className="flex flex-wrap gap-2 mb-4">
+                <div className="flex flex-wrap gap-2 mb-4">
 
-                {segmentOptions.map(segment => (
+                  {segmentOptions.map(segment => (
 
-                  <button
+                    <button
 
-                    key={segment}
+                      key={segment}
 
-                    type="button"
+                      type="button"
 
-                    onClick={() => {
+                      onClick={() => {
 
-                      setSelectedScriptSegment(selectedScriptSegment === segment ? null : segment);
+                        setSelectedScriptSegment(selectedScriptSegment === segment ? null : segment);
 
-                      setSelectedScript(null);
+                        setSelectedScript(null);
 
-                    }}
+                      }}
 
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
 
-                      selectedScriptSegment === segment
+                        selectedScriptSegment === segment
 
-                        ? 'bg-purple-600 text-white'
+                          ? 'bg-purple-600 text-white'
 
-                        : 'bg-dark-600 text-gray-400 hover:bg-dark-500'
+                          : 'bg-dark-600 text-gray-400 hover:bg-dark-500'
 
-                    }`}
+                      }`}
 
-                  >
+                    >
 
-                    {segment}
+                      {segment}
 
-                  </button>
+                    </button>
 
-                ))}
+                  ))}
 
-              </div>
+                </div>
 
 
 
@@ -58007,6 +58014,7 @@ const UserManagement = () => {
               )}
 
             </div>
+            )}
 
 
 
@@ -62254,6 +62262,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
 
 
 
+                {authAdmin?.role === 'SUPER_ADMIN' && (
                 <div className="mt-6 pt-4 border-t border-dark-600">
 
                   <h3 className="text-sm font-semibold text-gray-200 mb-1">Game deny-list (hierarchy)</h3>
@@ -62299,6 +62308,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
                   </div>
 
                 </div>
+                )}
 
               </div>
 

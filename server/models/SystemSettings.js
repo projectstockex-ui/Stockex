@@ -451,8 +451,10 @@ const systemSettingsSchema = new mongoose.Schema({
       cryptoSpreadUsdPerSide: { type: Number, default: 0 },
       /** IST (HH:mm or HH:mm:ss) — earliest time users may trade CRYPTOFUT/CRYPTOOPT; empty = no start gate */
       cryptoStartTime: { type: String, default: '' },
-      /** IST session close hint (HH:mm or HH:mm:ss) */
+      /** IST session close hint (HH:mm or HH:mm:ss) - for crypto segments */
       cryptoClosingTime: { type: String, default: '' },
+      /** IST session close time (HH:mm or HH:mm:ss) - generic closing time for all segments (NSE, MCX, BSE, etc.) */
+      closingTime: { type: String, default: '' },
       cryptoReferenceSymbol: { type: String, default: '' },
       /** @deprecated */
       cryptoPricePerLotInr: { type: Number, default: 0 },

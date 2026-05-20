@@ -678,6 +678,7 @@ class TradingService {
     }
 
     await TradeService.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, orderData.segment);
+    console.log(`[CryptoTimeCheck] TradingService: After assertCryptoSegmentTradingWindowOpen for ${orderData.segment}`);
     
     // Check if script is blocked
     if (scriptSettings?.blocked) {

@@ -275,10 +275,10 @@ const SuperAdminCreateUser = () => {
         {/* Settings Inheritance Info - Full Width */}
         <div className="lg:col-span-2 bg-dark-800 rounded-lg p-6">
           <div className="p-4 bg-yellow-900/20 border border-yellow-600/30 rounded-lg">
-            <h3 className="text-sm font-semibold text-yellow-400 mb-2">Segment & Script Settings</h3>
+            <h3 className="text-sm font-semibold text-yellow-400 mb-2">Segment Settings</h3>
             <p className="text-xs text-gray-400">
-              Segment permissions and script settings are automatically inherited from the selected admin's settings.
-              To change defaults for an admin, go to the admin's settings page and configure segment/script settings there.
+              Segment permissions are automatically inherited from the selected admin's settings.
+              To change defaults for an admin, go to the admin's settings page and configure segment settings there.
               After creating a user, you can also customize their individual settings from the user management page.
             </p>
           </div>

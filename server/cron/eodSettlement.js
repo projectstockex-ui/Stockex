@@ -4,18 +4,24 @@ import CircuitBreakerService from '../services/circuitBreakerService.js';
 import WalletService from '../services/walletService.js';
 import User from '../models/User.js';
 import Trade from '../models/Trade.js';
+import SystemSettings from '../models/SystemSettings.js';
+import { getLTPMapForTrades, cacheKeyForTrade } from '../services/ltpResolutionService.js';
+import TradingService from '../services/tradingService.js';
 
 /**
  * TradePro Trading Engine - EOD Settlement Cron Jobs
  * 
  * Scheduled tasks for:
  * 1. Daily circuit reset (before market open)
- * 2. MIS square-off (before market close)
+ * 2. Dynamic market close auto-square (based on backend settings)
  * 3. Daily counter reset (after market close)
  * 4. NRML margin recalculation (after market close)
  */
 
 class EODSettlement {
+  
+  // Store scheduled tasks to allow dynamic updates
+  static scheduledTasks = new Map();
   
   /**
    * Initialize all cron jobs
@@ -25,7 +31,6 @@ class EODSettlement {
     
     // ==================== DAILY CIRCUIT RESET ====================
     // Run at 9:00 AM IST (before NSE/BSE market open at 9:15 AM)
-    // Cron: minute hour day month weekday
     cron.schedule('0 9 * * 1-5', async () => {
       console.log('CRON: Daily circuit reset starting...');
       try {
@@ -38,33 +43,9 @@ class EODSettlement {
       timezone: 'Asia/Kolkata'
     });
     
-    // ==================== NSE/BSE MIS SQUARE-OFF ====================
-    // Run at 3:30 PM IST (NFO / NSE–BSE cash session close)
-    cron.schedule('30 15 * * 1-5', async () => {
-      console.log('CRON: NSE/BSE MIS square-off starting...');
-      try {
-        const result = await StopOutService.executeEODSquareOff('NSE');
-        console.log(`CRON: NSE/BSE MIS square-off complete. Closed ${result.closedCount} positions`);
-      } catch (error) {
-        console.error('CRON: NSE/BSE MIS square-off error:', error);
-      }
-    }, {
-      timezone: 'Asia/Kolkata'
-    });
-    
-    // ==================== MCX MIS SQUARE-OFF ====================
-    // Run at 11:30 PM IST (MCX session close)
-    cron.schedule('30 23 * * 1-5', async () => {
-      console.log('CRON: MCX MIS square-off starting...');
-      try {
-        const result = await StopOutService.executeEODSquareOff('MCX');
-        console.log(`CRON: MCX MIS square-off complete. Closed ${result.closedCount} positions`);
-      } catch (error) {
-        console.error('CRON: MCX MIS square-off error:', error);
-      }
-    }, {
-      timezone: 'Asia/Kolkata'
-    });
+    // ==================== DYNAMIC MARKET CLOSE AUTO-SQUARE ====================
+    // Initialize dynamic scheduler for all segments
+    this.initDynamicAutoSquareScheduler();
     
     // ==================== DAILY COUNTER RESET ====================
     // Run at 12:00 AM IST (midnight) - reset daily P&L counters
@@ -120,6 +101,250 @@ class EODSettlement {
     });
     
     console.log('EODSettlement: All cron jobs initialized');
+  }
+  
+  /**
+   * Initialize dynamic auto-square scheduler based on backend settings
+   * Reads closing times from SystemSettings and schedules jobs accordingly
+   */
+  static initDynamicAutoSquareScheduler() {
+    console.log('EODSettlement: Initializing dynamic auto-square scheduler...');
+    
+    // Refresh scheduler every 5 minutes to pick up backend changes
+    const refreshScheduler = async () => {
+      await this.updateDynamicSchedules();
+    };
+    
+    // Run immediately and then every 5 minutes
+    refreshScheduler();
+    setInterval(refreshScheduler, 5 * 60 * 1000);
+    
+    console.log('EODSettlement: Dynamic auto-square scheduler initialized (refreshes every 5 minutes)');
+  }
+  
+  /**
+   * Update dynamic schedules based on current backend settings
+   */
+  static async updateDynamicSchedules() {
+    try {
+      const settings = await SystemSettings.getSettings();
+      const adminDefaults = settings?.adminSegmentDefaults || {};
+      
+      // Define segment mappings - use closingTime for all segments (generic field)
+      const segmentConfigs = [
+        { key: 'NSEFUT', segment: 'NSE', closeTimeKey: 'closingTime' },
+        { key: 'NSEOPT', segment: 'NSE', closeTimeKey: 'closingTime' },
+        { key: 'NSE-EQ', segment: 'NSE', closeTimeKey: 'closingTime' },
+        { key: 'BSE-FUT', segment: 'BSE', closeTimeKey: 'closingTime' },
+        { key: 'BSE-OPT', segment: 'BSE', closeTimeKey: 'closingTime' },
+        { key: 'MCXFUT', segment: 'MCX', closeTimeKey: 'closingTime' },
+        { key: 'MCXOPT', segment: 'MCX', closeTimeKey: 'closingTime' },
+        { key: 'CRYPTOFUT', segment: 'CRYPTO', closeTimeKey: 'cryptoClosingTime' }, // Use cryptoClosingTime for crypto
+        { key: 'CRYPTOOPT', segment: 'CRYPTO', closeTimeKey: 'cryptoClosingTime' },
+        { key: 'FOREXFUT', segment: 'FOREX', closeTimeKey: 'cryptoClosingTime' }, // Use cryptoClosingTime for forex
+        { key: 'FOREXOPT', segment: 'FOREX', closeTimeKey: 'cryptoClosingTime' },
+      ];
+      
+      // Track unique segments and their closing times
+      const segmentCloseTimes = new Map();
+      
+      for (const config of segmentConfigs) {
+        const segSettings = adminDefaults[config.key] || {};
+        const closeTime = segSettings[config.closeTimeKey] || '';
+        
+        if (closeTime) {
+          // Parse time (HH:mm or HH:mm:ss)
+          const [hours, minutes] = closeTime.split(':').map(Number);
+          if (!isNaN(hours) && !isNaN(minutes)) {
+            const timeKey = `${hours}:${minutes.toString().padStart(2, '0')}`;
+            
+            // Store the latest closing time for this segment
+            if (!segmentCloseTimes.has(config.segment) || timeKey > segmentCloseTimes.get(config.segment)) {
+              segmentCloseTimes.set(config.segment, timeKey);
+            }
+          }
+        }
+      }
+      
+      // Only schedule if closing time is set in backend (no hardcoded defaults)
+      console.log('Dynamic segment close times from backend:', Object.fromEntries(segmentCloseTimes));
+      
+      // Schedule jobs for each segment (only if closing time is set in backend)
+      for (const [segment, closeTime] of segmentCloseTimes) {
+        this.scheduleSegmentAutoSquare(segment, closeTime);
+      }
+      
+      // If no segments have closing times set, log warning
+      if (segmentCloseTimes.size === 0) {
+        console.log('Auto-square: No closing times set in backend for any segment. Auto-square will not run.');
+      }
+      
+    } catch (error) {
+      console.error('Error updating dynamic schedules:', error);
+    }
+  }
+  
+  /**
+   * Schedule auto-square for a specific segment at a specific time
+   */
+  static scheduleSegmentAutoSquare(segment, closeTime) {
+    const taskKey = `autosquare_${segment}`;
+    
+    // Destroy existing task if any
+    if (this.scheduledTasks.has(taskKey)) {
+      const existingTask = this.scheduledTasks.get(taskKey);
+      existingTask.stop();
+      this.scheduledTasks.delete(taskKey);
+      console.log(`Destroyed existing auto-square task for ${segment}`);
+    }
+    
+    // Parse close time
+    const [hours, minutes] = closeTime.split(':').map(Number);
+    if (isNaN(hours) || isNaN(minutes)) {
+      console.error(`Invalid close time for ${segment}: ${closeTime}`);
+      return;
+    }
+    
+    // Create cron expression: minute hour * * 1-5 (Mon-Fri)
+    const cronExpr = `${minutes} ${hours} * * 1-5`;
+    
+    console.log(`Scheduling auto-square for ${segment} at ${closeTime} IST (Mon-Fri)`);
+    
+    // Schedule the task
+    const task = cron.schedule(cronExpr, async () => {
+      console.log(`CRON: Auto-square starting for ${segment} at ${closeTime} IST`);
+      try {
+        await this.executeSegmentAutoSquare(segment);
+      } catch (error) {
+        console.error(`CRON: Auto-square error for ${segment}:`, error);
+      }
+    }, {
+      timezone: 'Asia/Kolkata'
+    });
+    
+    this.scheduledTasks.set(taskKey, task);
+  }
+  
+  /**
+   * Execute auto-square for a specific segment
+   */
+  static async executeSegmentAutoSquare(segment) {
+    try {
+      console.log(`Auto-square: Starting for ${segment}`);
+      
+      // Build segment query
+      let segmentQuery = {};
+      if (segment === 'MCX') {
+        segmentQuery = {
+          $or: [
+            { exchange: 'MCX' },
+            { segment: 'MCX' },
+            { segment: 'MCXFUT' },
+            { segment: 'MCXOPT' }
+          ]
+        };
+      } else if (segment === 'CRYPTO') {
+        segmentQuery = {
+          $or: [
+            { isCrypto: true },
+            { exchange: 'BINANCE' },
+            { segment: 'CRYPTOFUT' },
+            { segment: 'CRYPTOOPT' }
+          ]
+        };
+      } else if (segment === 'FOREX') {
+        segmentQuery = {
+          $or: [
+            { isForex: true },
+            { segment: 'FOREXFUT' },
+            { segment: 'FOREXOPT' }
+          ]
+        };
+      } else if (segment === 'NSE') {
+        segmentQuery = {
+          $or: [
+            { exchange: 'NSE' },
+            { segment: 'NSEFUT' },
+            { segment: 'NSEOPT' },
+            { segment: 'NSE-EQ' }
+          ]
+        };
+      } else if (segment === 'BSE') {
+        segmentQuery = {
+          $or: [
+            { exchange: 'BSE' },
+            { segment: 'BSE-FUT' },
+            { segment: 'BSE-OPT' }
+          ]
+        };
+      } else {
+        segmentQuery = {
+          exchange: { $in: ['NSE', 'BSE', 'NFO'] },
+          segment: { $nin: ['MCX', 'MCXFUT', 'MCXOPT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'] }
+        };
+      }
+      
+      // Find all OPEN positions for this segment (all product types)
+      const positions = await Trade.find({
+        status: 'OPEN',
+        ...segmentQuery
+      }).populate('user');
+      
+      console.log(`Auto-square: Found ${positions.length} open positions for ${segment}`);
+      
+      if (positions.length === 0) {
+        return { closedCount: 0, segment };
+      }
+      
+      // Get LTP map for all trades
+      const posObjs = positions.map((p) => (typeof p.toObject === 'function' ? p.toObject() : p));
+      const ltpMap = await getLTPMapForTrades(posObjs);
+      
+      let closedCount = 0;
+      let failedCount = 0;
+      
+      for (const position of positions) {
+        if (!position.user) continue;
+        const po = position.toObject?.() ? position.toObject() : position;
+        const ck = cacheKeyForTrade(po);
+        const ltp = ltpMap.get(ck) || position.currentPrice || position.entryPrice;
+        
+        if (!ltp || ltp <= 0) {
+          console.warn(`Auto-square: No LTP for ${position.tradeId}, skipping`);
+          failedCount++;
+          continue;
+        }
+        
+        try {
+          const result = await TradingService.squareOffPosition(
+            position._id.toString(),
+            `AUTO_SQUARE_${segment}`,
+            ltp,
+            ltp, // bidPrice
+            ltp  // askPrice
+          );
+          
+          if (result.success) {
+            closedCount++;
+            console.log(`Auto-square: Closed ${position.tradeId} at ${ltp}`);
+          } else {
+            failedCount++;
+            console.error(`Auto-square: Failed to close ${position.tradeId}: ${result.message}`);
+          }
+        } catch (error) {
+          failedCount++;
+          console.error(`Auto-square: Error closing ${position.tradeId}:`, error.message);
+        }
+      }
+      
+      console.log(`Auto-square: Completed for ${segment}. Closed: ${closedCount}, Failed: ${failedCount}`);
+      
+      return { closedCount, failedCount, segment };
+      
+    } catch (error) {
+      console.error(`Auto-square: Error for ${segment}:`, error);
+      throw error;
+    }
   }
   
   /**
