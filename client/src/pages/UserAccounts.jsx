@@ -165,6 +165,10 @@ const UserAccounts = () => {
     navigate('/user/orders?mode=mcx');
   };
 
+  const openTradingOrdersPage = () => {
+    navigate('/user/orders');
+  };
+
   const fetchMcxOrders = useCallback(async () => {
     if (!user?.token) return;
     setMcxOrdersLoading(true);
@@ -266,7 +270,15 @@ const UserAccounts = () => {
       const { data } = await axios.get('/api/user/wallet-ledger?limit=50', {
         headers: { Authorization: `Bearer ${user.token}` },
       });
-      setTradingWalletLedger(Array.isArray(data) ? data : []);
+      // Filter to show only NSE/BSE transactions (exclude crypto, mcx, forex)
+      const filtered = Array.isArray(data) ? data.filter(row => {
+        const isCrypto = row.isCrypto || row.reason?.toLowerCase().includes('crypto') || row.reason?.toLowerCase().includes('btc') || row.reason?.toLowerCase().includes('bitcoin') || row.reason?.toLowerCase().includes('eth') || row.reason?.toLowerCase().includes('binance');
+        const isMcx = row.isMcx || row.reason?.toLowerCase().includes('mcx') || row.reason?.toLowerCase().includes('commodity') || row.reason?.toLowerCase().includes('gold') || row.reason?.toLowerCase().includes('silver') || row.reason?.toLowerCase().includes('crude');
+        const isForex = row.isForex || row.reason?.toLowerCase().includes('forex') || row.reason?.toLowerCase().includes('eur') || row.reason?.toLowerCase().includes('usd') || row.reason?.toLowerCase().includes('gbp');
+        const isGames = row.isGames || row.reason?.toLowerCase().includes('games') || row.reason?.toLowerCase().includes('fantasy');
+        return !isCrypto && !isMcx && !isForex && !isGames;
+      }) : [];
+      setTradingWalletLedger(filtered);
     } catch (e) {
       console.error('Trading wallet ledger:', e);
       setTradingWalletLedger([]);
@@ -422,7 +434,7 @@ const UserAccounts = () => {
           <div className="p-6 bg-gradient-to-br from-dark-900 to-dark-800">
             <div className="flex items-center gap-2 mb-4">
               <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-              <span className="text-sm text-green-400">Trading Account</span>
+              <span className="text-sm text-green-400">For NSE, BSE</span>
             </div>
             
             <div className="text-4xl font-bold mb-1">
@@ -452,6 +464,21 @@ const UserAccounts = () => {
 
             {showTradingWalletLedger && (
               <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden max-h-72 overflow-y-auto">
+                <div className="flex flex-col gap-2 px-3 py-2 border-b border-dark-600 bg-dark-800/80 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                    Trading account transactions
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={openTradingOrdersPage}
+                      className="text-[11px] text-green-400 hover:text-green-300 flex items-center gap-1"
+                    >
+                      <ClipboardList size={12} />
+                      Full orders page
+                    </button>
+                  </div>
+                </div>
                 {tradingWalletLedgerLoading ? (
                   <div className="p-6 text-center text-gray-500 text-sm">Loading transaction history…</div>
                 ) : tradingWalletLedger.length === 0 ? (
@@ -842,7 +869,7 @@ const UserAccounts = () => {
                       {mcxTransferLedger.map((row) => (
                         <tr key={row.id} className="border-t border-dark-700/80">
                           <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
-                          <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                          <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
                             ₹
                             {Number(row.amount || 0).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
@@ -850,9 +877,17 @@ const UserAccounts = () => {
                             })}
                           </td>
                           <td className="p-2 align-top text-gray-300 leading-snug">
-                            <span className="text-yellow-300/90">{row.sourceLabel}</span>
-                            <span className="text-gray-600 mx-1">→</span>
-                            <span className="text-amber-300/90">{row.targetLabel}</span>
+                            {row.kind === 'trade_pnl' ? (
+                              <div>
+                                <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
+                              </div>
+                            ) : (
+                              <>
+                                <span className="text-yellow-300/90">{row.sourceLabel}</span>
+                                <span className="text-gray-600 mx-1">→</span>
+                                <span className="text-amber-300/90">{row.targetLabel}</span>
+                              </>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1125,7 +1160,7 @@ const UserAccounts = () => {
                       {gamesTransferLedger.map((row) => (
                         <tr key={row.id} className="border-t border-dark-700/80">
                           <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
-                          <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                          <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
                             ₹
                             {Number(row.amount || 0).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
@@ -1133,9 +1168,17 @@ const UserAccounts = () => {
                             })}
                           </td>
                           <td className="p-2 align-top text-gray-300 leading-snug">
-                            <span className="text-purple-300/90">{row.sourceLabel}</span>
-                            <span className="text-gray-600 mx-1">→</span>
-                            <span className="text-fuchsia-300/90">{row.targetLabel}</span>
+                            {row.kind === 'trade_pnl' ? (
+                              <div>
+                                <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
+                              </div>
+                            ) : (
+                              <>
+                                <span className="text-purple-300/90">{row.sourceLabel}</span>
+                                <span className="text-gray-600 mx-1">→</span>
+                                <span className="text-fuchsia-300/90">{row.targetLabel}</span>
+                              </>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1303,7 +1346,7 @@ const UserAccounts = () => {
                       {cryptoTransferLedger.map((row) => (
                         <tr key={row.id} className="border-t border-dark-700/80">
                           <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
-                          <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                          <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
                             ₹
                             {Number(row.amount || 0).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
@@ -1311,9 +1354,17 @@ const UserAccounts = () => {
                             })}
                           </td>
                           <td className="p-2 align-top text-gray-300 leading-snug">
-                            <span className="text-orange-300/90">{row.sourceLabel}</span>
-                            <span className="text-gray-600 mx-1">→</span>
-                            <span className="text-emerald-300/90">{row.targetLabel}</span>
+                            {row.kind === 'trade_pnl' ? (
+                              <div>
+                                <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
+                              </div>
+                            ) : (
+                              <>
+                                <span className="text-orange-300/90">{row.sourceLabel}</span>
+                                <span className="text-gray-600 mx-1">→</span>
+                                <span className="text-emerald-300/90">{row.targetLabel}</span>
+                              </>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1479,7 +1530,7 @@ const UserAccounts = () => {
                         {forexTransferLedger.map((row) => (
                           <tr key={row.id} className="border-t border-dark-700/80">
                             <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
-                            <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                            <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
                               ₹
                               {Number(row.amount || 0).toLocaleString('en-IN', {
                                 minimumFractionDigits: 2,
@@ -1487,9 +1538,17 @@ const UserAccounts = () => {
                               })}
                             </td>
                             <td className="p-2 align-top text-gray-300 leading-snug">
-                              <span className="text-cyan-300/90">{row.sourceLabel}</span>
-                              <span className="text-gray-600 mx-1">→</span>
-                              <span className="text-teal-300/90">{row.targetLabel}</span>
+                              {row.kind === 'trade_pnl' ? (
+                                <div>
+                                  <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="text-cyan-300/90">{row.sourceLabel}</span>
+                                  <span className="text-gray-600 mx-1">→</span>
+                                  <span className="text-teal-300/90">{row.targetLabel}</span>
+                                </>
+                              )}
                             </td>
                           </tr>
                         ))}

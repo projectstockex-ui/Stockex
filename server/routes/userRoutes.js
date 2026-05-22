@@ -145,7 +145,7 @@ import {
   sumBracketSideTicketsInDay,
 } from '../utils/gameStakeSideLimits.js';
 import { plainSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
-import TradeService from '../services/tradingService.js';
+import TradeService from '../services/tradeService.js';
 import {
   assertHierarchyGameNotDeniedForUserId,
 } from '../services/gameRestrictionService.js';
@@ -1188,7 +1188,7 @@ router.get('/games-wallet/ledger', protectUser, async (req, res) => {
   }
 });
 
-// Get user's wallet transaction history (main trading wallet)
+// Get user's wallet transaction history (main trading wallet - NSE/BSE only)
 // Query: ?limit=50
 router.get('/wallet-ledger', protectUser, async (req, res) => {
   try {
@@ -1197,12 +1197,31 @@ router.get('/wallet-ledger', protectUser, async (req, res) => {
     const ledger = await WalletLedger.find({
       ownerType: 'USER',
       ownerId: req.user._id,
+      // Exclude crypto, forex, MCX, games transactions - only show NSE/BSE trading transactions
+      reason: { 
+        $nin: ['CRYPTO_TRANSFER', 'FOREX_TRANSFER', 'MCX_TRANSFER', 'GAMES_TRANSFER', 'INTERNAL_TRANSFER'] 
+      }
     })
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
 
-    res.json(ledger);
+    // Additional frontend-style filtering for robustness
+    const filtered = ledger.filter(row => {
+      const reason = (row.reason || '').toLowerCase();
+      const description = (row.description || '').toLowerCase();
+      const segment = (row.meta?.segment || '').toLowerCase();
+      
+      // Exclude crypto, forex, MCX, games transactions
+      const isCrypto = reason.includes('crypto') || description.includes('crypto') || description.includes('btc') || description.includes('bitcoin') || description.includes('eth') || description.includes('binance') || segment === 'crypto';
+      const isForex = reason.includes('forex') || description.includes('forex') || description.includes('eur') || description.includes('usd') || description.includes('gbp') || segment === 'forex';
+      const isMcx = reason.includes('mcx') || description.includes('mcx') || description.includes('commodity') || description.includes('gold') || description.includes('silver') || description.includes('crude') || segment === 'mcx';
+      const isGames = reason.includes('games') || description.includes('games') || description.includes('fantasy') || segment === 'games';
+      
+      return !isCrypto && !isForex && !isMcx && !isGames;
+    });
+
+    res.json(filtered);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -1851,7 +1870,16 @@ router.get('/settings', protectUser, async (req, res) => {
       if (!(mi > 0) && bi > 0) merged = { ...merged, cryptoSpreadInr: bi };
 
       segmentPermissions[segment] = merged;
+      console.log(`[user/settings] Segment ${segment} merged:`, {
+        enabled: merged.enabled,
+        cryptoStartTime: merged.cryptoStartTime,
+        cryptoClosingTime: merged.cryptoClosingTime,
+        commission: merged.commission
+      });
     }
+
+    console.log('[user/settings] Final segmentPermissions keys:', Object.keys(segmentPermissions));
+    console.log('[user/settings] CRYPTOFUT settings:', segmentPermissions.CRYPTOFUT);
 
     res.json({
       marginSettings: user.marginSettings || {},

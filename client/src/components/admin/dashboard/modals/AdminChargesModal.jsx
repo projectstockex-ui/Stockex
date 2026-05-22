@@ -38,7 +38,7 @@ function isCryptoQtyOnlySegment(seg) {
   return ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(seg || '').toUpperCase());
 }
 
-function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
+function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey }) {
   const [startDraft, setStartDraft] = useState(() => formatStoredCryptoIstClock(slice?.cryptoStartTime));
   const [closeDraft, setCloseDraft] = useState(() => formatStoredCryptoIstClock(slice?.cryptoClosingTime));
 
@@ -71,6 +71,17 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
     const prev = slice?.cryptoClosingTime != null ? String(slice.cryptoClosingTime).trim() : '';
     if ((n || '') !== prev) onFieldChange('cryptoClosingTime', n);
   };
+
+  // Only show time settings for CRYPTOFUT, not CRYPTOOPT
+  if (segmentKey === 'CRYPTOOPT') {
+    return (
+      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+        <p className="text-xs text-gray-400">
+          Crypto timing is managed in CRYPTOFUT settings only.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3 space-y-3">
@@ -609,6 +620,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                         {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
                           <CryptoSegmentAdminExtras
+                            segmentKey={expandedSeg}
                             slice={s}
                             onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
                           />

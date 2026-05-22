@@ -242,12 +242,27 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
             ? 'GAMES_TRANSFER'
             : 'CRYPTO_TRANSFER';
 
-    const [meshRows, directRows] = await Promise.all([
+    const [meshRows, directRows, pnlRows] = await Promise.all([
       WalletTransferService.getTransferHistory(req.user._id),
       WalletLedger.find({
         ownerType: 'USER',
         ownerId: req.user._id,
         reason: directReason,
+      })
+        .sort({ createdAt: -1 })
+        .limit(lim)
+        .lean(),
+      WalletLedger.find({
+        ownerType: 'USER',
+        ownerId: req.user._id,
+        reason: 'TRADE_PNL',
+        description: w === 'crypto' 
+          ? { $regex: /\(Crypto\)/ }
+          : w === 'forex'
+            ? { $regex: /\(Forex\)/ }
+            : w === 'mcx'
+              ? { $regex: /\(MCX\)/ }
+              : { $regex: /\(Games\)/ }
       })
         .sort({ createdAt: -1 })
         .limit(lim)
@@ -280,8 +295,19 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
       bridge = (directRows || []).map((row) => enrichGamesCashBridgeRow(row));
     }
 
+    // Add P&L entries for MCX trades (including auto-square)
+    const pnlEntries = (pnlRows || []).map((row) => ({
+      id: row._id.toString(),
+      at: row.createdAt,
+      amount: Number(row.amount),
+      kind: 'trade_pnl',
+      type: row.type,
+      description: row.description || '',
+      isAutoSquare: row.isAutoSquare || false,
+    }));
+
     const seen = new Set();
-    const combined = [...mesh, ...bridge]
+    const combined = [...mesh, ...bridge, ...pnlEntries]
       .filter((e) => {
         const k = `${e.id}-${new Date(e.at).getTime()}`;
         if (seen.has(k)) return false;

@@ -2186,12 +2186,7 @@ router.put('/admins/:id/default-settings', protectAdmin, async (req, res) => {
 
 
 // Update admin's segment permissions and script settings (parent admin or SuperAdmin)
-router.put('/admins/:id/segment-settings', protectAdmin, (req, res, next) => {
-  console.log('[ROUTE] /admins/:id/segment-settings PUT called');
-  console.log('[ROUTE] Params:', req.params);
-  console.log('[ROUTE] Body keys:', Object.keys(req.body));
-  next();
-}, adminSegmentSettingsController.updateSegmentSettings.bind(adminSegmentSettingsController));
+router.put('/admins/:id/segment-settings', protectAdmin, adminSegmentSettingsController.updateSegmentSettings.bind(adminSegmentSettingsController));
 
 // Get admin's segment permissions and script settings
 router.get('/admins/:id/segment-settings', protectAdmin, (req, res, next) => {

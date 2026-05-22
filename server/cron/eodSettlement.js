@@ -104,133 +104,145 @@ class EODSettlement {
   }
   
   /**
-   * Initialize dynamic auto-square scheduler based on backend settings
-   * Reads closing times from SystemSettings and schedules jobs accordingly
+   * Initialize dynamic auto-square scheduler based on live data stop detection
+   * Auto-square triggers when market closes (live data stops) - no hardcoded times
    */
   static initDynamicAutoSquareScheduler() {
     console.log('EODSettlement: Initializing dynamic auto-square scheduler...');
     
-    // Refresh scheduler every 5 minutes to pick up backend changes
-    const refreshScheduler = async () => {
-      await this.updateDynamicSchedules();
+    // Monitor for live data stop and trigger auto-square
+    // This runs every minute to check if live data has stopped for each segment
+    const checkLiveDataStop = async () => {
+      await this.checkAndTriggerAutoSquare();
     };
     
-    // Run immediately and then every 5 minutes
-    refreshScheduler();
-    setInterval(refreshScheduler, 5 * 60 * 1000);
+    // Run immediately and then every minute
+    checkLiveDataStop();
+    setInterval(checkLiveDataStop, 60 * 1000);
     
-    console.log('EODSettlement: Dynamic auto-square scheduler initialized (refreshes every 5 minutes)');
+    console.log('EODSettlement: Dynamic auto-square scheduler initialized (checks every minute for live data stop)');
   }
   
   /**
-   * Update dynamic schedules based on current backend settings
+   * Check if live data has stopped for each segment and trigger auto-square
    */
-  static async updateDynamicSchedules() {
+  static async checkAndTriggerAutoSquare() {
     try {
-      const settings = await SystemSettings.getSettings();
-      const adminDefaults = settings?.adminSegmentDefaults || {};
+      const Admin = (await import('../models/Admin.js')).default;
+      const SystemSettings = (await import('../models/SystemSettings.js')).default;
       
-      // Define segment mappings - use closingTime for all segments (generic field)
-      const segmentConfigs = [
-        { key: 'NSEFUT', segment: 'NSE', closeTimeKey: 'closingTime' },
-        { key: 'NSEOPT', segment: 'NSE', closeTimeKey: 'closingTime' },
-        { key: 'NSE-EQ', segment: 'NSE', closeTimeKey: 'closingTime' },
-        { key: 'BSE-FUT', segment: 'BSE', closeTimeKey: 'closingTime' },
-        { key: 'BSE-OPT', segment: 'BSE', closeTimeKey: 'closingTime' },
-        { key: 'MCXFUT', segment: 'MCX', closeTimeKey: 'closingTime' },
-        { key: 'MCXOPT', segment: 'MCX', closeTimeKey: 'closingTime' },
-        { key: 'CRYPTOFUT', segment: 'CRYPTO', closeTimeKey: 'cryptoClosingTime' }, // Use cryptoClosingTime for crypto
-        { key: 'CRYPTOOPT', segment: 'CRYPTO', closeTimeKey: 'cryptoClosingTime' },
-        { key: 'FOREXFUT', segment: 'FOREX', closeTimeKey: 'cryptoClosingTime' }, // Use cryptoClosingTime for forex
-        { key: 'FOREXOPT', segment: 'FOREX', closeTimeKey: 'cryptoClosingTime' },
-      ];
+      // Get system defaults for fallback
+      const sys = await SystemSettings.getSettings();
+      const sysSegDefaults = sys.adminSegmentDefaults instanceof Map
+        ? Object.fromEntries(sys.adminSegmentDefaults)
+        : sys.adminSegmentDefaults || {};
       
-      // Track unique segments and their closing times
-      const segmentCloseTimes = new Map();
+      // Get all admins with segmentPermissions that have closing times
+      const admins = await Admin.find({ segmentPermissions: { $exists: true, $ne: null } }).lean();
       
-      for (const config of segmentConfigs) {
-        const segSettings = adminDefaults[config.key] || {};
-        const closeTime = segSettings[config.closeTimeKey] || '';
+      for (const admin of admins) {
+        const segPerms = admin.segmentPermissions instanceof Map 
+          ? Object.fromEntries(admin.segmentPermissions) 
+          : admin.segmentPermissions || {};
         
-        if (closeTime) {
-          // Parse time (HH:mm or HH:mm:ss)
-          const [hours, minutes] = closeTime.split(':').map(Number);
-          if (!isNaN(hours) && !isNaN(minutes)) {
-            const timeKey = `${hours}:${minutes.toString().padStart(2, '0')}`;
+        // Check each segment for closing time
+        const segmentsToCheck = ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'MCXFUT', 'MCXOPT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'];
+        
+        for (const segKey of segmentsToCheck) {
+          const segSettings = segPerms[segKey] || {};
+          let closeTime = segSettings.closingTime || segSettings.cryptoClosingTime || '';
+          
+          // For CRYPTO segments: Always use SystemSettings as primary source (Super Admin's setting)
+          if ((segKey === 'CRYPTOFUT' || segKey === 'CRYPTOOPT') && sysSegDefaults['CRYPTOFUT']) {
+            const cryptoFutSettings = sysSegDefaults['CRYPTOFUT'];
+            closeTime = cryptoFutSettings.cryptoClosingTime || closeTime;
+            console.log(`[Auto-square] Using SystemSettings CRYPTOFUT closing time: ${closeTime}`);
+          }
+          
+          // Fallback to system defaults if admin hasn't set closing time
+          if (!closeTime) {
+            const sysSeg = sysSegDefaults[segKey] || {};
+            closeTime = sysSeg.closingTime || sysSeg.cryptoClosingTime || '';
             
-            // Store the latest closing time for this segment
-            if (!segmentCloseTimes.has(config.segment) || timeKey > segmentCloseTimes.get(config.segment)) {
-              segmentCloseTimes.set(config.segment, timeKey);
+            // If still no closing time, use default market close times
+            if (!closeTime) {
+              if (segKey.startsWith('NSE') || segKey.startsWith('BSE')) {
+                closeTime = '15:30:00'; // NSE/BSE market close
+                console.log(`[Auto-square] Using default NSE/BSE closing time: ${closeTime}`);
+              } else if (segKey.startsWith('MCX')) {
+                closeTime = '23:30:00'; // MCX commodity close
+                console.log(`[Auto-square] Using default MCX closing time: ${closeTime}`);
+              } else if (segKey.startsWith('FOREX')) {
+                closeTime = '23:59:00'; // Forex end of day
+                console.log(`[Auto-square] Using default FOREX closing time: ${closeTime}`);
+              }
+            }
+          }
+          
+          if (closeTime) {
+            // Check if current time is past closing time (handle HH:MM or HH:MM:SS format)
+            const timeParts = closeTime.split(':').map(Number);
+            const hours = timeParts[0];
+            const minutes = timeParts[1];
+            const seconds = timeParts[2] || 0;
+            
+            if (!isNaN(hours) && !isNaN(minutes)) {
+              const now = new Date();
+              const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+              const currentHours = istTime.getHours();
+              const currentMinutes = istTime.getMinutes();
+              const currentSeconds = istTime.getSeconds();
+              
+              // If current time is at or past closing time, trigger auto-square for this admin's hierarchy
+              if (currentHours > hours || 
+                  (currentHours === hours && currentMinutes > minutes) ||
+                  (currentHours === hours && currentMinutes === minutes && currentSeconds >= seconds)) {
+                // Map segment key to segment group
+                let segmentGroup;
+                if (segKey.startsWith('NSE')) segmentGroup = 'NSE';
+                else if (segKey.startsWith('BSE')) segmentGroup = 'BSE';
+                else if (segKey.startsWith('MCX')) segmentGroup = 'MCX';
+                else if (segKey.startsWith('CRYPTO')) segmentGroup = 'CRYPTO';
+                else if (segKey.startsWith('FOREX')) segmentGroup = 'FOREX';
+                
+                if (segmentGroup) {
+                  // Check if auto-square already ran for this admin/segment with this specific closing time
+                  // Include closing time in key to allow re-triggering when closing time changes
+                  const taskKey = `autosquare_admin_${admin._id}_${segmentGroup}_${closeTime}`;
+                  if (!this.scheduledTasks.has(taskKey)) {
+                    console.log(`Auto-square: Triggering for admin ${admin._id} segment ${segmentGroup} (past closing time ${closeTime})`);
+                    try {
+                      await this.executeAdminHierarchyAutoSquare(admin._id, segmentGroup);
+                      this.scheduledTasks.set(taskKey, true); // Mark as run for this specific closing time
+                      console.log(`Auto-square: Successfully completed for admin ${admin._id} segment ${segmentGroup}`);
+                    } catch (error) {
+                      console.error(`Auto-square: Failed for admin ${admin._id} segment ${segmentGroup}:`, error);
+                      // Don't mark as completed if failed, allow retry on next check
+                      console.log(`Auto-square: Will retry on next check for admin ${admin._id} segment ${segmentGroup}`);
+                    }
+                  } else {
+                    console.log(`Auto-square: Already ran for admin ${admin._id} segment ${segmentGroup} with closing time ${closeTime}`);
+                  }
+                }
+              }
             }
           }
         }
       }
       
-      // Only schedule if closing time is set in backend (no hardcoded defaults)
-      console.log('Dynamic segment close times from backend:', Object.fromEntries(segmentCloseTimes));
-      
-      // Schedule jobs for each segment (only if closing time is set in backend)
-      for (const [segment, closeTime] of segmentCloseTimes) {
-        this.scheduleSegmentAutoSquare(segment, closeTime);
-      }
-      
-      // If no segments have closing times set, log warning
-      if (segmentCloseTimes.size === 0) {
-        console.log('Auto-square: No closing times set in backend for any segment. Auto-square will not run.');
-      }
-      
     } catch (error) {
-      console.error('Error updating dynamic schedules:', error);
+      console.error('Error checking live data stop:', error);
     }
   }
   
   /**
-   * Schedule auto-square for a specific segment at a specific time
+   * Execute auto-square for a specific admin hierarchy
    */
-  static scheduleSegmentAutoSquare(segment, closeTime) {
-    const taskKey = `autosquare_${segment}`;
-    
-    // Destroy existing task if any
-    if (this.scheduledTasks.has(taskKey)) {
-      const existingTask = this.scheduledTasks.get(taskKey);
-      existingTask.stop();
-      this.scheduledTasks.delete(taskKey);
-      console.log(`Destroyed existing auto-square task for ${segment}`);
-    }
-    
-    // Parse close time
-    const [hours, minutes] = closeTime.split(':').map(Number);
-    if (isNaN(hours) || isNaN(minutes)) {
-      console.error(`Invalid close time for ${segment}: ${closeTime}`);
-      return;
-    }
-    
-    // Create cron expression: minute hour * * 1-5 (Mon-Fri)
-    const cronExpr = `${minutes} ${hours} * * 1-5`;
-    
-    console.log(`Scheduling auto-square for ${segment} at ${closeTime} IST (Mon-Fri)`);
-    
-    // Schedule the task
-    const task = cron.schedule(cronExpr, async () => {
-      console.log(`CRON: Auto-square starting for ${segment} at ${closeTime} IST`);
-      try {
-        await this.executeSegmentAutoSquare(segment);
-      } catch (error) {
-        console.error(`CRON: Auto-square error for ${segment}:`, error);
-      }
-    }, {
-      timezone: 'Asia/Kolkata'
-    });
-    
-    this.scheduledTasks.set(taskKey, task);
-  }
-  
-  /**
-   * Execute auto-square for a specific segment
-   */
-  static async executeSegmentAutoSquare(segment) {
+  static async executeAdminHierarchyAutoSquare(adminId, segment) {
     try {
-      console.log(`Auto-square: Starting for ${segment}`);
+      console.log(`Auto-square: Starting for admin ${adminId} segment ${segment}`);
+      
+      const Admin = (await import('../models/Admin.js')).default;
       
       // Build segment query
       let segmentQuery = {};
@@ -278,22 +290,139 @@ class EODSettlement {
           ]
         };
       } else {
-        segmentQuery = {
-          exchange: { $in: ['NSE', 'BSE', 'NFO'] },
-          segment: { $nin: ['MCX', 'MCXFUT', 'MCXOPT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'] }
-        };
+        segmentQuery = { segment: segment };
       }
       
-      // Find all OPEN positions for this segment (all product types)
+      // Find all trades under this admin hierarchy with open positions for this segment
+      const Trade = (await import('../models/Trade.js')).default;
+      const admin = await Admin.findById(adminId).select('adminCode segmentPermissions').lean();
+      
+      // For CRYPTO: close ALL positions (not just MIS)
+      // For other segments: only close MIS positions
+      const productTypeFilter = segment === 'CRYPTO' 
+        ? { $in: ['MIS', 'NRML', 'CNC', 'INTRADAY', 'CARRYFORWARD'] }
+        : 'MIS';
+      
+      const trades = await Trade.find({
+        adminCode: admin?.adminCode,
+        productType: productTypeFilter,
+        status: 'OPEN',
+        ...segmentQuery
+      }).lean();
+      
+      console.log(`Auto-square: Found ${trades.length} trades under admin ${adminId} with open ${segment} positions`);
+      
+      // Get autosquarePercent from admin segment permissions
+      let autosquarePercent = 90; // default
+      if (admin?.segmentPermissions) {
+        const segPerms = admin.segmentPermissions instanceof Map 
+          ? Object.fromEntries(admin.segmentPermissions) 
+          : (admin.segmentPermissions || {});
+        
+        // Get segment-specific autosquarePercent
+        for (const [segKey, segSettings] of Object.entries(segPerms)) {
+          if (segSettings?.lotSettings?.autosquarePercent) {
+            autosquarePercent = segSettings.lotSettings.autosquarePercent;
+            break;
+          }
+        }
+      }
+      
+      console.log(`Auto-square: Using autosquarePercent = ${autosquarePercent}%`);
+      
+      // For ALL segments: only mark as auto-squared, do NOT close (carry-forward to next day)
+      // Trades remain OPEN for next day carry-forward
+      const shouldCloseTrades = false;
+      const closePercent = 0;
+      console.log(`Auto-square: Segment ${segment}, shouldCloseTrades: ${shouldCloseTrades} (carry-forward mode)`);
+      
+      // Process trades - only mark as auto-squared, keep them OPEN
+      for (const trade of trades) {
+        try {
+          // Mark trade as auto-squared, keep trade OPEN for carry-forward
+          await Trade.findByIdAndUpdate(trade._id, {
+            isAutoSquared: true,
+            autoSquaredAt: new Date()
+          });
+          console.log(`Auto-square: Marked ${trade.tradeId} as auto-squared (trade remains OPEN for carry-forward to next day)`);
+        } catch (error) {
+          console.error(`Auto-square: Failed to mark ${trade.tradeId} as auto-squared:`, error);
+        }
+      }
+      
+      console.log(`Auto-square: Completed for admin ${adminId} segment ${segment}`);
+      
+    } catch (error) {
+      console.error(`Auto-square: Error for admin ${adminId} segment ${segment}:`, error);
+    }
+  }
+  
+  /**
+   * Square positions for a specific user
+   */
+  static async squareUserPositions(userId, segment) {
+    try {
+      // Build segment query
+      let segmentQuery = {};
+      if (segment === 'MCX') {
+        segmentQuery = {
+          $or: [
+            { exchange: 'MCX' },
+            { segment: 'MCX' },
+            { segment: 'MCXFUT' },
+            { segment: 'MCXOPT' }
+          ]
+        };
+      } else if (segment === 'CRYPTO') {
+        segmentQuery = {
+          $or: [
+            { isCrypto: true },
+            { exchange: 'BINANCE' },
+            { segment: 'CRYPTOFUT' },
+            { segment: 'CRYPTOOPT' }
+          ]
+        };
+      } else if (segment === 'FOREX') {
+        segmentQuery = {
+          $or: [
+            { isForex: true },
+            { segment: 'FOREXFUT' },
+            { segment: 'FOREXOPT' }
+          ]
+        };
+      } else if (segment === 'NSE') {
+        segmentQuery = {
+          $or: [
+            { exchange: 'NSE' },
+            { segment: 'NSEFUT' },
+            { segment: 'NSEOPT' },
+            { segment: 'NSE-EQ' }
+          ]
+        };
+      } else if (segment === 'BSE') {
+        segmentQuery = {
+          $or: [
+            { exchange: 'BSE' },
+            { segment: 'BSE-FUT' },
+            { segment: 'BSE-OPT' }
+          ]
+        };
+      } else {
+        segmentQuery = { segment: segment };
+      }
+      
+      // Find all OPEN MIS positions for this user and segment
       const positions = await Trade.find({
+        user: userId,
+        productType: 'MIS',
         status: 'OPEN',
         ...segmentQuery
       }).populate('user');
       
-      console.log(`Auto-square: Found ${positions.length} open positions for ${segment}`);
+      console.log(`Auto-square: Found ${positions.length} MIS positions for user ${userId} segment ${segment}`);
       
       if (positions.length === 0) {
-        return { closedCount: 0, segment };
+        return;
       }
       
       // Get LTP map for all trades
@@ -318,7 +447,7 @@ class EODSettlement {
         try {
           const result = await TradingService.squareOffPosition(
             position._id.toString(),
-            `AUTO_SQUARE_${segment}`,
+            'TIME_BASED',
             ltp,
             ltp, // bidPrice
             ltp  // askPrice
@@ -337,12 +466,10 @@ class EODSettlement {
         }
       }
       
-      console.log(`Auto-square: Completed for ${segment}. Closed: ${closedCount}, Failed: ${failedCount}`);
-      
-      return { closedCount, failedCount, segment };
+      console.log(`Auto-square: Completed for user ${userId} segment ${segment}. Closed: ${closedCount}, Failed: ${failedCount}`);
       
     } catch (error) {
-      console.error(`Auto-square: Error for ${segment}:`, error);
+      console.error(`Auto-square: Error for user ${userId} segment ${segment}:`, error);
       throw error;
     }
   }

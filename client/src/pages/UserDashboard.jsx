@@ -7,7 +7,7 @@ import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { io } from 'socket.io-client';
 import {
   Search, 
-  ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, RefreshCw, Settings, Share2, Wallet, X, Copy, Check, Building2, User, Home, ChevronRight, LogOut, Bell, History, ClipboardList, ListOrdered, BarChart2, TrendingUp, Plus, Star, Info, UserCircle, CreditCard, ArrowDown
+  ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, RefreshCw, Settings, Share2, Wallet, X, Copy, Check, Building2, User, Home, ChevronRight, LogOut, Bell, History, ClipboardList, ListOrdered, BarChart2, TrendingUp, Plus, Star, Info, UserCircle, CreditCard, ArrowDown, Clock
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
@@ -600,6 +600,28 @@ const UserDashboard = () => {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Check if current time is within crypto trading window
+  const isCryptoTradingOpen = () => {
+    if (!cryptoOnly) return true; // Not crypto mode, always open
+    
+    const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || {};
+    const startTimeStr = cryptoSettings.cryptoStartTime || '';
+    const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+    
+    if (!startTimeStr || !closeTimeStr) return true; // No timing set, always open
+    
+    const now = new Date();
+    const currentTimeStr = now.toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Kolkata'
+    });
+    
+    return currentTimeStr >= startTimeStr && currentTimeStr <= closeTimeStr;
+  };
   
   // Format time as HH:MM:SS (24-hour format)
   const formatTime = (date) => {
@@ -1052,6 +1074,17 @@ const UserDashboard = () => {
   };
 
   const openBuySell = (type, instrument = null) => {
+    // Check if crypto trading is open (only applies in crypto mode)
+    if (cryptoOnly && !isCryptoTradingOpen()) {
+      const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || {};
+      const startTimeStr = cryptoSettings.cryptoStartTime || '';
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+      const start = startTimeStr.substring(0, 5);
+      const end = closeTimeStr.substring(0, 5);
+      alert(`Crypto trading is closed. Trading window: ${start} - ${end} IST`);
+      return;
+    }
+    
     if (instrument) setSelectedInstrument(instrument);
     setOrderType(type);
     setShowBuySellModal(true);
@@ -1101,6 +1134,19 @@ const UserDashboard = () => {
           {cryptoOnly && (
             <div className="hidden lg:flex items-center gap-2 text-sm">
               <span className="text-orange-400 font-medium">₿ Crypto Trading</span>
+              {(() => {
+                // Always use CRYPTOFUT timing for both CRYPTOFUT and CRYPTOOPT
+                const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || {};
+                const startTimeStr = cryptoSettings.cryptoStartTime || '';
+                const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+                if (startTimeStr && closeTimeStr) {
+                  // Convert HH:MM:SS to HH:MM format (24-hour)
+                  const start = startTimeStr.substring(0, 5);
+                  const end = closeTimeStr.substring(0, 5);
+                  return <span className="text-gray-400 text-xs">({start} - {end} IST)</span>;
+                }
+                return null;
+              })()}
             </div>
           )}
           {/* MCX Mode Label */}
@@ -1183,6 +1229,26 @@ const UserDashboard = () => {
             )}
           </div>
         </div>
+
+        {/* Crypto Timing Display - Right of search bar */}
+        {cryptoOnly && (
+          <div className="flex items-center gap-2 bg-dark-700 px-3 py-1.5 rounded-lg">
+            <Clock size={16} className="text-orange-400" />
+            {(() => {
+              // Always use CRYPTOFUT timing for both CRYPTOFUT and CRYPTOOPT
+              const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || {};
+              const startTimeStr = cryptoSettings.cryptoStartTime || '';
+              const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+              if (startTimeStr && closeTimeStr) {
+                // Convert HH:MM:SS to HH:MM format (24-hour)
+                const start = startTimeStr.substring(0, 5);
+                const end = closeTimeStr.substring(0, 5);
+                return <span className="text-orange-400 font-medium text-sm">{start} - {end} IST</span>;
+              }
+              return <span className="text-gray-400 text-sm">Timing not set</span>;
+            })()}
+          </div>
+        )}
 
         {/* Right side - Clock and Trading Account Balance */}
         <div className="flex items-center gap-4">
@@ -1351,6 +1417,7 @@ const UserDashboard = () => {
             user={user}
             marketData={marketData}
             onSegmentChange={setActiveSegment}
+            isCryptoTradingOpen={isCryptoTradingOpen()}
           />
         </div>
 
@@ -1379,6 +1446,7 @@ const UserDashboard = () => {
             mcxOnly={mcxOnly}
             forexOnly={forexOnly}
             usdRate={usdRate}
+            isCryptoTradingOpen={isCryptoTradingOpen()}
           />
         </div>
 
@@ -1400,6 +1468,7 @@ const UserDashboard = () => {
                 usdSpotClientSpreads={usdSpotClientSpreads}
                 chartAnchorLtp={null}
                 segmentPermissionsGate={segmentPermissionsGate}
+                isCryptoTradingOpen={isCryptoTradingOpen()}
               />
             </div>
           )}
@@ -1424,6 +1493,7 @@ const UserDashboard = () => {
             user={user}
             marketData={marketData}
             onSegmentChange={setActiveSegment}
+            isCryptoTradingOpen={isCryptoTradingOpen()}
           />
         )}
         {mobileView === 'chart' && (
@@ -1434,6 +1504,7 @@ const UserDashboard = () => {
             marketData={marketData}
             usdRate={usdRate}
             onChartLtp={handleChartLtp}
+            isCryptoTradingOpen={isCryptoTradingOpen()}
           />
         )}
         {mobileView === 'positions' && (
@@ -1551,7 +1622,7 @@ const UserDashboard = () => {
   );
 };
 
-const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, refreshKey = 0, socketConnectEpoch = 0, mergeMarketDataPatch, usdRate = 83.5 }) => {
+const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, refreshKey = 0, socketConnectEpoch = 0, mergeMarketDataPatch, usdRate = 83.5, isCryptoTradingOpen = true }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeSegment, setActiveSegment] = useState(() => localStorage.getItem('stockex_active_segment') || 'FAVORITES');
@@ -2407,7 +2478,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </button>
                         <button
                           onClick={() => onBuySell('buy', crypto)}
-                          className="w-7 h-7 rounded-full bg-green-500 hover:bg-green-400 flex items-center justify-center text-white text-xs font-bold"
+                          disabled={cryptoOnly && !isCryptoTradingOpen}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                         >
                           B
                         </button>
@@ -2484,7 +2556,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                           <button
                             type="button"
                             onClick={() => onBuySell('buy', inst)}
-                            className="w-7 h-7 rounded-full bg-green-500 hover:bg-green-400 flex items-center justify-center text-white text-xs font-bold"
+                            disabled={cryptoOnly && !isCryptoTradingOpen}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                           >
                             B
                           </button>
@@ -2642,7 +2715,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }}
-                          className="w-7 h-7 rounded-full bg-green-500 hover:bg-green-400 flex items-center justify-center text-white text-xs font-bold"
+                          disabled={cryptoOnly && !isCryptoTradingOpen}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                         >
                           B
                         </button>
@@ -2666,7 +2740,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
   );
 };
 
-const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFuture, isCrypto, isDemo, onBuySell, inWatchlist, onRemoveFromWatchlist, onAddToWatchlist }) => {
+const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFuture, isCrypto, isDemo, onBuySell, inWatchlist, onRemoveFromWatchlist, onAddToWatchlist, isCryptoTradingOpen = true }) => {
   // Determine symbol color based on type
   const getSymbolColor = () => {
     if (isDemo) return 'text-purple-400';
@@ -2732,7 +2806,8 @@ const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFutu
         </button>
         <button 
           onClick={() => onBuySell('buy', instrument)}
-          className="w-7 h-7 rounded-full bg-green-600 hover:bg-green-700 flex items-center justify-center text-xs font-bold transition-colors"
+          disabled={isCrypto && !isCryptoTradingOpen}
+          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${isCrypto && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
           title="Buy"
         >
           B
@@ -3279,7 +3354,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
   );
 };
 
-const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5, setShowReferralModal }) => {
+const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5, setShowReferralModal, isCryptoTradingOpen = true }) => {
   const [positions, setPositions] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -3570,6 +3645,18 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     const lots = parseFloat(quickQty);
     if (!selectedInstrument || isNaN(lots) || lots <= 0) return;
     
+    // Check if crypto trading is open (only applies to buy orders in crypto mode)
+    if (side === 'buy' && cryptoOnly && !isCryptoTradingOpen) {
+      const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || {};
+      const startTimeStr = cryptoSettings.cryptoStartTime || '';
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+      const start = startTimeStr.substring(0, 5);
+      const end = closeTimeStr.substring(0, 5);
+      setQuickError(`Crypto trading is closed. Trading window: ${start} - ${end} IST`);
+      setTimeout(() => setQuickError(''), 3000);
+      return;
+    }
+    
     setQuickTrading(true);
     setQuickError('');
     
@@ -3771,8 +3858,8 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           />
           <button
             onClick={() => executeQuickTrade('buy')}
-            disabled={quickTrading || !selectedInstrument}
-            className="w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-xs font-bold transition-colors"
+            disabled={quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen)}
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${(quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen)) ? 'bg-gray-600 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700'}`}
             title={selectedInstrument ? 'Buy' : 'Select an instrument first'}
           >
             B
@@ -4117,6 +4204,7 @@ const TradingPanel = ({
   /** Optional chart reference LTP; bid/ask use Kite book from marketData, not LTP. */
   chartAnchorLtp = null,
   segmentPermissionsGate = {},
+  isCryptoTradingOpen = true,
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
   const [cryptoQuantity, setCryptoQuantity] = useState('1'); // Default for crypto/forex
@@ -4140,7 +4228,7 @@ const TradingPanel = ({
   const isForex = isForexInstrument(instrument);
   const isUsdSpot = isCryptoOnly || isForex;
   
-  // Simple time check - disable crypto trading after closing time from backend
+  // Crypto timing check - uses dynamic admin settings from segmentPermissionsGate
   const [isCryptoTradingBlocked, setIsCryptoTradingBlocked] = useState(false);
   const [currentTimeStr, setCurrentTimeStr] = useState('');
   
@@ -4158,15 +4246,33 @@ const TradingPanel = ({
       const minutes = nowIST.getMinutes();
       const totalMinutes = hours * 60 + minutes;
       
-      // Get closing time from backend segment permissions
+      // Get start and closing time from backend segment permissions (dynamic, no fallback)
       const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || segmentPermissionsGate?.CRYPTOOPT || {};
-      const closeTimeStr = cryptoSettings.cryptoClosingTime || '19:30';
+      const startTimeStr = cryptoSettings.cryptoStartTime || '';
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+      
+      console.log('[CryptoTiming] Current time:', `${hours}:${minutes.toString().padStart(2, '0')}`, 'IST');
+      console.log('[CryptoTiming] cryptoStartTime:', startTimeStr);
+      console.log('[CryptoTiming] cryptoClosingTime:', closeTimeStr);
+      
+      // If no timing set, allow trading (don't block)
+      if (!startTimeStr && !closeTimeStr) {
+        setIsCryptoTradingBlocked(false);
+        setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (No timing set)`);
+        return;
+      }
+      
+      const [startHours, startMinutes] = startTimeStr.split(':').map(Number);
       const [closeHours, closeMinutes] = closeTimeStr.split(':').map(Number);
+      const startTime = startHours * 60 + startMinutes;
       const closeTime = closeHours * 60 + closeMinutes;
       
-      const blocked = totalMinutes >= closeTime;
+      // Block if outside time window (before start or after close)
+      const blocked = totalMinutes < startTime || totalMinutes >= closeTime;
       setIsCryptoTradingBlocked(blocked);
-      setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (Close: ${closeTimeStr})`);
+      setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (Window: ${startTimeStr} - ${closeTimeStr})`);
+      
+      console.log('[CryptoTiming] Blocked:', blocked, 'Window:', `${startTimeStr} - ${closeTimeStr}`);
     };
     
     checkTime();
@@ -4426,8 +4532,16 @@ const TradingPanel = ({
   const handlePlaceOrder = async (explicitSide) => {
     // Check crypto time window
     if (isCryptoTradingBlocked) {
-      const closeTimeStr = segmentPermissionsGate?.CRYPTOFUT?.cryptoClosingTime || segmentPermissionsGate?.CRYPTOOPT?.cryptoClosingTime || '19:30';
-      setError(`Crypto trading closed at ${closeTimeStr} IST`);
+      const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || segmentPermissionsGate?.CRYPTOOPT || {};
+      const startTimeStr = cryptoSettings.cryptoStartTime || '';
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+      if (closeTimeStr) {
+        setError(`Crypto trading closed at ${closeTimeStr} IST. End time is ${closeTimeStr} so you cannot open trade.`);
+      } else if (startTimeStr) {
+        setError(`Crypto trading opens at ${startTimeStr} IST. You cannot open trade before start time.`);
+      } else {
+        setError('Crypto trading window not set');
+      }
       return;
     }
     
@@ -4815,8 +4929,9 @@ const TradingPanel = ({
             setOrderType('buy');
             setTradeConfirmOpen(true);
           }}
+          disabled={isCryptoOnly && !isCryptoTradingOpen}
           className={`flex-1 py-2 font-semibold transition ${
-            orderType === 'buy' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400'
+            orderType === 'buy' ? 'bg-green-600 text-white' : (isCryptoOnly && !isCryptoTradingOpen) ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-dark-700 text-gray-400'
           }`}
         >
           <div className="text-xs opacity-70">{isUsdSpot ? 'Ask' : 'Ask'}</div>
@@ -5216,7 +5331,7 @@ const TradingPanel = ({
 };
 
 // Mobile Components - Uses watchlist like desktop
-const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, socketConnectEpoch = 0, usdRate = 83.5 }) => {
+const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, socketConnectEpoch = 0, usdRate = 83.5, isCryptoTradingOpen = true }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -5927,7 +6042,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                         + Add
                       </button>
                       <button onClick={() => onBuySell('sell', crypto)} className="w-6 h-6 rounded-full bg-red-500 text-white text-xs font-bold">S</button>
-                      <button onClick={() => onBuySell('buy', crypto)} className="w-6 h-6 rounded-full bg-green-500 text-white text-xs font-bold">B</button>
+                      <button onClick={() => onBuySell('buy', crypto)} disabled={cryptoOnly && !isCryptoTradingOpen} className={`w-6 h-6 rounded-full text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500'}`}>B</button>
                     </div>
                   </div>
                 );
@@ -5983,7 +6098,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                           </button>
                         )}
                         <button type="button" onClick={() => onBuySell('sell', inst)} className="w-6 h-6 rounded-full bg-red-500 text-white text-[10px] font-bold">S</button>
-                        <button type="button" onClick={() => onBuySell('buy', inst)} className="w-6 h-6 rounded-full bg-green-500 text-white text-[10px] font-bold">B</button>
+                        <button type="button" onClick={() => onBuySell('buy', inst)} disabled={cryptoOnly && !isCryptoTradingOpen} className={`w-6 h-6 rounded-full text-white text-[10px] font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500'}`}>B</button>
                       </div>
                     </div>
                   );
@@ -6076,7 +6191,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                     </div>
                     <div className="flex gap-1">
                       <button onClick={(e) => { e.stopPropagation(); onBuySell('sell', inst); }} className="w-6 h-6 rounded-full bg-red-500 text-white text-xs font-bold">S</button>
-                      <button onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }} className="w-6 h-6 rounded-full bg-green-500 text-white text-xs font-bold">B</button>
+                      <button onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }} disabled={cryptoOnly && !isCryptoTradingOpen} className={`w-6 h-6 rounded-full text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500'}`}>B</button>
                       <button onClick={(e) => { e.stopPropagation(); removeFromWatchlist(inst); }} className="w-6 h-6 rounded-full bg-dark-600 text-gray-400 hover:bg-red-600 hover:text-white">
                         <X size={12} className="mx-auto" />
                       </button>
@@ -6092,7 +6207,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
   );
 };
 
-const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, onSelect, onBuy, onSell }) => {
+const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, onSelect, onBuy, onSell, isCryptoTradingOpen = true }) => {
   const ltp = instrument.ltp || 0;
   const change = instrument.change || 0;
   const changePercent = instrument.changePercent || 0;
@@ -6143,7 +6258,8 @@ const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, on
         </button>
         <button 
           onClick={onBuy}
-          className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 rounded font-medium"
+          disabled={isCryptoInstrument && !isCryptoTradingOpen}
+          className={`px-3 py-1.5 text-xs rounded font-medium ${isCryptoInstrument && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
         >
           B
         </button>
@@ -6152,7 +6268,7 @@ const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, on
   );
 };
 
-const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = {}, usdRate = 83.5, onChartLtp }) => {
+const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = {}, usdRate = 83.5, onChartLtp, isCryptoTradingOpen = true }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
@@ -6351,7 +6467,7 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
       {/* Buy/Sell Buttons - Indian Standard: SELL left, BUY right */}
       {selectedInstrument && (
         <div className="flex gap-3 p-4 border-t border-dark-600">
-          <button 
+          <button
             onClick={() => onBuySell('sell', selectedInstrument)}
             className="flex-1 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-semibold"
           >
@@ -6359,7 +6475,8 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
           </button>
           <button
             onClick={() => onBuySell('buy', selectedInstrument)}
-            className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold"
+            disabled={selectedInstrument?.isCrypto && !isCryptoTradingOpen}
+            className={`flex-1 py-3 rounded-lg font-semibold ${selectedInstrument?.isCrypto && !isCryptoTradingOpen ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
           >
             BUY
           </button>
@@ -8401,7 +8518,7 @@ const BuySellModal = ({
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.exchange === 'BINANCE');
   const isUsdSpot = isUsdSpotInstrument(instrument);
 
-  // Simple time check - disable crypto trading after closing time from backend
+  // Crypto timing check - uses dynamic admin settings from localSegmentPermissions
   const [isCryptoTradingBlocked, setIsCryptoTradingBlocked] = useState(false);
   const [currentTimeStr, setCurrentTimeStr] = useState('');
   const [localSegmentPermissions, setLocalSegmentPermissions] = useState(segmentPermissionsGate);
@@ -8433,15 +8550,33 @@ const BuySellModal = ({
       const minutes = nowIST.getMinutes();
       const totalMinutes = hours * 60 + minutes;
 
-      // Get closing time from backend segment permissions (use local copy)
+      // Get start and closing time from backend segment permissions (dynamic, no fallback)
       const cryptoSettings = localSegmentPermissions?.CRYPTOFUT || localSegmentPermissions?.CRYPTOOPT || {};
-      const closeTimeStr = cryptoSettings.cryptoClosingTime || '19:30';
+      const startTimeStr = cryptoSettings.cryptoStartTime || '';
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+      
+      console.log('[CryptoTiming Modal] Current time:', `${hours}:${minutes.toString().padStart(2, '0')}`, 'IST');
+      console.log('[CryptoTiming Modal] cryptoStartTime:', startTimeStr);
+      console.log('[CryptoTiming Modal] cryptoClosingTime:', closeTimeStr);
+
+      // If no timing set, allow trading (don't block)
+      if (!startTimeStr && !closeTimeStr) {
+        setIsCryptoTradingBlocked(false);
+        setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (No timing set)`);
+        return;
+      }
+
+      const [startHours, startMinutes] = startTimeStr.split(':').map(Number);
       const [closeHours, closeMinutes] = closeTimeStr.split(':').map(Number);
+      const startTime = startHours * 60 + startMinutes;
       const closeTime = closeHours * 60 + closeMinutes;
 
-      const blocked = totalMinutes >= closeTime;
+      // Block if outside time window (before start or after close)
+      const blocked = totalMinutes < startTime || totalMinutes >= closeTime;
       setIsCryptoTradingBlocked(blocked);
-      setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (Close: ${closeTimeStr})`);
+      setCurrentTimeStr(`${hours}:${minutes.toString().padStart(2, '0')} IST (Window: ${startTimeStr} - ${closeTimeStr})`);
+      
+      console.log('[CryptoTiming Modal] Blocked:', blocked, 'Window:', `${startTimeStr} - ${closeTimeStr}`);
     };
 
     checkTime();
@@ -8664,8 +8799,16 @@ const BuySellModal = ({
 
     // Check crypto time window
     if (isCryptoTradingBlocked) {
-      const closeTimeStr = localSegmentPermissions?.CRYPTOFUT?.cryptoClosingTime || localSegmentPermissions?.CRYPTOOPT?.cryptoClosingTime || '19:30';
-      setError(`Crypto trading closed at ${closeTimeStr} IST`);
+      const cryptoSettings = localSegmentPermissions?.CRYPTOFUT || localSegmentPermissions?.CRYPTOOPT || {};
+      const startTimeStr = cryptoSettings.cryptoStartTime || '';
+      const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
+      if (closeTimeStr) {
+        setError(`Crypto trading closed at ${closeTimeStr} IST. End time is ${closeTimeStr} so you cannot open trade.`);
+      } else if (startTimeStr) {
+        setError(`Crypto trading opens at ${startTimeStr} IST. You cannot open trade before start time.`);
+      } else {
+        setError('Crypto trading window not set');
+      }
       return;
     }
 
@@ -8822,10 +8965,11 @@ const BuySellModal = ({
             </button>
             <button
               onClick={() => setOrderType('buy')}
+              disabled={isCryptoOnly && !isCryptoTradingOpen}
               className={`flex-1 py-3 rounded-lg font-bold transition ${
                 orderType === 'buy' 
                   ? 'bg-blue-600 text-white' 
-                  : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#252525]'
+                  : (isCryptoOnly && !isCryptoTradingOpen) ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#252525]'
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide opacity-70">
@@ -8851,10 +8995,11 @@ const BuySellModal = ({
             </button>
             <button
               onClick={() => setOrderType('buy')}
+              disabled={isCryptoOnly && !isCryptoTradingOpen}
               className={`flex-1 py-2 rounded border text-sm font-medium transition ${
                 orderType === 'buy'
                   ? 'border-blue-500 text-blue-400 bg-blue-500/10'
-                  : 'border-gray-700 text-gray-400 hover:border-gray-500'
+                  : (isCryptoOnly && !isCryptoTradingOpen) ? 'border-gray-700 text-gray-500 cursor-not-allowed' : 'border-gray-700 text-gray-400 hover:border-gray-500'
               }`}
             >
               Buy Side
@@ -9085,10 +9230,11 @@ const BuySellModal = ({
           </button>
           <button
             onClick={() => setOrderType('buy')}
+            disabled={isCryptoOnly && !isCryptoTradingOpen}
             className={`flex-1 py-2 rounded-lg font-bold transition ${
               orderType === 'buy' 
                 ? 'bg-green-600 text-white' 
-                : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                : (isCryptoOnly && !isCryptoTradingOpen) ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
             }`}
           >
             <div className="text-xs opacity-70">Ask Price</div>
@@ -9356,7 +9502,6 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
               onChange={e => setSourceWallet(e.target.value)}
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
             >
-              <option value="wallet">Trading Wallet</option>
               <option value="cryptoWallet">Crypto Wallet</option>
               <option value="forexWallet">Forex Wallet</option>
               <option value="mcxWallet">MCX Wallet</option>
@@ -9375,7 +9520,6 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
               onChange={e => setTargetWallet(e.target.value)}
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
             >
-              <option value="wallet">Trading Wallet</option>
               <option value="cryptoWallet">Crypto Wallet</option>
               <option value="forexWallet">Forex Wallet</option>
               <option value="mcxWallet">MCX Wallet</option>

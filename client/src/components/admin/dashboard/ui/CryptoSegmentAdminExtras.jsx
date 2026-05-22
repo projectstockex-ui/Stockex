@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { normalizeCryptoIstClock24, formatStoredCryptoIstClock } from '../utils/cryptoUtils';
 
 /** Crypto (CRYPTOFUT / CRYPTOOPT): IST session gates only — no lot↔qty mapping UI. */
-function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
+function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey }) {
   const [startDraft, setStartDraft] = useState(() => formatStoredCryptoIstClock(slice?.cryptoStartTime));
   const [closeDraft, setCloseDraft] = useState(() => formatStoredCryptoIstClock(slice?.cryptoClosingTime));
 
@@ -35,6 +35,17 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
     const prev = slice?.cryptoClosingTime != null ? String(slice.cryptoClosingTime).trim() : '';
     if ((n || '') !== prev) onFieldChange('cryptoClosingTime', n);
   };
+
+  // Only show time settings for CRYPTOFUT, not CRYPTOOPT
+  if (segmentKey === 'CRYPTOOPT') {
+    return (
+      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+        <p className="text-xs text-gray-400">
+          Crypto timing is managed in CRYPTOFUT settings only.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3 space-y-3">

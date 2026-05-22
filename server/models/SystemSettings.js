@@ -555,6 +555,7 @@ const systemSettingsSchema = new mongoose.Schema({
 });
 
 // Static method to get or create the singleton settings document
+// Returns a full Mongoose document so callers can use .save() / .markModified()
 systemSettingsSchema.statics.getSettings = async function() {
   let settings = await this.findOne({ settingsType: 'global' });
   if (!settings) {

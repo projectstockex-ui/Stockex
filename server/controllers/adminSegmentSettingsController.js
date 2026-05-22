@@ -270,6 +270,10 @@ class AdminSegmentSettingsController {
         console.log('[AdminSegmentSettings] Before mapping - plain data:', JSON.stringify(plain, null, 2));
         for (const [segName, segData] of Object.entries(plain)) {
           if (!segData || typeof segData !== 'object') continue;
+          console.log(`[AdminSegmentSettings] Processing ${segName}:`, {
+            cryptoStartTime: segData.cryptoStartTime,
+            cryptoClosingTime: segData.cryptoClosingTime
+          });
           if (segData.commissionType === 'PER_CRORE') {
             console.log('[AdminSegmentSettings] Mapping for', segName, '- commissionLot:', segData.commissionLot, 'commission:', segData.commission);
             if (segData.commissionLot !== undefined && (segData.commission === undefined || segData.commission === 0)) {
@@ -333,6 +337,35 @@ class AdminSegmentSettingsController {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].commissionUnit = segData.commissionUnit;
           }
+          // Preserve crypto fields
+          if (segData.cryptoStartTime !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].cryptoStartTime = segData.cryptoStartTime;
+          }
+          if (segData.cryptoClosingTime !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].cryptoClosingTime = segData.cryptoClosingTime;
+          }
+          if (segData.cryptoSpreadInr !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].cryptoSpreadInr = segData.cryptoSpreadInr;
+          }
+          if (segData.cryptoSpreadUsdPerSide !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].cryptoSpreadUsdPerSide = segData.cryptoSpreadUsdPerSide;
+          }
+          if (segData.cryptoReferenceSymbol !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].cryptoReferenceSymbol = segData.cryptoReferenceSymbol;
+          }
+          if (segData.cryptoLotSizeLots !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].cryptoLotSizeLots = segData.cryptoLotSizeLots;
+          }
+          if (segData.cryptoLotSizeQuantity !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].cryptoLotSizeQuantity = segData.cryptoLotSizeQuantity;
+          }
         }
 
         updateFields.segmentPermissions = aligned;
@@ -387,6 +420,59 @@ class AdminSegmentSettingsController {
       console.log('[AdminSegmentSettings] Total enabled segments:', enabledSegments);
 
       await Admin.updateOne({ _id: childAdmin._id }, { $set: updateFields });
+
+      // If Super Admin is updating CRYPTOFUT timing, propagate to SystemSettings CRYPTOFUT
+      // and Super Admin's own segmentPermissions. CRYPTOFUT is the single source of truth for timing.
+      if (currentAdmin.role === 'SUPER_ADMIN' && updateFields.segmentPermissions) {
+        const cryptoFutData = updateFields.segmentPermissions.CRYPTOFUT;
+        if (cryptoFutData && (cryptoFutData.cryptoStartTime !== undefined || cryptoFutData.cryptoClosingTime !== undefined)) {
+          console.log(`[AdminSegmentSettings] Super Admin updating CRYPTOFUT timing: start=${cryptoFutData.cryptoStartTime}, close=${cryptoFutData.cryptoClosingTime}`);
+          
+          const SystemSettings = (await import('../models/SystemSettings.js')).default;
+          const settings = await SystemSettings.findOne({ settingsType: 'global' });
+          
+          if (settings && settings.adminSegmentDefaults) {
+            // Update SystemSettings CRYPTOFUT timing
+            const updateCryptoTiming = (segMap, segName) => {
+              if (segMap instanceof Map) {
+                const seg = segMap.get(segName);
+                if (seg) {
+                  if (cryptoFutData.cryptoStartTime !== undefined) seg.cryptoStartTime = cryptoFutData.cryptoStartTime;
+                  if (cryptoFutData.cryptoClosingTime !== undefined) seg.cryptoClosingTime = cryptoFutData.cryptoClosingTime;
+                  segMap.set(segName, seg);
+                }
+              } else if (segMap && typeof segMap === 'object' && segMap[segName]) {
+                if (cryptoFutData.cryptoStartTime !== undefined) segMap[segName].cryptoStartTime = cryptoFutData.cryptoStartTime;
+                if (cryptoFutData.cryptoClosingTime !== undefined) segMap[segName].cryptoClosingTime = cryptoFutData.cryptoClosingTime;
+              }
+            };
+
+            updateCryptoTiming(settings.adminSegmentDefaults, 'CRYPTOFUT');
+            settings.markModified('adminSegmentDefaults');
+            await settings.save();
+            console.log('[AdminSegmentSettings] Updated SystemSettings CRYPTOFUT timing');
+          }
+
+          // Update Super Admin's own CRYPTOFUT segmentPermissions
+          const updateSuperAdmin = (segMap) => {
+            if (segMap instanceof Map) {
+              const seg = segMap.get('CRYPTOFUT');
+              if (seg) {
+                if (cryptoFutData.cryptoStartTime !== undefined) seg.cryptoStartTime = cryptoFutData.cryptoStartTime;
+                if (cryptoFutData.cryptoClosingTime !== undefined) seg.cryptoClosingTime = cryptoFutData.cryptoClosingTime;
+                segMap.set('CRYPTOFUT', seg);
+              }
+            } else if (segMap && typeof segMap === 'object' && segMap.CRYPTOFUT) {
+              if (cryptoFutData.cryptoStartTime !== undefined) segMap.CRYPTOFUT.cryptoStartTime = cryptoFutData.cryptoStartTime;
+              if (cryptoFutData.cryptoClosingTime !== undefined) segMap.CRYPTOFUT.cryptoClosingTime = cryptoFutData.cryptoClosingTime;
+            }
+          };
+          updateSuperAdmin(currentAdmin.segmentPermissions);
+          currentAdmin.markModified('segmentPermissions');
+          await currentAdmin.save();
+          console.log('[AdminSegmentSettings] Updated Super Admin CRYPTOFUT timing');
+        }
+      }
 
       const updatedAdmin = await Admin.findById(childAdmin._id).select('-password');
 

@@ -272,11 +272,11 @@ class StopOutService {
         ownerId: user._id,
         adminCode: user.adminCode,
         type: netPnL >= 0 ? 'CREDIT' : 'DEBIT',
-        reason: 'STOP_OUT_CLOSE',
+        reason: 'TRADE_PNL',
         amount: Math.abs(netPnL),
         balanceAfter: (user[walletField]?.tradingBalance || user[walletField]?.balance || 0) + netPnL,
         reference: { type: 'Trade', id: position._id },
-        description: `Stop-out: ${position.symbol} ${position.side} closed`
+        description: `Auto-square: ${position.symbol} ${position.side} closed`
       });
       
       return {

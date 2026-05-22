@@ -272,6 +272,7 @@ const MySegmentSettings = () => {
                     {['CRYPTOFUT', 'CRYPTOOPT'].includes(segment) && (
                       <div className="col-span-2 md:col-span-4">
                         <CryptoSegmentAdminExtras
+                          segmentKey={segment}
                           slice={segmentPermissions[segment]}
                           onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
                         />

@@ -128,6 +128,7 @@ const UserOrders = () => {
           const isMCXItem = exchange === 'MCX' || segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT';
           const isCryptoItem = exchange === 'BINANCE' || item.isCrypto;
           const isForexItem = segment === 'FOREX' || exchange === 'FOREX' || item.isForex;
+          const isNSEItem = exchange === 'NSE' || exchange === 'NFO' || segment.startsWith('NSE') || segment.startsWith('BSE');
           
           if (mcxOnly) {
             return isMCXItem;
@@ -136,8 +137,8 @@ const UserOrders = () => {
           } else if (forexOnly) {
             return isForexItem;
           } else {
-            // Indian mode: exclude MCX, Crypto, Forex
-            return !isMCXItem && !isCryptoItem && !isForexItem;
+            // Indian mode: include NSE, BSE, exclude MCX, Crypto, Forex
+            return (isNSEItem || !isMCXItem && !isCryptoItem && !isForexItem);
           }
         });
       };
@@ -150,7 +151,7 @@ const UserOrders = () => {
       setPositions(filteredPositions);
       setClosedTrades(filteredHistory.filter(t => t.status === 'CLOSED'));
       setCancelledOrders(filteredHistory.filter(t => t.status === 'CANCELLED'));
-      setAutoSquareOrders(filteredHistory.filter(t => t.closeReason === 'AUTO_SQUARE'));
+      setAutoSquareOrders(filteredPositions.filter(t => t.isAutoSquared && t.status === 'OPEN'));
       setPendingOrders(filteredPending);
 
       // Calculate stats from filtered data
@@ -561,12 +562,13 @@ const UserOrders = () => {
                           {activeTab === 'closed' && <td className="py-2 text-right">₹{(item.exitPrice || 0).toLocaleString()}</td>}
                           <td className="py-2">
                             <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
+                              item.isAutoSquared && item.status === 'OPEN' ? 'bg-purple-500/20 text-purple-500' :
                               item.status === 'OPEN' ? 'bg-blue-500/20 text-blue-500' :
                               item.status === 'CLOSED' ? 'bg-green-500/20 text-green-500' :
                               item.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-500' :
                               'bg-red-500/20 text-red-500'
                             }`}>
-                              {item.status}
+                              {item.isAutoSquared && item.status === 'OPEN' ? 'OPEN FOR NEXT DAY' : item.status}
                             </span>
                           </td>
                           <td className="py-2 text-gray-400">{formatDate(item.createdAt || item.openedAt)}</td>

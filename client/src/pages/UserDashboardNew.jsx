@@ -165,14 +165,26 @@ const UserWalletPage = () => {
 
       {/* Balance Card */}
       <div className={`bg-gradient-to-r ${user?.isDemo ? 'from-yellow-600 to-orange-600' : 'from-green-600 to-emerald-600'} rounded-xl p-6 mb-6`}>
-        <div className="text-white/70 text-sm mb-1">
-          {user?.isDemo ? 'Demo Balance (Virtual)' : 'Main Wallet Balance'}
-        </div>
-        <div className="text-4xl font-bold text-white mb-4">
-          ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="text-white/70 text-sm mb-1">
+              Main Wallet
+            </div>
+            <div className="text-2xl font-bold text-white">
+              ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-white/70 text-sm mb-1">
+              Trading Wallet
+            </div>
+            <div className="text-2xl font-bold text-white">
+              ₹{tradingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
         </div>
         {!user?.isDemo && (
-          <div className="flex gap-4">
+          <div className="flex gap-4 mt-4">
             <button 
               onClick={() => setShowDepositModal(true)}
               className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-medium transition"
@@ -188,7 +200,7 @@ const UserWalletPage = () => {
           </div>
         )}
         {user?.isDemo && (
-          <div className="text-white/70 text-sm">
+          <div className="text-white/70 text-sm mt-4">
             💡 Convert to real account to deposit and withdraw real funds
           </div>
         )}

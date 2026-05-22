@@ -285,6 +285,27 @@ router.post('/margin-preview', protect, async (req, res) => {
         if (Number.isFinite(n) && n > 1) { exposure = n; break; }
       }
 
+      console.log('[MarginPreview] Margin calculation debug:', {
+        tradeValue,
+        exposure,
+        leverage,
+        candidates,
+        quantityModeSettings: ss?.quantityModeSettings,
+        lotSettings: ss?.lotSettings,
+        segmentKey: effectiveSegment
+      });
+
+      // Force apply quantityModeSettings leverage if set and > 1
+      if (exposure === 1 && ss?.quantityModeSettings) {
+        const qtyLeverage = isIntraday 
+          ? ss.quantityModeSettings.intradayLeverage
+          : ss.quantityModeSettings.carryForwardLeverage;
+        if (qtyLeverage && Number(qtyLeverage) > 1) {
+          exposure = Number(qtyLeverage);
+          console.log('[MarginPreview] Forcing quantityModeSettings leverage:', exposure);
+        }
+      }
+
       if (exposure > 1) {
         marginRequired = tradeValue / exposure / leverage;
         marginSource = 'segment_exposure';
@@ -293,6 +314,7 @@ router.post('/margin-preview', protect, async (req, res) => {
           if (isIntraday) segmentSettingsForMargin.exposureIntraday = exposure;
           else segmentSettingsForMargin.exposureCarryForward = exposure;
         }
+        console.log('[MarginPreview] Margin after segment_exposure:', marginRequired);
       }
     }
     

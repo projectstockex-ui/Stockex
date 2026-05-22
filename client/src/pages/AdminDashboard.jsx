@@ -320,7 +320,7 @@ function isCryptoQtyOnlySegment(seg) {
 
 /** Crypto (CRYPTOFUT / CRYPTOOPT): IST session gates only — no lot↔qty mapping UI. */
 
-function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
+function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey }) {
 
   const [startDraft, setStartDraft] = useState(() => formatStoredCryptoIstClock(slice?.cryptoStartTime));
 
@@ -386,7 +386,16 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
 
   };
 
-
+  // Only show time settings for CRYPTOFUT, not CRYPTOOPT
+  if (segmentKey === 'CRYPTOOPT') {
+    return (
+      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+        <p className="text-xs text-gray-400">
+          Crypto timing is managed in CRYPTOFUT settings only.
+        </p>
+      </div>
+    );
+  }
 
   return (
 
@@ -10914,6 +10923,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                         {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && viewerRole === 'SUPER_ADMIN' && (
                           <CryptoSegmentAdminExtras
+                            segmentKey={expandedSeg}
                             slice={s}
                             onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
                           />
@@ -34705,6 +34715,8 @@ const SystemDefaultSettings = () => {
                     {['CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
 
                       <CryptoSegmentAdminExtras
+
+                        segmentKey={adminDefExpandedSeg}
 
                         slice={s}
 

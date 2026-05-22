@@ -152,7 +152,19 @@ class TradeService {
    */
   static async assertCryptoSegmentTradingWindowOpen(user, segmentSettings, segmentRaw) {
     const segU = String(segmentRaw || '').toUpperCase();
-    if (segU !== 'CRYPTOFUT' && segU !== 'CRYPTOOPT') return;
+    console.log(`[CryptoTimeCheck] ===== START ===== Called with segment: ${segU}, user: ${user?.username || user?._id}`);
+    console.log(`[CryptoTimeCheck] segmentRaw: ${segmentRaw}, segU: ${segU}`);
+    
+    if (segU !== 'CRYPTOFUT' && segU !== 'CRYPTOOPT') {
+      console.log(`[CryptoTimeCheck] Skipping - segment is ${segU}, not CRYPTOFUT/CRYPTOOPT`);
+      return;
+    }
+    
+    console.log(`[CryptoTimeCheck] Proceeding with timing check for ${segU}`);
+
+    // For both CRYPTOFUT and CRYPTOOPT, always use CRYPTOFUT timing
+    const segForTiming = 'CRYPTOFUT';
+    console.log(`[CryptoTimeCheck] Using CRYPTOFUT timing for ${segU}`);
 
     // Resolve crypto timing from hierarchy: Super Admin's settings take precedence
     // Walk up: segmentSettings → user's admin → hierarchy path → system defaults
@@ -164,8 +176,8 @@ class TradeService {
     console.log(`[CryptoTimeCheck] Super Admin for user ${user?.username || user?._id}: ${superAdmin?.username || superAdmin?._id}`);
     if (superAdmin) {
       const saSegPerms = superAdmin.segmentPermissions instanceof Map
-        ? superAdmin.segmentPermissions.get(segU)
-        : superAdmin.segmentPermissions?.[segU];
+        ? superAdmin.segmentPermissions.get(segForTiming)
+        : superAdmin.segmentPermissions?.[segForTiming];
       const saSlice = saSegPerms && typeof saSegPerms.toObject === 'function' ? saSegPerms.toObject() : saSegPerms;
       if (saSlice) {
         start = (saSlice.cryptoStartTime || '').toString().trim();
@@ -193,13 +205,13 @@ class TradeService {
 
     // Check start time gate
     if (start && !this._isNowAtOrAfterIstClock(start)) {
-      throw new Error(`${segU} trading opens at ${start} IST (crypto start time).`);
+      throw new Error(`Crypto trading opens at ${start} IST. You cannot open trade before start time.`);
     }
 
     // Check end time gate
     if (close && this._isNowAtOrAfterIstClock(close)) {
       console.log(`[CryptoTimeCheck] BLOCKING - Current time is at or after ${close} IST`);
-      throw new Error(`${segU} trading closed at ${close} IST (crypto session end).`);
+      throw new Error(`Crypto trading closed at ${close} IST. End time is ${close} so you cannot open trade.`);
     }
 
     console.log(`[CryptoTimeCheck] PASSED - Trading window is open`);
@@ -420,8 +432,14 @@ class TradeService {
 
   static _sliceFromHierarchy(user, segmentKey, segmentOriginal) {
     let parentSegmentPerms = user.parentSegmentPermissions || user.admin?.segmentPermissions;
+    console.log(`[_sliceFromHierarchy] segmentKey: ${segmentKey}, parentSegmentPerms:`, parentSegmentPerms ? 'exists' : 'null');
     if (parentSegmentPerms && typeof parentSegmentPerms.toObject === 'function') {
       parentSegmentPerms = parentSegmentPerms.toObject();
+    }
+    // Log the full parentSegmentPerms for CRYPTOFUT
+    if (segmentKey === 'CRYPTOFUT' && parentSegmentPerms) {
+      const cryptoFutPerms = parentSegmentPerms.CRYPTOFUT || parentSegmentPerms['CRYPTOFUT'] || parentSegmentPerms.cryptofut;
+      console.log(`[_sliceFromHierarchy] CRYPTOFUT parentSegmentPerms:`, JSON.stringify(cryptoFutPerms || 'not found'));
     }
     let slice = null;
     const rawSeg = segmentOriginal !== undefined ? String(segmentOriginal) : '';
@@ -452,6 +470,7 @@ class TradeService {
     // DEBUG: Log commission from hierarchy
     if (normalized) {
       console.log('[_sliceFromHierarchy] segmentKey:', segmentKey, 'commission:', normalized.commission, 'commissionType:', normalized.commissionType);
+      console.log('[_sliceFromHierarchy] cryptoStartTime:', normalized.cryptoStartTime, 'cryptoClosingTime:', normalized.cryptoClosingTime);
     }
     return normalized;
   }
@@ -553,9 +572,20 @@ static _SEGMENT_MERGE_FALLBACK = {
       const legacyFullOverlay = explicitKeysMaybe === undefined || explicitKeysMaybe === null;
       const keysToVisit = legacyFullOverlay ? Object.keys(o) : explicitKeysMaybe;
 
+      console.log(`[_mergeSegmentStack] applyOverlay called with keys:`, keysToVisit);
+      console.log(`[_mergeSegmentStack] overlay cryptoStartTime:`, o.cryptoStartTime, 'cryptoClosingTime:', o.cryptoClosingTime);
+
       for (const k of keysToVisit) {
         if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
         const vv = o[k];
+        if (k === 'cryptoStartTime' || k === 'cryptoClosingTime') {
+          console.log(`[_mergeSegmentStack] Processing ${k}:`, vv, 'type:', typeof vv);
+          // Don't overwrite with empty strings - keep existing value from hierarchy
+          if (vv === '' || vv === undefined || vv === null) {
+            console.log(`[_mergeSegmentStack] Skipping ${k} - value is empty, keeping existing:`, m[k]);
+            continue;
+          }
+        }
         if (k === 'exposureIntraday' || k === 'exposureCarryForward') {
           const num = Number(vv);
           if (Number.isFinite(num) && num > 0) {
@@ -593,6 +623,7 @@ static _SEGMENT_MERGE_FALLBACK = {
           m[k] = vv;
         }
       }
+      console.log(`[_mergeSegmentStack] After applyOverlay - m.cryptoStartTime:`, m.cryptoStartTime, 'm.cryptoClosingTime:', m.cryptoClosingTime);
     };
 
     applyOverlay(hierPlain, hierExplicitKeysMaybe);
@@ -655,8 +686,20 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
     }
 
-    // Final fallback: if still no commission for crypto segments, use sensible defaults
+    // For crypto segments: ALWAYS use CRYPTOFUT timing from SystemSettings
+    // This ensures Super Admin's timing setting is the single source of truth
     const isCrypto = ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(segmentKey || '').toUpperCase());
+    if (isCrypto) {
+      // Always read CRYPTOFUT timing from SystemSettings (not from hierarchy/user explicit keys)
+      const cryptoFutSystem = TradeService._normalizeSegmentSlice(adm['CRYPTOFUT']);
+      const sysStart = (cryptoFutSystem?.cryptoStartTime || '').toString().trim();
+      const sysClose = (cryptoFutSystem?.cryptoClosingTime || '').toString().trim();
+      if (sysStart) result.cryptoStartTime = sysStart;
+      if (sysClose) result.cryptoClosingTime = sysClose;
+      console.log(`[getUserSegmentSettings] Crypto timing override from SystemSettings CRYPTOFUT: start=${sysStart}, close=${sysClose}`);
+    }
+
+    // Final fallback: if still no commission for crypto segments, use sensible defaults
     if (isCrypto && (!result?.commission && !result?.commissionLot)) {
       console.log('[getUserSegmentSettings] Using final fallback defaults for crypto segment:', segmentKey);
       result = result || {};
@@ -1224,7 +1267,61 @@ static _SEGMENT_MERGE_FALLBACK = {
     }
 
     leverage = this.capLeverageFromInstrument(instrumentDoc, leverage, isIntradayProduct, isOptionBuy);
-    
+
+    // Priority 2: Use segment exposure/leverage if no fixed margin
+    // Dynamically resolve from all possible sources (admin sets these via UI)
+    const segmentSettingsForMargin = TradeService.applyInstrumentExposureOverrides(instrumentDoc, segmentSettings);
+    if (segmentSettingsForMargin) {
+      const isIntraday = tradeData.productType === 'MIS' || tradeData.productType === 'INTRADAY';
+      const candidates = isIntraday
+        ? [
+            segmentSettingsForMargin?.quantityModeSettings?.intradayLeverage,
+            segmentSettingsForMargin?.lotSettings?.intradayLeverage,
+            segmentSettingsForMargin?.exposureIntraday,
+            segmentSettingsForMargin?.intradayLeverage
+          ]
+        : [
+            segmentSettingsForMargin?.quantityModeSettings?.carryForwardLeverage,
+            segmentSettingsForMargin?.lotSettings?.carryForwardLeverage,
+            segmentSettingsForMargin?.exposureCarryForward,
+            segmentSettingsForMargin?.carryForwardLeverage
+          ];
+      let exposureNum = 1;
+      for (const v of candidates) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 1) { exposureNum = n; break; }
+      }
+
+      console.log('[OrderPlacement] Margin calculation debug:', {
+        isCryptoWallet: tradeData.isCrypto,
+        isForexWallet: tradeData.isForex,
+        tradeValue: tradeData.entryPrice * tradeData.quantity,
+        exposureNum,
+        leverage,
+        candidates,
+        quantityModeSettings: segmentSettingsForMargin?.quantityModeSettings,
+        lotSettings: segmentSettingsForMargin?.lotSettings,
+        segmentKey: tradeData.segment,
+        marginRequiredBefore: tradeData.entryPrice * tradeData.quantity / leverage
+      });
+
+      // Force apply quantityModeSettings leverage if set and > 1
+      if (exposureNum === 1 && segmentSettingsForMargin?.quantityModeSettings) {
+        const qtyLeverage = isIntraday 
+          ? segmentSettingsForMargin.quantityModeSettings.intradayLeverage
+          : segmentSettingsForMargin.quantityModeSettings.carryForwardLeverage;
+        if (qtyLeverage && Number(qtyLeverage) > 1) {
+          exposureNum = Number(qtyLeverage);
+          console.log('[OrderPlacement] Forcing quantityModeSettings leverage:', exposureNum);
+        }
+      }
+
+      if (exposureNum > 1) {
+        leverage = exposureNum;
+        console.log('[OrderPlacement] Leverage after segment_exposure:', leverage);
+      }
+    }
+
     // 7. Calculate lot size - fetch from database if not provided
     let lotSize = tradeData.lotSize;
     if (!lotSize || lotSize <= 0) {

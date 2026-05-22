@@ -191,6 +191,15 @@ const tradeSchema = new mongoose.Schema({
     enum: ['MANUAL', 'RMS', 'TIME_BASED', 'EXPIRY', 'ADMIN', 'NETTING', null],
     default: null
   },
+  // Track if trade was auto-squared (but not closed, moved to auto-square tab)
+  isAutoSquared: {
+    type: Boolean,
+    default: false
+  },
+  autoSquaredAt: {
+    type: Date,
+    default: null
+  },
   // Who/what closed the position (for TradePro engine)
   closedBy: {
     type: String,

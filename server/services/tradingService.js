@@ -541,6 +541,9 @@ class TradingService {
   // Place order - Uses user's segment and script settings for all calculations
   // TradePro Trading Engine - 16-step validation pipeline
   static async placeOrder(userId, orderData) {
+    console.log(`[placeOrder] ===== START ===== userId: ${userId}, segment: ${orderData.segment}, exchange: ${orderData.exchange}`);
+    console.log(`[placeOrder] orderData.isCrypto: ${orderData.isCrypto}, orderData.symbol: ${orderData.symbol}`);
+    
     // ==================== STEP 0: LIVE PRICE VALIDATION ====================
     // Ensure orders use live tick-to-tick prices, not historical data
     if (orderData.orderType === 'MARKET' && orderData.price) {
@@ -677,6 +680,7 @@ class TradingService {
       orderData.productType = 'MIS';
     }
 
+    console.log(`[CryptoTimeCheck] TradingService: About to call assertCryptoSegmentTradingWindowOpen for segment: ${orderData.segment}`);
     await TradeService.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, orderData.segment);
     console.log(`[CryptoTimeCheck] TradingService: After assertCryptoSegmentTradingWindowOpen for ${orderData.segment}`);
     
@@ -831,27 +835,27 @@ class TradingService {
       console.log('USD spot trade:', { quantity: totalQuantity, price: orderData.price, inrNotional });
     }
 
-    // Dynamic Quantity Limit Check - validate user has enough available quantity
+    // Dynamic Quantity Limit Check - DISABLED
     // Skip for MCX (uses quantity-based validation, not dynamic limits)
-    if (!isUsdSpot && !isMCX && segmentSettings) {
-      const isIntraday = orderData.productType === 'MIS' || orderData.productType === 'INTRADAY';
-      const maxQty = isIntraday 
-        ? segmentSettings.maxIntradayQty
-        : segmentSettings.maxCarryQty;
-      const availableQty = isIntraday 
-        ? (segmentSettings.availableIntradayQty ?? maxQty)
-        : (segmentSettings.availableCarryQty ?? maxQty);
-      
-      // Only validate if maxQty is set (no hardcoded fallbacks)
-      if (maxQty != null && maxQty > 0 && totalQuantity > availableQty) {
-        const qtyType = isIntraday ? 'Intraday' : 'Carry Forward';
-        throw new Error(`Insufficient ${qtyType} quantity limit. Available: ${availableQty}, Requested: ${totalQuantity}. Max allowed: ${maxQty}`);
-      }
-      
-      if (maxQty != null && maxQty > 0) {
-        console.log(`Dynamic Qty Check: ${orderData.segment} ${orderData.productType} - Requested: ${totalQuantity}, Available: ${availableQty}, Max: ${maxQty}`);
-      }
-    }
+    // if (!isUsdSpot && !isMCX && segmentSettings) {
+    //   const isIntraday = orderData.productType === 'MIS' || orderData.productType === 'INTRADAY';
+    //   const maxQty = isIntraday 
+    //     ? segmentSettings.maxIntradayQty
+    //     : segmentSettings.maxCarryQty;
+    //   const availableQty = isIntraday 
+    //     ? (segmentSettings.availableIntradayQty ?? maxQty)
+    //     : (segmentSettings.availableCarryQty ?? maxQty);
+    //   
+    //   // Only validate if maxQty is set (no hardcoded fallbacks)
+    //   if (maxQty != null && maxQty > 0 && totalQuantity > availableQty) {
+    //     const qtyType = isIntraday ? 'Intraday' : 'Carry Forward';
+    //     throw new Error(`Insufficient ${qtyType} quantity limit. Available: ${availableQty}, Requested: ${totalQuantity}. Max allowed: ${maxQty}`);
+    //   }
+    //   
+    //   if (maxQty != null && maxQty > 0) {
+    //     console.log(`Dynamic Qty Check: ${orderData.segment} ${orderData.productType} - Requested: ${totalQuantity}, Available: ${availableQty}, Max: ${maxQty}`);
+    //   }
+    // }
 
     const spreadPoints = TradeService.calculateUserSpread(scriptSettings, orderData.side);
     const segmentHalfUsd =
@@ -949,8 +953,22 @@ class TradingService {
         exposureNum,
         leverage,
         candidates,
+        quantityModeSettings: segmentSettingsForMargin?.quantityModeSettings,
+        lotSettings: segmentSettingsForMargin?.lotSettings,
+        segmentKey: orderData.segment,
         marginRequiredBefore: marginRequired
       });
+
+      // Force apply quantityModeSettings leverage if set and > 1
+      if (exposureNum === 1 && segmentSettingsForMargin?.quantityModeSettings) {
+        const qtyLeverage = isIntraday 
+          ? segmentSettingsForMargin.quantityModeSettings.intradayLeverage
+          : segmentSettingsForMargin.quantityModeSettings.carryForwardLeverage;
+        if (qtyLeverage && Number(qtyLeverage) > 1) {
+          exposureNum = Number(qtyLeverage);
+          console.log('[OrderPlacement] Forcing quantityModeSettings leverage:', exposureNum);
+        }
+      }
 
       if (exposureNum > 1) {
         marginRequired = tradeValue / exposureNum / leverage;
@@ -1633,6 +1651,11 @@ class TradingService {
         ? (user.forexWallet?.balance || 0)
         : (isMCXTrade ? (user.mcxWallet?.balance || 0) : (user.wallet?.tradingBalance || user.wallet?.cashBalance || 0));
     
+    // Check if this is an auto-square close
+    const isAutoSquare = trade.closeReason === 'AUTO_SQUARE' || trade.closeReason === 'TIME_BASED';
+    const autoSquareTime = isAutoSquare ? trade.closedAt : null;
+    const autoSquareTimeStr = autoSquareTime ? ` at ${autoSquareTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '';
+    
     await WalletLedger.create({
       ownerType: 'USER',
       ownerId: user._id,
@@ -1642,8 +1665,8 @@ class TradingService {
       amount: Math.abs(netPnL),
       balanceAfter: balanceAfter + netPnL,
       reference: { type: 'Trade', id: trade._id },
-      description: `${trade.symbol} ${trade.side} P&L${trade.isCrypto ? ' (Crypto)' : trade.isForex ? ' (Forex)' : (isMCXTrade ? ' (MCX)' : '')}`,
-      isAutoSquare: trade.closeReason === 'AUTO_SQUARE'
+      description: `${trade.symbol} ${trade.side} P&L${trade.isCrypto ? ' (Crypto)' : trade.isForex ? ' (Forex)' : (isMCXTrade ? ' (MCX)' : '')}${isAutoSquare ? ` (Auto-square${autoSquareTimeStr})` : ''}`,
+      isAutoSquare: isAutoSquare
     });
 
     // Release blocked margin and add/subtract P&L to appropriate wallet
@@ -1909,7 +1932,7 @@ class TradingService {
   // Get positions - optimized with lean() for faster response
   static async getPositions(userId, status = 'OPEN') {
     return Trade.find({ user: userId, status })
-      .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots entryPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target')
+      .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots entryPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target isAutoSquared autoSquaredAt closeReason')
       .sort({ openedAt: -1 })
       .lean();
   }
@@ -1925,7 +1948,7 @@ class TradingService {
   // Get trade history - optimized
   static async getTradeHistory(userId, limit = 50) {
     return Trade.find({ user: userId, status: 'CLOSED' })
-      .select('userId symbol exchange segment side productType quantity lots entryPrice exitPrice realizedPnL netPnL marginUsed commission closedAt createdAt openedAt closeReason isCrypto isForex status')
+      .select('userId symbol exchange segment side productType quantity lots entryPrice exitPrice realizedPnL netPnL marginUsed commission closedAt createdAt openedAt closeReason isCrypto isForex status isAutoSquared autoSquaredAt')
       .sort({ closedAt: -1 })
       .limit(limit)
       .lean();
