@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createChart } from 'lightweight-charts';
@@ -12,6 +12,7 @@ import {
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
 import { validateLimitPendingFromSegmentPerms } from '../lib/walletLimitOrderBand.js';
+import { fmtTransferInr, validateTransferAmount } from '../lib/walletTransferLimits.js';
 
 // Demo instruments with mock data for testing trading features
 const demoInstrumentsData = {
@@ -354,6 +355,74 @@ function isUsdSpotInstrument(inst) {
   if (it === 'FUTURES' || it === 'OPTIONS' || it === 'OPT') return false;
   if (ds === 'CRYPTOFUT' || ds === 'CRYPTOOPT') return false;
   return !!(inst.isCrypto || inst.exchange === 'BINANCE');
+}
+
+function isMcxTradeItem(item) {
+  const segment = item?.segment?.toUpperCase() || '';
+  const exchange = item?.exchange?.toUpperCase() || '';
+  return segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || exchange === 'MCX';
+}
+
+/** Mark price for open-position P&L (same unit as entryPrice). */
+function getPositionMarkPrice(position, marketData) {
+  const side = position?.side;
+  if (isUsdSpotInstrument(position)) {
+    const q = getCryptoMarketQuote(marketData, position);
+    if (!q) return 0;
+    return side === 'BUY'
+      ? Number(q.bid || q.ltp || q.close || 0)
+      : Number(q.ask || q.ltp || q.close || 0);
+  }
+
+  const token = position?.token;
+  const symbol = position?.symbol;
+  let data = null;
+  if (token && marketData?.[token]) {
+    data = marketData[token];
+  } else if (symbol && marketData?.[symbol]) {
+    data = marketData[symbol];
+  } else {
+    for (const [, mData] of Object.entries(marketData || {})) {
+      if (mData.symbol === symbol) {
+        data = mData;
+        break;
+      }
+    }
+  }
+  if (!data) return 0;
+  if (side === 'BUY') {
+    return Number(data.bid || data.ltp || data.last_price || 0);
+  }
+  return Number(data.ask || data.ltp || data.last_price || 0);
+}
+
+function computePositionUnrealizedPnL(position, markPrice) {
+  const ltp = Number(markPrice) || Number(position.currentPrice) || Number(position.entryPrice) || 0;
+  const entry = Number(position.entryPrice) || 0;
+  const qty = Number(position.quantity) || 0;
+  if (position.side === 'BUY') return (ltp - entry) * qty;
+  return (entry - ltp) * qty;
+}
+
+function computeLiveUnrealizedPnL(positions, marketData) {
+  if (!positions?.length) return 0;
+  return positions.reduce((sum, pos) => {
+    const mark =
+      getPositionMarkPrice(pos, marketData) ||
+      Number(pos.currentPrice) ||
+      Number(pos.entryPrice) ||
+      0;
+    return sum + computePositionUnrealizedPnL(pos, mark);
+  }, 0);
+}
+
+function filterOpenPositionsForSegment(positions, { isCrypto, isForex, isMcx }) {
+  return (positions || []).filter((item) => {
+    if (isCrypto) return item.isCrypto === true || item.exchange === 'BINANCE';
+    if (isForex) return isForexInstrument(item);
+    if (isMcx) return isMcxTradeItem(item);
+    return item.isCrypto !== true && !isMcxTradeItem(item) && !isForexInstrument(item);
+  });
 }
 
 /** Watchlist / favorites identity: pair for crypto & forex, else Zerodha token */
@@ -1486,6 +1555,7 @@ const UserDashboard = () => {
                 segmentPermissionsGate={segmentPermissionsGate}
                 isCryptoTradingOpen={isCryptoTradingOpen()}
                 totalPnL={totalPnL}
+                positionsRefreshKey={positionsRefreshKey}
               />
             </div>
           )}
@@ -4240,6 +4310,7 @@ const TradingPanel = ({
   segmentPermissionsGate = {},
   isCryptoTradingOpen = true,
   totalPnL = 0,
+  positionsRefreshKey = 0,
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
   const [cryptoQuantity, setCryptoQuantity] = useState('1'); // Default for crypto/forex
@@ -4467,6 +4538,51 @@ const TradingPanel = ({
     };
   };
   const activeWallet = getActiveWallet();
+
+  const [openPositions, setOpenPositions] = useState([]);
+
+  useEffect(() => {
+    if (!user?.token) return undefined;
+    let cancelled = false;
+    const loadOpenPositions = async () => {
+      try {
+        const { data } = await axios.get('/api/trading/positions?status=OPEN', {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
+        if (!cancelled) setOpenPositions(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setOpenPositions([]);
+      }
+    };
+    loadOpenPositions();
+    const interval = setInterval(loadOpenPositions, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user?.token, positionsRefreshKey]);
+
+  const segmentOpenPositions = useMemo(
+    () =>
+      filterOpenPositionsForSegment(openPositions, {
+        isCrypto: isCryptoOnly,
+        isForex,
+        isMcx: isMCX,
+      }),
+    [openPositions, isCryptoOnly, isForex, isMCX]
+  );
+
+  const liveUnrealizedPnL = useMemo(
+    () => computeLiveUnrealizedPnL(segmentOpenPositions, marketData),
+    [segmentOpenPositions, marketData]
+  );
+
+  const baseAvailableMargin = isUsdSpot
+    ? Number(isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0
+      - Number(isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0
+    : Math.max(0, Number(activeWallet.balance) - Number(activeWallet.usedMargin));
+
+  const liveAvailableMargin = baseAvailableMargin + liveUnrealizedPnL;
 
   // Check if segment allows quantity mode
   const segment = instrument?.displaySegment || instrument?.segment || '';
@@ -5184,8 +5300,8 @@ const TradingPanel = ({
             <>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Available Margin</span>
-                <span className={`font-medium ${((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0) + (totalPnL || 0) < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                  {Math.max(0, ((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0) + (totalPnL || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className={`font-medium ${liveAvailableMargin < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                  {liveAvailableMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
@@ -5199,7 +5315,7 @@ const TradingPanel = ({
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Required Margin</span>
-                <span className={Number(marginPreview?.marginRequired || 0) > Number((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - Number((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0) ? 'text-red-400' : 'text-green-400'}>
+                <span className={Number(marginPreview?.marginRequired || 0) > liveAvailableMargin ? 'text-red-400' : 'text-green-400'}>
                   {marginPreview?.marginRequired?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '--'}
                 </span>
               </div>
@@ -5208,9 +5324,9 @@ const TradingPanel = ({
             /* Indian/MCX Trading - Margin based system */
             <>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
-                <span className={`${isMCX ? 'text-yellow-400' : (activeWallet.balance - activeWallet.usedMargin) < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                  {Math.max(0, activeWallet.balance - activeWallet.usedMargin).toLocaleString()}
+                <span className="text-gray-400">{isMCX ? 'Available Margin' : 'Available Margin'}</span>
+                <span className={`font-medium ${liveAvailableMargin < 0 ? 'text-red-400' : isMCX ? 'text-yellow-400' : 'text-green-400'}`}>
+                  {liveAvailableMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
@@ -5221,7 +5337,7 @@ const TradingPanel = ({
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Required Margin</span>
-                <span className={Number(marginPreview?.marginRequired || 0) > Number(activeWallet.available || 0) ? 'text-red-400' : 'text-green-400'}>
+                <span className={Number(marginPreview?.marginRequired || 0) > liveAvailableMargin ? 'text-red-400' : 'text-green-400'}>
                   {marginPreview?.marginRequired?.toLocaleString() || '--'}
                 </span>
               </div>
@@ -9498,17 +9614,46 @@ const BuySellModal = ({
 
 // Wallet Transfer Modal - Transfer funds between user's own wallets
 const WalletTransferModal = ({ token, onClose, onSuccess }) => {
-  const [sourceWallet, setSourceWallet] = useState('wallet');
-  const [targetWallet, setTargetWallet] = useState('cryptoWallet');
+  const [sourceWallet, setSourceWallet] = useState('cryptoWallet');
+  const [targetWallet, setTargetWallet] = useState('forexWallet');
   const [amount, setAmount] = useState('');
   const [remarks, setRemarks] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [transferLimits, setTransferLimits] = useState(null);
+  const [limitsLoading, setLimitsLoading] = useState(true);
+
+  const fetchTransferLimits = useCallback(async () => {
+    if (!token) return;
+    setLimitsLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/wallet-transfer-limits', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTransferLimits(data?.limits || null);
+    } catch {
+      setTransferLimits(null);
+    } finally {
+      setLimitsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchTransferLimits();
+  }, [fetchTransferLimits]);
+
+  const sourceDetails = transferLimits?.[sourceWallet];
 
   const handleTransfer = async () => {
     if (!amount || Number(amount) <= 0) return setError('Enter valid amount');
     if (sourceWallet === targetWallet) return setError('Source and target wallets cannot be the same');
+
+    const clientCheck = validateTransferAmount(transferLimits, sourceWallet, amount);
+    if (!clientCheck.valid) {
+      setError(clientCheck.error);
+      return;
+    }
     
     setLoading(true);
     setError('');
@@ -9594,15 +9739,42 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
             </select>
           </div>
 
+          {sourceDetails && (
+            <div className="bg-dark-700/80 border border-dark-600 rounded-lg p-3 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Wallet balance</span>
+                <span className="text-white">{fmtTransferInr(sourceDetails.totalBalance)}</span>
+              </div>
+              {sourceDetails.usedMargin > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Used margin (locked)</span>
+                  <span className="text-yellow-400">{fmtTransferInr(sourceDetails.usedMargin)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-dark-600 pt-1">
+                <span className="text-gray-400">You can transfer up to</span>
+                <span className="text-green-400 font-medium">{fmtTransferInr(sourceDetails.transferable)}</span>
+              </div>
+            </div>
+          )}
+          {limitsLoading && (
+            <p className="text-xs text-gray-500">Loading transfer limits…</p>
+          )}
+
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Amount ()</label>
+            <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
             <input 
               type="number" 
-              placeholder="Enter amount" 
+              placeholder={
+                sourceDetails
+                  ? `Max ${sourceDetails.transferable.toLocaleString('en-IN')}`
+                  : 'Enter amount'
+              }
               value={amount} 
               onChange={e => setAmount(e.target.value)} 
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" 
-              min="0"
+              min="1"
+              max={sourceDetails?.transferable > 0 ? sourceDetails.transferable : undefined}
             />
           </div>
 
@@ -9619,8 +9791,8 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
 
           <button 
             onClick={handleTransfer} 
-            disabled={loading}
-            className="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded flex items-center justify-center gap-2"
+            disabled={loading || limitsLoading}
+            className="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading ? 'Transferring...' : <><ArrowRightLeft size={18} /> Transfer Funds</>}
           </button>

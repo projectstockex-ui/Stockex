@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGameLedgerPanel.jsx';
 import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
+import { fmtTransferInr, validateTransferAmount } from '../lib/walletTransferLimits.js';
 
 /** MCX-only wallet row (commodity), excluding crypto/forex. */
 function isMcxWalletTrade(row) {
@@ -2515,6 +2516,27 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [transferLimits, setTransferLimits] = useState(null);
+  const [limitsLoading, setLimitsLoading] = useState(true);
+
+  const fetchTransferLimits = useCallback(async () => {
+    if (!token) return;
+    setLimitsLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/wallet-transfer-limits', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTransferLimits(data?.limits || null);
+    } catch {
+      setTransferLimits(null);
+    } finally {
+      setLimitsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchTransferLimits();
+  }, [fetchTransferLimits]);
 
   useEffect(() => {
     if (sourceWallet) {
@@ -2528,6 +2550,8 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
     }
   }, [targetWallet]);
 
+  const sourceDetails = transferLimits?.[source];
+
   const handleTransfer = async (e) => {
     e.preventDefault();
     if (!target || !amount || Number(amount) <= 0) {
@@ -2536,6 +2560,12 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
     }
     if (source === target) {
       setError('Source and target wallets cannot be the same');
+      return;
+    }
+
+    const clientCheck = validateTransferAmount(transferLimits, source, amount);
+    if (!clientCheck.valid) {
+      setError(clientCheck.error);
       return;
     }
     
@@ -2627,15 +2657,42 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
             </select>
           </div>
 
+          {sourceDetails && (
+            <div className="bg-dark-700/80 border border-dark-600 rounded-lg p-3 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Wallet balance</span>
+                <span className="text-white">{fmtTransferInr(sourceDetails.totalBalance)}</span>
+              </div>
+              {sourceDetails.usedMargin > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Used margin (locked)</span>
+                  <span className="text-yellow-400">{fmtTransferInr(sourceDetails.usedMargin)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-dark-600 pt-1">
+                <span className="text-gray-400">You can transfer up to</span>
+                <span className="text-green-400 font-medium">{fmtTransferInr(sourceDetails.transferable)}</span>
+              </div>
+            </div>
+          )}
+          {limitsLoading && (
+            <p className="text-xs text-gray-500">Loading transfer limits…</p>
+          )}
+
           <div>
             <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
             <input
               type="number"
               value={amount}
               onChange={e => setAmount(e.target.value)}
-              placeholder="Enter amount"
+              placeholder={
+                sourceDetails
+                  ? `Max ${sourceDetails.transferable.toLocaleString('en-IN')}`
+                  : 'Enter amount'
+              }
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
               min="1"
+              max={sourceDetails?.transferable > 0 ? sourceDetails.transferable : undefined}
             />
           </div>
 

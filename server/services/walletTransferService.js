@@ -8,9 +8,12 @@ import {
   atomicMarginSegmentDebitForTransfer,
   getStampedSegmentBalance,
 } from '../utils/segmentWalletDebit.js';
+import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
 
 /** Source wallets that debit full stamped balance and clamp usedMargin on transfer out. */
 const MARGIN_SEGMENT_SOURCES = ['mcxWallet', 'cryptoWallet', 'forexWallet'];
+
+const roundTransferAmount = (n) => Math.round(Number(n) * 100) / 100;
 
 /**
  * Wallet Transfer Service
@@ -54,18 +57,97 @@ class WalletTransferService {
    * For crypto/mcx/forex wallets: max transfer = balance - usedMargin (cannot transfer locked margin)
    */
   static getTransferSourceBalance(user, walletType) {
+    return this.getTransferableBalanceDetails(user, walletType).transferable;
+  }
+
+  /**
+   * Balance breakdown for inter-wallet transfers (free = balance − usedMargin).
+   */
+  static getTransferableBalanceDetails(user, walletType) {
+    const displayName = this.getWalletDisplayName(walletType);
     switch (walletType) {
-      case 'gamesWallet':
-        return Number(user?.gamesWallet?.balance) || 0;
-      case 'mcxWallet':
-        return Math.max(0, (user.mcxWallet?.balance || 0) - (user.mcxWallet?.usedMargin || 0));
+      case 'wallet': {
+        const totalBalance = Number(user?.wallet?.cashBalance) || 0;
+        return {
+          walletType,
+          displayName,
+          totalBalance,
+          usedMargin: 0,
+          transferable: roundTransferAmount(totalBalance),
+        };
+      }
+      case 'tradingAccount': {
+        const totalBalance = Number(user?.wallet?.tradingBalance) || 0;
+        const usedMargin = Number(user?.wallet?.usedMargin) || 0;
+        return {
+          walletType,
+          displayName,
+          totalBalance,
+          usedMargin,
+          transferable: roundTransferAmount(Math.max(0, totalBalance - usedMargin)),
+        };
+      }
       case 'cryptoWallet':
-        return Math.max(0, (user.cryptoWallet?.balance || 0) - (user.cryptoWallet?.usedMargin || 0));
       case 'forexWallet':
-        return Math.max(0, (user.forexWallet?.balance || 0) - (user.forexWallet?.usedMargin || 0));
+      case 'mcxWallet': {
+        const totalBalance = Number(user?.[walletType]?.balance) || 0;
+        const usedMargin = Number(user?.[walletType]?.usedMargin) || 0;
+        return {
+          walletType,
+          displayName,
+          totalBalance,
+          usedMargin,
+          transferable: roundTransferAmount(Math.max(0, totalBalance - usedMargin)),
+        };
+      }
+      case 'gamesWallet': {
+        const totalBalance = Number(user?.gamesWallet?.balance) || 0;
+        const usedMargin = Number(user?.gamesWallet?.usedMargin) || 0;
+        return {
+          walletType,
+          displayName,
+          totalBalance,
+          usedMargin,
+          transferable: roundTransferAmount(Math.max(0, totalBalance - usedMargin)),
+        };
+      }
       default:
-        return this.getWalletBalance(user, walletType);
+        return { walletType, displayName, totalBalance: 0, usedMargin: 0, transferable: 0 };
     }
+  }
+
+  static getAllTransferableBalanceDetails(user) {
+    const walletTypes = [
+      'wallet',
+      'tradingAccount',
+      'cryptoWallet',
+      'forexWallet',
+      'mcxWallet',
+      'gamesWallet',
+    ];
+    return walletTypes.reduce((acc, key) => {
+      acc[key] = this.getTransferableBalanceDetails(user, key);
+      return acc;
+    }, {});
+  }
+
+  /** User-facing error when transfer exceeds free (non-locked) balance. */
+  static buildTransferInsufficientError(user, sourceWallet, amount) {
+    const { displayName, totalBalance, usedMargin, transferable } =
+      this.getTransferableBalanceDetails(user, sourceWallet);
+    const fmt = (n) =>
+      `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const amt = roundTransferAmount(amount);
+    const max = roundTransferAmount(transferable);
+    if (usedMargin > 0 && amt > max) {
+      return (
+        `You have already used margin (${fmt(usedMargin)}) in open trades. You can transfer up to ${fmt(max)} only (not more). ` +
+        `(${displayName} balance: ${fmt(totalBalance)} − Used margin: ${fmt(usedMargin)} = Transferable: ${fmt(transferable)})`
+      );
+    }
+
+    return `Insufficient balance in ${displayName}. Maximum you can transfer is ${fmt(transferable)}.`;
   }
 
   /**
@@ -120,15 +202,17 @@ class WalletTransferService {
       return { valid: false, error: 'Transfer amount must be greater than 0' };
     }
 
-    const sourceBalance = this.getTransferSourceBalance(user, sourceWallet);
-    if (sourceBalance < amount) {
+    const details = this.getTransferableBalanceDetails(user, sourceWallet);
+    const amt = roundTransferAmount(amount);
+    if (roundTransferAmount(details.transferable) < amt) {
       return {
         valid: false,
-        error: `Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Balance: ₹${sourceBalance.toLocaleString()}`,
+        error: this.buildTransferInsufficientError(user, sourceWallet, amt),
+        ...details,
       };
     }
 
-    return { valid: true };
+    return { valid: true, ...details };
   }
 
   /**
@@ -189,8 +273,28 @@ class WalletTransferService {
    * @param {String} performedBy - Admin ID who performed the transfer
    * @returns {Object} - Transfer result
    */
-  static async executeTransfer(userId, sourceWallet, targetWallet, amount, remarks = '', performedBy = null) {
+  /** Load user and sync usedMargin from open positions before transfer validation. */
+  static async loadUserWithFreshMargins(userId) {
     const user = await User.findById(userId);
+    if (!user) return null;
+
+    const recalculated = await recalculateUsedMargin(userId);
+    if (!user.wallet) user.wallet = {};
+    user.wallet.usedMargin = recalculated.wallet;
+    if (!user.cryptoWallet) user.cryptoWallet = {};
+    user.cryptoWallet.usedMargin = recalculated.cryptoWallet;
+    if (!user.forexWallet) user.forexWallet = {};
+    user.forexWallet.usedMargin = recalculated.forexWallet;
+    if (!user.mcxWallet) user.mcxWallet = {};
+    user.mcxWallet.usedMargin = recalculated.mcxWallet;
+    if (!user.gamesWallet) user.gamesWallet = {};
+    user.gamesWallet.usedMargin = recalculated.gamesWallet;
+
+    return user;
+  }
+
+  static async executeTransfer(userId, sourceWallet, targetWallet, amount, remarks = '', performedBy = null) {
+    const user = await this.loadUserWithFreshMargins(userId);
     if (!user) {
       throw new Error('User not found');
     }
@@ -222,9 +326,7 @@ class WalletTransferService {
 
       const currentSourceBalance = this.getTransferSourceBalance(freshUser, sourceWallet);
       if (currentSourceBalance < amount) {
-        throw new Error(
-          `Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Balance: ₹${currentSourceBalance.toLocaleString()}`
-        );
+        throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
       }
 
       let finalUser;
@@ -232,7 +334,7 @@ class WalletTransferService {
       if (MARGIN_SEGMENT_SOURCES.includes(sourceWallet)) {
         const debitUser = await atomicMarginSegmentDebitForTransfer(User, user._id, sourceWallet, amount);
         if (!debitUser) {
-          throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}`);
+          throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
         }
 
         const targetInc = {};
@@ -276,11 +378,11 @@ class WalletTransferService {
         if (sourceWallet === 'tradingAccount') {
           if (afterSource < usedMargin) {
             await rollbackMirror();
-            throw new Error('Insufficient free margin in Trading Account for this transfer');
+            throw new Error(this.buildTransferInsufficientError(finalUser, sourceWallet, amount));
           }
         } else if (afterSource < 0) {
           await rollbackMirror();
-          throw new Error('Insufficient balance after transfer');
+          throw new Error(this.buildTransferInsufficientError(finalUser, sourceWallet, amount));
         }
       }
 
@@ -425,9 +527,7 @@ class WalletTransferService {
         const currentSourceBalance = this.getTransferSourceBalance(freshUser, sourceWallet);
 
         if (currentSourceBalance < amount) {
-          throw new Error(
-            `Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Balance: ₹${currentSourceBalance.toLocaleString()}`
-          );
+          throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
         }
 
         let updatedUser;
@@ -435,7 +535,7 @@ class WalletTransferService {
         if (MARGIN_SEGMENT_SOURCES.includes(sourceWallet)) {
           const debited = await atomicMarginSegmentDebitForTransfer(User, user._id, sourceWallet, amount);
           if (!debited) {
-            throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}`);
+            throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
           }
           updatedUser = await User.findById(user._id);
         } else {
@@ -458,13 +558,13 @@ class WalletTransferService {
           if (sourceWallet === 'tradingAccount') {
             if (afterSource < um) {
               await User.findByIdAndUpdate(user._id, { $inc: { [sourceBalanceField]: amount } });
-              throw new Error('Insufficient free margin in Trading Account for this transfer');
+              throw new Error(this.buildTransferInsufficientError(updatedUser, sourceWallet, amount));
             }
           } else if (afterSource < 0) {
             const rollbackUpdates = {};
             rollbackUpdates[sourceBalanceField] = amount;
             await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
-            throw new Error('Insufficient balance after transfer');
+            throw new Error(this.buildTransferInsufficientError(updatedUser, sourceWallet, amount));
           }
         }
 

@@ -1004,9 +1004,14 @@ router.get('/wallet', protectUser, async (req, res) => {
       availableMargin,
       totalBalance: mainWalletBalance + tradingBalance,
       
-      // Separate Crypto Wallet - No margin system
+      // Separate Crypto Wallet
       cryptoWallet: {
         balance: user.cryptoWallet?.balance || 0,
+        usedMargin: recalculatedMargin.cryptoWallet,
+        transferableBalance: Math.max(
+          0,
+          (user.cryptoWallet?.balance || 0) - recalculatedMargin.cryptoWallet
+        ),
         realizedPnL: user.cryptoWallet?.realizedPnL || 0,
         unrealizedPnL: user.cryptoWallet?.unrealizedPnL || 0,
         todayRealizedPnL: user.cryptoWallet?.todayRealizedPnL || 0
@@ -1014,15 +1019,29 @@ router.get('/wallet', protectUser, async (req, res) => {
 
       forexWallet: {
         balance: user.forexWallet?.balance || 0,
+        usedMargin: recalculatedMargin.forexWallet,
+        transferableBalance: Math.max(
+          0,
+          (user.forexWallet?.balance || 0) - recalculatedMargin.forexWallet
+        ),
         realizedPnL: user.forexWallet?.realizedPnL || 0,
         unrealizedPnL: user.forexWallet?.unrealizedPnL || 0,
         todayRealizedPnL: user.forexWallet?.todayRealizedPnL || 0
       },
       
       // Separate MCX Wallet - For MCX Futures and Options trading
+      tradingAccountTransferable: Math.max(
+        0,
+        tradingBalance - usedMargin
+      ),
+
       mcxWallet: {
         balance: user.mcxWallet?.balance || 0,
         usedMargin: recalculatedMargin.mcxWallet,
+        transferableBalance: Math.max(
+          0,
+          (user.mcxWallet?.balance || 0) - recalculatedMargin.mcxWallet
+        ),
         realizedPnL: user.mcxWallet?.realizedPnL || 0,
         unrealizedPnL: user.mcxWallet?.unrealizedPnL || 0,
         todayRealizedPnL: user.mcxWallet?.todayRealizedPnL || 0,
@@ -1034,6 +1053,10 @@ router.get('/wallet', protectUser, async (req, res) => {
       gamesWallet: {
         balance: user.gamesWallet?.balance || 0,
         usedMargin: recalculatedMargin.gamesWallet,
+        transferableBalance: Math.max(
+          0,
+          (user.gamesWallet?.balance || 0) - recalculatedMargin.gamesWallet
+        ),
         realizedPnL: user.gamesWallet?.realizedPnL || 0,
         unrealizedPnL: user.gamesWallet?.unrealizedPnL || 0,
         todayRealizedPnL: user.gamesWallet?.todayRealizedPnL || 0,
@@ -1073,6 +1096,19 @@ router.get('/platform-charge-status', protectUser, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     const status = await buildUserPlatformChargeStatus(user);
     res.json(status);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Transferable balance per wallet (balance − used margin on open trades)
+router.get('/wallet-transfer-limits', protectUser, async (req, res) => {
+  try {
+    const user = await WalletTransferService.loadUserWithFreshMargins(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ limits: WalletTransferService.getAllTransferableBalanceDetails(user) });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
