@@ -495,33 +495,51 @@ const UserAccounts = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-dark-700">
-                      {tradingWalletLedger.map((row) => (
-                        <tr key={row._id} className="hover:bg-dark-800/60">
-                          <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{formatIstLedgerTime(row.createdAt)}</td>
-                          <td className="px-2 py-2 align-top">
-                            <div className={`text-gray-200 font-medium ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                              {row.reason}
-                            </div>
-                            {row.description && (
-                              <div className="text-[10px] text-gray-500 mt-1">{row.description}</div>
-                            )}
-                            {row.isAutoSquare && (
-                              <div className="text-[10px] px-1.5 py-0.5 rounded bg-orange-900/30 text-orange-400 mt-1 inline-block">
-                                Autosquare
+                      {tradingWalletLedger.map((row) => {
+                        // Transform reason for brokerage legs
+                        let displayReason = row.reason;
+                        if (row.reason === 'BROKERAGE_OPEN_LEG') {
+                          displayReason = 'BROKERAGE(OPEN)';
+                        } else if (row.reason === 'BROKERAGE_CLOSE_LEG') {
+                          displayReason = 'BROKERAGE(CLOSE)';
+                        } else if (row.reason === 'BROKERAGE' && row.meta?.leg) {
+                          // New entries with leg in meta
+                          if (row.meta.leg === 'OPEN') displayReason = 'BROKERAGE(OPEN)';
+                          else if (row.meta.leg === 'CLOSE') displayReason = 'BROKERAGE(CLOSE)';
+                          else displayReason = 'BROKERAGE(OPEN+CLOSE)';
+                        } else if (row.reason === 'BROKERAGE') {
+                          // Old entries without leg info - show as plain BROKERAGE
+                          displayReason = 'BROKERAGE';
+                        }
+
+                        return (
+                          <tr key={row._id} className="hover:bg-dark-800/60">
+                            <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{formatIstLedgerTime(row.createdAt)}</td>
+                            <td className="px-2 py-2 align-top">
+                              <div className={`text-gray-200 font-medium ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
+                                {displayReason}
                               </div>
-                            )}
-                          </td>
-                          <td className="px-2 py-2 text-right align-top tabular-nums">
-                            <span className={row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
-                              {row.type === 'CREDIT' ? '+' : '-'}₹
-                              {Number(row.amount || 0).toLocaleString('en-IN', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                              {row.description && (
+                                <div className="text-[10px] text-gray-500 mt-1">{row.description}</div>
+                              )}
+                              {row.isAutoSquare && (
+                                <div className="text-[10px] px-1.5 py-0.5 rounded bg-orange-900/30 text-orange-400 mt-1 inline-block">
+                                  Autosquare
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-2 py-2 text-right align-top tabular-nums">
+                              <span className={row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
+                                {row.type === 'CREDIT' ? '+' : '-'}₹
+                                {Number(row.amount || 0).toLocaleString('en-IN', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -879,7 +897,7 @@ const UserAccounts = () => {
                           <td className="p-2 align-top text-gray-300 leading-snug">
                             {row.kind === 'trade_pnl' ? (
                               <div>
-                                <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
+                                <span className="text-cyan-300">{row.description}</span>
                               </div>
                             ) : (
                               <>
@@ -1170,7 +1188,7 @@ const UserAccounts = () => {
                           <td className="p-2 align-top text-gray-300 leading-snug">
                             {row.kind === 'trade_pnl' ? (
                               <div>
-                                <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
+                                <span className="text-cyan-300">{row.description}</span>
                               </div>
                             ) : (
                               <>
@@ -1356,7 +1374,7 @@ const UserAccounts = () => {
                           <td className="p-2 align-top text-gray-300 leading-snug">
                             {row.kind === 'trade_pnl' ? (
                               <div>
-                                <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
+                                <span className="text-cyan-300">{row.description}</span>
                               </div>
                             ) : (
                               <>

@@ -274,6 +274,7 @@ router.get('/history', protectUser, async (req, res) => {
     const trades = await Trade.find({ userId: req.user._id })
       .sort({ createdAt: -1 })
       .limit(limit)
+      .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots entryPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target isAutoSquared autoSquaredAt autoSquareLtp originalQty brokerageAtAutoSquare pnlAtAutoSquare carryForwardQty netBalanceAtAutoSquare closeReason closedAt exitPrice netPnL realizedPnL adminCode')
       .lean();
     res.json(trades);
   } catch (error) {
@@ -433,6 +434,7 @@ router.get('/admin/all-trades', protectAdmin, async (req, res) => {
         .sort({ openedAt: -1 })
         .skip(skip)
         .limit(limit)
+        .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots entryPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target isAutoSquared autoSquaredAt autoSquareLtp originalQty brokerageAtAutoSquare pnlAtAutoSquare carryForwardQty netBalanceAtAutoSquare closeReason closedAt exitPrice netPnL realizedPnL adminCode')
         .lean(),
     ]);
     

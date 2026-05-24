@@ -642,6 +642,10 @@ const userSchema = new mongoose.Schema({
         minQuantity: { type: Number, default: 1 },
         breakupQuantity: { type: Number, default: 0 }
       },
+      // Toggle to enable/disable Lot Settings mode for this segment
+      enableLotSettings: { type: Boolean, default: false },
+      // Toggle to enable/disable Quantity Settings mode for this segment
+      enableQuantitySettings: { type: Boolean, default: false },
       quantitySettings: {
         breakupQuantity: { type: Number, default: 0 }
       },

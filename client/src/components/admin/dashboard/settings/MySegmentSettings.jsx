@@ -312,8 +312,8 @@ const MySegmentSettings = () => {
                       <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
                       <input
                         type="number"
-                        value={segmentPermissions[segment].commissionLot || 0}
-                        onChange={(e) => handleSegmentChange(segment, 'commissionLot', Number(e.target.value))}
+                        value={segmentPermissions[segment].commissionType === 'PER_LOT' ? (segmentPermissions[segment].commissionLot || 0) : (segmentPermissions[segment].commission || 0)}
+                        onChange={(e) => handleSegmentChange(segment, segmentPermissions[segment].commissionType === 'PER_LOT' ? 'commissionLot' : 'commission', Number(e.target.value))}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                       />
                     </div>

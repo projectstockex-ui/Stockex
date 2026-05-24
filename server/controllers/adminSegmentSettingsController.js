@@ -294,6 +294,15 @@ class AdminSegmentSettingsController {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].enabled = segData.enabled;
           }
+          // Preserve enableLotSettings and enableQuantitySettings
+          if (segData.enableLotSettings !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].enableLotSettings = segData.enableLotSettings;
+          }
+          if (segData.enableQuantitySettings !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].enableQuantitySettings = segData.enableQuantitySettings;
+          }
           if (segData.intradayLeverage !== undefined) {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].intradayLeverage = segData.intradayLeverage;

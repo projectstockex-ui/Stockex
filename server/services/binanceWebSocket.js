@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import TradingService from './tradingService.js';
+import { setLTPInRedis } from './ltpResolutionService.js';
 
 let io = null;
 let ws = null;
@@ -79,6 +80,9 @@ const connectWebSocket = () => {
         cryptoData[pair] = tickData;
         cryptoData[symbol] = tickData;
 
+        // Persist LTP to Redis so EOD auto-square can resolve it
+        setLTPInRedis(pair, tickData.ltp).catch(() => {});
+
         if (io) {
           io.emit('crypto_tick', { [pair]: tickData, [symbol]: tickData });
           // Removed market_tick emission - crypto ticks should only go to crypto_tick event
@@ -106,6 +110,15 @@ const connectWebSocket = () => {
             }
           })
           .catch((err) => console.error('processPendingOrdersForUsdSpotTick:', err?.message || err));
+
+        // Check and trigger stoploss
+        TradingService.checkAndTriggerStopLoss({
+          pair,
+          symbol,
+          bid: tickData.bid,
+          ask: tickData.ask,
+          ltp: tickData.ltp,
+        }).catch((err) => console.error('checkAndTriggerStopLoss:', err?.message || err));
       }
     } catch (error) {
       console.error('Error parsing Binance message:', error.message);

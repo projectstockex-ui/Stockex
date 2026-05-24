@@ -457,12 +457,14 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-400 mb-1">Commission Lot</label>
+                        <label className="block text-xs text-gray-400 mb-1">
+                          {segmentPermissions[segment]?.commissionType === 'PER_LOT' ? 'Commission (₹/Lot)' : 'Commission (₹)'}
+                        </label>
                         <input
                           type="number"
                           step="0.01"
-                          value={segmentPermissions[segment]?.commissionLot || 0}
-                          onChange={(e) => handleSegmentChange(segment, 'commissionLot', parseFloat(e.target.value) || 0)}
+                          value={segmentPermissions[segment].commissionType === 'PER_LOT' ? (segmentPermissions[segment]?.commissionLot || 0) : (segmentPermissions[segment]?.commission || 0)}
+                          onChange={(e) => handleSegmentChange(segment, segmentPermissions[segment].commissionType === 'PER_LOT' ? 'commissionLot' : 'commission', parseFloat(e.target.value) || 0)}
                           className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                         />
                       </div>

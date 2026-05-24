@@ -126,6 +126,8 @@ import {
 
   Timer,
 
+  Clock,
+
   Percent,
 
   AlertTriangle,
@@ -2758,6 +2760,12 @@ const AdminBrokerageRecipientPolicy = () => {
 
     setSavingId(row._id);
 
+    // Optimistic update - update UI immediately
+    const oldValue = row.receivesHierarchyBrokerage;
+    setRows((prev) =>
+      prev.map((a) => (a._id === row._id ? { ...a, receivesHierarchyBrokerage } : a))
+    );
+
     try {
 
       await axios.put(
@@ -2770,14 +2778,12 @@ const AdminBrokerageRecipientPolicy = () => {
 
       );
 
-      setRows((prev) =>
-
-        prev.map((a) => (a._id === row._id ? { ...a, receivesHierarchyBrokerage } : a))
-
-      );
-
     } catch (e) {
 
+      // Revert on error
+      setRows((prev) =>
+        prev.map((a) => (a._id === row._id ? { ...a, receivesHierarchyBrokerage: oldValue } : a))
+      );
       alert(e.response?.data?.message || 'Update failed');
 
     } finally {
@@ -2943,6 +2949,13 @@ const AdminManagement = () => {
   const [showFundModal, setShowFundModal] = useState(false);
 
   const [showWalletTransferModal, setShowWalletTransferModal] = useState(false);
+
+  const [showFranchiseModal, setShowFranchiseModal] = useState(false);
+
+  const [franchiseTargetAdmin, setFranchiseTargetAdmin] = useState(null);
+
+  const [platformChargesInput, setPlatformChargesInput] = useState('');
+
 
   const [showDetailModal, setShowDetailModal] = useState(false);
 
@@ -3235,38 +3248,57 @@ const AdminManagement = () => {
   // Toggle Franchise Root (Super Admin Only)
 
   const handleToggleFranchiseRoot = async (targetAdmin) => {
-
     const newValue = !targetAdmin.isFranchiseRoot;
-
-    const action = newValue ? 'enable' : 'disable';
-
-    if (!confirm(`Franchise Root: ${action} for "${targetAdmin.name || targetAdmin.username}"?\n\nWhen ENABLED:\n• This admin's subtree forms an isolated unit\n• Trading profit/loss settles within subtree only\n• Super Admin gets only platform charges from these users\n\nContinue?`)) return;
-
     
-
-    try {
-
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/franchise-root`, {
-
-        isFranchiseRoot: newValue,
-
-      }, {
-
-        headers: { Authorization: `Bearer ${admin.token}` }
-
-      });
-
-      alert(`Franchise root ${action}d successfully for ${targetAdmin.name || targetAdmin.username}`);
-
-      fetchAdmins();
-
-    } catch (error) {
-
-      alert(error.response?.data?.message || 'Error toggling franchise root');
-
+    if (newValue) {
+      // Opening franchise - show modal to set platform charges
+      setFranchiseTargetAdmin(targetAdmin);
+      setPlatformChargesInput(targetAdmin.platformChargesPercentage?.toString() || '');
+      setShowFranchiseModal(true);
+    } else {
+      // Disabling franchise - confirm directly
+      if (!confirm(`Disable Franchise Root for "${targetAdmin.name || targetAdmin.username}"?\n\nThis admin's hierarchy will no longer be isolated.\nTrading profit/loss will flow up to Super Admin again.\n\nContinue?`)) return;
+      
+      try {
+        await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/franchise-root`, {
+          isFranchiseRoot: false,
+        }, {
+          headers: { Authorization: `Bearer ${admin.token}` }
+        });
+        alert(`Franchise root disabled successfully for ${targetAdmin.name || targetAdmin.username}`);
+        fetchAdmins();
+      } catch (error) {
+        alert(error.response?.data?.message || 'Error disabling franchise root');
+      }
     }
-
   };
+
+  const handleConfirmFranchise = async () => {
+    if (!franchiseTargetAdmin) return;
+    
+    const platformChargesPct = parseFloat(platformChargesInput);
+    if (isNaN(platformChargesPct) || platformChargesPct < 0 || platformChargesPct > 100) {
+      alert('Please enter a valid percentage between 0 and 100');
+      return;
+    }
+    
+    try {
+      await axios.put(`/api/admin/manage/admins/${franchiseTargetAdmin._id}/franchise-root`, {
+        isFranchiseRoot: true,
+        platformChargesPercentage: platformChargesPct,
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`Franchise root enabled successfully for ${franchiseTargetAdmin.name || franchiseTargetAdmin.username}\nPlatform charges: ${platformChargesPct}%`);
+      setShowFranchiseModal(false);
+      setFranchiseTargetAdmin(null);
+      setPlatformChargesInput('');
+      fetchAdmins();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error enabling franchise root');
+    }
+  };
+
 
 
 
@@ -4436,6 +4468,7 @@ const AdminManagement = () => {
 
                   )}
 
+
                   {adm.status === 'ACTIVE' ? (
 
                     <button
@@ -4529,6 +4562,72 @@ const AdminManagement = () => {
         />
 
       )}
+
+
+
+      {showFranchiseModal && franchiseTargetAdmin && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg max-w-md w-full border border-dark-600">
+            <div className="p-6">
+              <h2 className="text-xl font-bold text-white mb-4">Enable Franchise Root</h2>
+              
+              <div className="mb-4 p-4 bg-dark-700 rounded-lg border border-dark-600">
+                <p className="text-sm text-gray-300 mb-2">
+                  <strong>Admin:</strong> {franchiseTargetAdmin.name || franchiseTargetAdmin.username}
+                </p>
+                <p className="text-sm text-gray-400 mb-3">
+                  When franchise root is enabled:
+                </p>
+                <ul className="text-xs text-gray-400 space-y-1 list-disc list-inside">
+                  <li>This admin's entire hierarchy becomes an isolated unit</li>
+                  <li>All trading profit/loss stays within this subtree only</li>
+                  <li>Super Admin receives platform charges % from brokerage</li>
+                  <li>Brokerage ledger will show BROKERAGE(INDEPENDENT) for easy identification</li>
+                </ul>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm text-gray-300 mb-2">
+                  Platform Charges % for SuperAdmin
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={platformChargesInput}
+                  onChange={(e) => setPlatformChargesInput(e.target.value)}
+                  placeholder="e.g., 5"
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-white"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Percentage of brokerage that goes to SuperAdmin (0-100)
+                </p>
+              </div>
+
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    setShowFranchiseModal(false);
+                    setFranchiseTargetAdmin(null);
+                    setPlatformChargesInput('');
+                  }}
+                  className="px-4 py-2 bg-dark-600 hover:bg-dark-700 text-white rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmFranchise}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded"
+                >
+                  Enable Franchise
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
 
 
 
@@ -6824,7 +6923,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
     } else if (partnerMode === 'EXTERNAL') {
 
-      const preset = targetAdmin.restrictMode?.monthlyBrokerageCharge;
+      const preset = targetAdmin.restrictMode?.brokerageChargePerCrore;
 
       setFormData((prev) => ({
 
@@ -6832,13 +6931,13 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
         amount: preset > 0 ? String(preset) : '',
 
-        description: `Monthly brokerage charge (${new Date().toLocaleDateString()})`,
+        description: `Brokerage charge per crore (${new Date().toLocaleDateString()})`,
 
       }));
 
     }
 
-  }, [partnerMode, targetAdmin._id, targetAdmin.restrictMode?.monthlyIncentiveAmount, targetAdmin.restrictMode?.monthlyBrokerageCharge, targetAdmin.restrictMode?.monthlyIncentiveScope]);
+  }, [partnerMode, targetAdmin._id, targetAdmin.restrictMode?.monthlyIncentiveAmount, targetAdmin.restrictMode?.brokerageChargePerCrore, targetAdmin.restrictMode?.monthlyIncentiveScope]);
 
 
 
@@ -7124,7 +7223,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                 <label className="block text-sm text-gray-400 mb-1">
 
-                  {partnerMode === 'EXTERNAL' ? 'Monthly Brokerage Charge () — from Limits' : 'Amount to Take ()'}
+                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore (₹) — from Limits' : 'Amount to Take (₹)'}
 
                 </label>
 
@@ -7146,11 +7245,11 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                 />
 
-                {partnerMode === 'EXTERNAL' && targetAdmin.restrictMode?.monthlyBrokerageCharge > 0 && (
+                {partnerMode === 'EXTERNAL' && targetAdmin.restrictMode?.brokerageChargePerCrore > 0 && (
 
                   <p className="text-xs text-rose-400 mt-1">
 
-                    Preset from Limits: {Number(targetAdmin.restrictMode.monthlyBrokerageCharge).toLocaleString()}
+                    Preset from Limits: ₹{Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
 
                   </p>
 
@@ -7482,7 +7581,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
     monthlyIncentiveAmount: targetAdmin.restrictMode?.monthlyIncentiveAmount || 0,
 
-    monthlyBrokerageCharge: targetAdmin.restrictMode?.monthlyBrokerageCharge || 0,
+    brokerageChargePerCrore: targetAdmin.restrictMode?.brokerageChargePerCrore || 0,
 
     monthlyIncentiveScope: targetAdmin.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
 
@@ -7538,7 +7637,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
         monthlyIncentiveAmount: data.restrictMode?.monthlyIncentiveAmount || 0,
 
-        monthlyBrokerageCharge: data.restrictMode?.monthlyBrokerageCharge || 0,
+        brokerageChargePerCrore: data.restrictMode?.brokerageChargePerCrore || 0,
 
         monthlyIncentiveScope: data.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
 
@@ -7584,7 +7683,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
         monthlyIncentiveAmount: restrictData.monthlyIncentiveAmount,
 
-        monthlyBrokerageCharge: restrictData.monthlyBrokerageCharge,
+        brokerageChargePerCrore: restrictData.brokerageChargePerCrore,
 
         monthlyIncentiveScope: restrictData.monthlyIncentiveScope,
 
@@ -8124,7 +8223,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
                     <label className="font-medium flex items-center gap-2 mb-2 text-rose-400">
 
-                      <DollarSign size={16} /> Monthly Brokerage Charge ()
+                      <DollarSign size={16} /> Brokerage Charge Per Crore
 
                     </label>
 
@@ -8132,11 +8231,11 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
                       type="number"
 
-                      value={restrictData.monthlyBrokerageCharge}
+                      value={restrictData.brokerageChargePerCrore}
 
                       onChange={(e) =>
 
-                        setRestrictData((prev) => ({ ...prev, monthlyBrokerageCharge: parseFloat(e.target.value) || 0 }))
+                        setRestrictData((prev) => ({ ...prev, brokerageChargePerCrore: parseFloat(e.target.value) || 0 }))
 
                       }
 
@@ -10254,6 +10353,15 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
       }
     }
 
+    // Optimistic update for toggle fields
+    if (field === 'enableLotSettings' || field === 'enableQuantitySettings') {
+      setSegDefs(prev => {
+        const segData = { ...prev[seg] };
+        segData[field] = value;
+        return { ...prev, [seg]: segData };
+      });
+    }
+
     setSegDefs(prev => {
 
       const segData = { ...prev[seg] };
@@ -10360,7 +10468,9 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
         });
       }
 
-      onSuccess();
+      // Don't call onSuccess() immediately - it refreshes data which might overwrite our changes
+      // Let the user see the success message and close manually if needed
+      // onSuccess();
 
       // Don't auto-close - let user read the message
 
@@ -17673,6 +17783,8 @@ const LedgerView = () => {
 
                 <th className="text-left px-4 py-3 text-gray-400">Reason</th>
 
+                <th className="text-left px-4 py-3 text-gray-400">Segment</th>
+
                 <th className="text-right px-4 py-3 text-gray-400" title="Your share of the user loss pool, win brokerage, or gross fee (game profit only)">
 
                   Share %
@@ -17731,7 +17843,25 @@ const LedgerView = () => {
 
                   <td className="px-4 py-3 text-sm text-gray-400">
 
-                    <div>{entry.reason}</div>
+                    <div>
+                      {(() => {
+                        // Transform reason for brokerage legs
+                        if (entry.reason === 'BROKERAGE_OPEN_LEG') {
+                          return 'BROKERAGE(OPEN)';
+                        } else if (entry.reason === 'BROKERAGE_CLOSE_LEG') {
+                          return 'BROKERAGE(CLOSE)';
+                        } else if (entry.reason === 'BROKERAGE' && entry.meta?.leg) {
+                          // New entries with leg in meta
+                          if (entry.meta.leg === 'OPEN') return 'BROKERAGE(OPEN)';
+                          if (entry.meta.leg === 'CLOSE') return 'BROKERAGE(CLOSE)';
+                          return 'BROKERAGE(OPEN+CLOSE)';
+                        } else if (entry.reason === 'BROKERAGE') {
+                          // Old entries without leg info - show as plain BROKERAGE
+                          return 'BROKERAGE';
+                        }
+                        return entry.reason;
+                      })()}
+                    </div>
 
                     {entry.transactionSlip && (
 
@@ -17783,6 +17913,23 @@ const LedgerView = () => {
 
                     )}
 
+                  </td>
+
+                  <td className="px-4 py-3 text-sm text-gray-400">
+                    {entry.meta?.segment ? (
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        entry.meta.segment === 'MCX' ? 'bg-orange-500/20 text-orange-400' :
+                        entry.meta.segment === 'CRYPTO' ? 'bg-purple-500/20 text-purple-400' :
+                        entry.meta.segment === 'FOREX' ? 'bg-cyan-500/20 text-cyan-400' :
+                        entry.meta.segment === 'NSE' ? 'bg-blue-500/20 text-blue-400' :
+                        entry.meta.segment === 'BSE' ? 'bg-green-500/20 text-green-400' :
+                        'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {entry.meta.segment}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500">-</span>
+                    )}
                   </td>
 
                   <td className="px-4 py-3 text-right text-sm text-cyan-300/90 tabular-nums">
@@ -23145,6 +23292,14 @@ const AllTrades = () => {
 
     });
 
+    // Crypto ticks (Binance)
+
+    socketRef.current.on('crypto_tick', (data) => {
+
+      setMarketData(prev => ({ ...prev, ...data }));
+
+    });
+
     
 
     // Auto-refresh when new trades are created or closed
@@ -25686,6 +25841,14 @@ const SuperAdminAllTrades = () => {
     // Live ticks
 
     socketRef.current.on('market_tick', (data) => {
+
+      setMarketData(prev => ({ ...prev, ...data }));
+
+    });
+
+    // Crypto ticks (Binance)
+
+    socketRef.current.on('crypto_tick', (data) => {
 
       setMarketData(prev => ({ ...prev, ...data }));
 
@@ -48935,6 +49098,38 @@ const AllUsersManagement = () => {
       return;
     }
 
+    // Hierarchy check: if parent has disabled enableLotSettings, child cannot enable it
+    if (field === 'enableLotSettings' && value === true) {
+      const parentSetting = segmentDefaultsBaseline[segment]?.enableLotSettings;
+      if (parentSetting === false) {
+        alert("You don't have permission to enable this setting. Your parent has disabled it.");
+        return;
+      }
+    }
+
+    // Hierarchy check: if parent has disabled enableQuantitySettings, child cannot enable it
+    if (field === 'enableQuantitySettings' && value === true) {
+      const parentSetting = segmentDefaultsBaseline[segment]?.enableQuantitySettings;
+      if (parentSetting === false) {
+        alert("You don't have permission to enable this setting. Your parent has disabled it.");
+        return;
+      }
+    }
+
+    // Optimistic update for toggle fields
+    if (field === 'enableLotSettings' || field === 'enableQuantitySettings') {
+      setEditFormData(prev => ({
+        ...prev,
+        segmentPermissions: {
+          ...prev.segmentPermissions,
+          [segment]: {
+            ...prev.segmentPermissions[segment],
+            [field]: value
+          }
+        }
+      }));
+    }
+
     // Hierarchy check: if parent has disabled the segment, child cannot enable it
     if (field === 'enabled' && value === true) {
       const parentSetting = segmentDefaultsBaseline[segment]?.enabled;
@@ -60372,6 +60567,8 @@ const SuperAdminRestrictions = () => {
 
                 <th className="p-3 text-left text-xs font-semibold text-gray-400">Restrictions Status</th>
 
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Allow Within Low-High</th>
+
                 <th className="p-3 text-left text-xs font-semibold text-gray-400">Actions</th>
 
               </tr>
@@ -60409,6 +60606,70 @@ const SuperAdminRestrictions = () => {
                       </span>
 
                     )}
+
+                  </td>
+
+                  <td className="p-3 text-sm">
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+
+                      <input
+
+                        type="checkbox"
+
+                        checked={adm.restrictions?.instrumentDenylist?.some((r) => r.allowWithinLowHigh) || false}
+
+                        onChange={async (e) => {
+
+                          try {
+
+                            const newRestrictions = adm.restrictions || {};
+
+                            if (!newRestrictions.instrumentDenylist) {
+
+                              newRestrictions.instrumentDenylist = [];
+
+                            }
+
+                            // Toggle allowWithinLowHigh for all instruments in denylist
+
+                            newRestrictions.instrumentDenylist = newRestrictions.instrumentDenylist.map((r) => ({
+
+                              ...r,
+
+                              allowWithinLowHigh: e.target.checked,
+
+                            }));
+
+                            await axios.put(`/api/admin/manage/admins/${adm._id}/restrictions`, newRestrictions, {
+
+                              headers: { Authorization: `Bearer ${admin.token}` }
+
+                            });
+
+                            await fetchAdmins();
+
+                          } catch (error) {
+
+                            console.error('Error updating restriction:', error);
+
+                            alert('Error updating restriction');
+
+                          }
+
+                        }}
+
+                        className="w-4 h-4 rounded"
+
+                      />
+
+                      <span className="text-xs text-gray-400">
+
+                        {adm.restrictions?.instrumentDenylist?.some((r) => r.allowWithinLowHigh) ? 'ON' : 'OFF'}
+
+                      </span>
+
+                    </label>
 
                   </td>
 

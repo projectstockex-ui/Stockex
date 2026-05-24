@@ -7,6 +7,7 @@ import Trade from '../models/Trade.js';
 import SystemSettings from '../models/SystemSettings.js';
 import { getLTPMapForTrades, cacheKeyForTrade } from '../services/ltpResolutionService.js';
 import TradingService from '../services/tradingService.js';
+import { getCryptoData } from '../services/binanceWebSocket.js';
 
 /**
  * TradePro Trading Engine - EOD Settlement Cron Jobs
@@ -22,6 +23,28 @@ class EODSettlement {
   
   // Store scheduled tasks to allow dynamic updates
   static scheduledTasks = new Map();
+
+  /**
+   * Parse HH:MM(:SS) string into today's IST Date
+   */
+  static parseCloseTimeToDate(closeTime) {
+    if (!closeTime) return new Date();
+    const parts = String(closeTime).split(':');
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    const seconds = parseInt(parts[2] || '0', 10);
+    if (isNaN(hours) || isNaN(minutes) || isNaN(seconds)) return new Date();
+
+    // Build date in IST timezone
+    const now = new Date();
+    const istString = now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+    const istDate = new Date(istString);
+    istDate.setHours(hours, minutes, seconds, 0);
+
+    // Convert IST date back to UTC timestamp
+    const offset = now.getTime() - new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getTime();
+    return new Date(istDate.getTime() + offset);
+  }
   
   /**
    * Initialize all cron jobs
@@ -116,11 +139,21 @@ class EODSettlement {
       await this.checkAndTriggerAutoSquare();
     };
     
+    // Monitor for balance-based auto-square trigger
+    // This runs every 10 seconds to check if wallet balance drops below autosquarePercent threshold
+    const checkBalanceBasedAutoSquare = async () => {
+      await this.checkBalanceBasedAutoSquare();
+    };
+    
     // Run immediately and then every minute
     checkLiveDataStop();
     setInterval(checkLiveDataStop, 60 * 1000);
     
-    console.log('EODSettlement: Dynamic auto-square scheduler initialized (checks every minute for live data stop)');
+    // Run immediately and then every 10 seconds
+    checkBalanceBasedAutoSquare();
+    setInterval(checkBalanceBasedAutoSquare, 10 * 1000);
+    
+    console.log('EODSettlement: Dynamic auto-square scheduler initialized (checks every minute for live data stop, every 10 seconds for balance threshold)');
   }
   
   /**
@@ -206,22 +239,12 @@ class EODSettlement {
                 else if (segKey.startsWith('FOREX')) segmentGroup = 'FOREX';
                 
                 if (segmentGroup) {
-                  // Check if auto-square already ran for this admin/segment with this specific closing time
-                  // Include closing time in key to allow re-triggering when closing time changes
-                  const taskKey = `autosquare_admin_${admin._id}_${segmentGroup}_${closeTime}`;
-                  if (!this.scheduledTasks.has(taskKey)) {
-                    console.log(`Auto-square: Triggering for admin ${admin._id} segment ${segmentGroup} (past closing time ${closeTime})`);
-                    try {
-                      await this.executeAdminHierarchyAutoSquare(admin._id, segmentGroup);
-                      this.scheduledTasks.set(taskKey, true); // Mark as run for this specific closing time
-                      console.log(`Auto-square: Successfully completed for admin ${admin._id} segment ${segmentGroup}`);
-                    } catch (error) {
-                      console.error(`Auto-square: Failed for admin ${admin._id} segment ${segmentGroup}:`, error);
-                      // Don't mark as completed if failed, allow retry on next check
-                      console.log(`Auto-square: Will retry on next check for admin ${admin._id} segment ${segmentGroup}`);
-                    }
-                  } else {
-                    console.log(`Auto-square: Already ran for admin ${admin._id} segment ${segmentGroup} with closing time ${closeTime}`);
+                  console.log(`Auto-square: Triggering for admin ${admin._id} segment ${segmentGroup} (past closing time ${closeTime})`);
+                  try {
+                    await this.executeAdminHierarchyAutoSquare(admin._id, segmentGroup, closeTime);
+                    console.log(`Auto-square: Successfully completed for admin ${admin._id} segment ${segmentGroup}`);
+                  } catch (error) {
+                    console.error(`Auto-square: Failed for admin ${admin._id} segment ${segmentGroup}:`, error);
                   }
                 }
               }
@@ -236,9 +259,87 @@ class EODSettlement {
   }
   
   /**
+   * Check if wallet balance drops below autosquarePercent threshold and trigger auto-square
+   */
+  static async checkBalanceBasedAutoSquare() {
+    try {
+      const Admin = (await import('../models/Admin.js')).default;
+      const Trade = (await import('../models/Trade.js')).default;
+      const User = (await import('../models/User.js')).default;
+      
+      // Get all admins with segmentPermissions
+      const admins = await Admin.find({ segmentPermissions: { $exists: true, $ne: null } }).lean();
+      
+      for (const admin of admins) {
+        const segPerms = admin.segmentPermissions instanceof Map 
+          ? Object.fromEntries(admin.segmentPermissions) 
+          : admin.segmentPermissions || {};
+        
+        // Get autosquarePercent from admin settings
+        let autosquarePercent = 90; // default
+        for (const [segKey, segSettings] of Object.entries(segPerms)) {
+          if (segSettings?.lotSettings?.autosquarePercent) {
+            autosquarePercent = segSettings.lotSettings.autosquarePercent;
+          }
+        }
+        
+        // Find all users under this admin with open crypto positions
+        const trades = await Trade.find({
+          adminCode: admin?.adminCode,
+          isCrypto: true,
+          status: 'OPEN',
+          isAutoSquared: { $ne: true }
+        }).lean();
+        
+        if (trades.length === 0) continue;
+        
+        // Group trades by userId
+        const userTrades = {};
+        for (const trade of trades) {
+          if (!userTrades[trade.userId]) {
+            userTrades[trade.userId] = [];
+          }
+          userTrades[trade.userId].push(trade);
+        }
+        
+        // Check each user's wallet balance
+        for (const [userId, userTradeList] of Object.entries(userTrades)) {
+          const user = await User.findOne({ userId }).select('cryptoWallet wallet').lean();
+          if (!user) continue;
+          
+          const currentBalance = user.cryptoWallet?.balance || 0;
+          const usedMargin = user.cryptoWallet?.usedMargin || 0;
+          
+          // Calculate initial balance (current balance + used margin)
+          const initialBalance = currentBalance + usedMargin;
+          
+          // Calculate threshold (autosquarePercent of initial balance)
+          const threshold = (initialBalance * autosquarePercent) / 100;
+          
+          console.log(`[Balance Auto-Square Check] User: ${userId}, Initial: ${initialBalance.toFixed(2)}, Current: ${currentBalance.toFixed(2)}, Threshold: ${threshold.toFixed(2)} (${autosquarePercent}%)`);
+          
+          // If current balance is below threshold, trigger auto-square
+          if (currentBalance < threshold) {
+            console.log(`[Balance Auto-Square] TRIGGERED for user ${userId}: Current balance ${currentBalance.toFixed(2)} < threshold ${threshold.toFixed(2)}`);
+            
+            try {
+              await this.executeAdminHierarchyAutoSquare(admin._id, 'CRYPTO', null);
+              console.log(`[Balance Auto-Square] Successfully completed for user ${userId}`);
+            } catch (error) {
+              console.error(`[Balance Auto-Square] Failed for user ${userId}:`, error);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking balance-based auto-square:', error);
+    }
+  }
+  
+  /**
    * Execute auto-square for a specific admin hierarchy
    */
-  static async executeAdminHierarchyAutoSquare(adminId, segment) {
+  static async executeAdminHierarchyAutoSquare(adminId, segment, closeTime = null) {
     try {
       console.log(`Auto-square: Starting for admin ${adminId} segment ${segment}`);
       
@@ -295,62 +396,198 @@ class EODSettlement {
       
       // Find all trades under this admin hierarchy with open positions for this segment
       const Trade = (await import('../models/Trade.js')).default;
+      const User = (await import('../models/User.js')).default;
       const admin = await Admin.findById(adminId).select('adminCode segmentPermissions').lean();
       
-      // For CRYPTO: close ALL positions (not just MIS)
-      // For other segments: only close MIS positions
-      const productTypeFilter = segment === 'CRYPTO' 
-        ? { $in: ['MIS', 'NRML', 'CNC', 'INTRADAY', 'CARRYFORWARD'] }
-        : 'MIS';
-      
+      // For ALL segments: select both MIS and NRML positions
+      // MIS will be closed, NRML will be marked as auto-squared for carry-forward
+      // Exclude already auto-squared trades to avoid re-processing
       const trades = await Trade.find({
         adminCode: admin?.adminCode,
-        productType: productTypeFilter,
+        productType: { $in: ['MIS', 'NRML', 'CARRYFORWARD'] },
         status: 'OPEN',
+        isAutoSquared: { $ne: true },
         ...segmentQuery
       }).lean();
       
       console.log(`Auto-square: Found ${trades.length} trades under admin ${adminId} with open ${segment} positions`);
       
-      // Get autosquarePercent from admin segment permissions
+      // Get autosquarePercent and carryForwardLeverage from admin segment permissions
       let autosquarePercent = 90; // default
+      let carryForwardLeverage = 40; // default
       if (admin?.segmentPermissions) {
-        const segPerms = admin.segmentPermissions instanceof Map 
-          ? Object.fromEntries(admin.segmentPermissions) 
+        const segPerms = admin.segmentPermissions instanceof Map
+          ? Object.fromEntries(admin.segmentPermissions)
           : (admin.segmentPermissions || {});
-        
-        // Get segment-specific autosquarePercent
+
+        // Get segment-specific settings
         for (const [segKey, segSettings] of Object.entries(segPerms)) {
           if (segSettings?.lotSettings?.autosquarePercent) {
             autosquarePercent = segSettings.lotSettings.autosquarePercent;
-            break;
+          }
+          // Prefer lotSettings.carryForwardLeverage, fallback to exposureCarryForward
+          if (segSettings?.lotSettings?.carryForwardLeverage) {
+            carryForwardLeverage = segSettings.lotSettings.carryForwardLeverage;
+          } else if (segSettings?.exposureCarryForward) {
+            carryForwardLeverage = segSettings.exposureCarryForward;
           }
         }
       }
-      
+
       console.log(`Auto-square: Using autosquarePercent = ${autosquarePercent}%`);
-      
-      // For ALL segments: only mark as auto-squared, do NOT close (carry-forward to next day)
-      // Trades remain OPEN for next day carry-forward
-      const shouldCloseTrades = false;
-      const closePercent = 0;
-      console.log(`Auto-square: Segment ${segment}, shouldCloseTrades: ${shouldCloseTrades} (carry-forward mode)`);
-      
-      // Process trades - only mark as auto-squared, keep them OPEN
+      console.log(`Auto-square: Using carryForwardLeverage = ${carryForwardLeverage}x`);
+
+      // For CRYPTO: mark ALL positions as auto-squared and keep OPEN (no closing)
+      // For other segments: close MIS positions, mark NRML as auto-squared for carry-forward
+      const markAllCrypto = segment === 'CRYPTO';
+      console.log(`Auto-square: Segment ${segment}, ${markAllCrypto ? 'will mark ALL positions as auto-squared (keep OPEN)' : 'will close MIS positions and mark NRML as auto-squared'}`);
+
+      // Get LTP map for all trades
+      const posObjs = trades.map((t) => (typeof t.toObject === 'function' ? t.toObject() : t));
+      const ltpMap = await getLTPMapForTrades(posObjs);
+
+      let closedCount = 0;
+      let markedCount = 0;
+      let failedCount = 0;
+
       for (const trade of trades) {
         try {
-          // Mark trade as auto-squared, keep trade OPEN for carry-forward
-          await Trade.findByIdAndUpdate(trade._id, {
-            isAutoSquared: true,
-            autoSquaredAt: new Date()
-          });
-          console.log(`Auto-square: Marked ${trade.tradeId} as auto-squared (trade remains OPEN for carry-forward to next day)`);
+          const po = typeof trade.toObject === 'function' ? trade.toObject() : trade;
+          const ck = cacheKeyForTrade(po);
+          const ltpFromMap = ltpMap.get(ck);
+
+          // Direct fallback: read from in-memory Binance data using pair/token
+          let directCryptoLtp = 0;
+          if (!ltpFromMap && (segment === 'CRYPTO' || trade.isCrypto || trade.exchange === 'BINANCE')) {
+            const allCrypto = getCryptoData();
+            const pairKey = trade.pair || trade.token || '';
+            const symbolKey = trade.symbol || '';
+            const tick = allCrypto[pairKey] || allCrypto[pairKey.toUpperCase()] || allCrypto[symbolKey] || allCrypto[symbolKey.toUpperCase() + 'USDT'];
+            directCryptoLtp = tick?.ltp || 0;
+            console.log(`Auto-square: Direct crypto lookup for ${pairKey}/${symbolKey} → ltp=${directCryptoLtp}`);
+          }
+
+          const ltp = ltpFromMap || directCryptoLtp || trade.currentPrice || trade.entryPrice;
+
+          console.log(`Auto-square: ${trade.tradeId} (${trade.symbol}) cacheKey=${ck} ltpFromMap=${ltpFromMap} directCryptoLtp=${directCryptoLtp} currentPrice=${trade.currentPrice} entryPrice=${trade.entryPrice} → ltp=${ltp}`);
+
+          if (!ltp || ltp <= 0) {
+            console.warn(`Auto-square: No LTP for ${trade.tradeId}, skipping`);
+            failedCount++;
+            continue;
+          }
+
+          // For CRYPTO: mark ALL positions as auto-squared and keep OPEN (no closing)
+          // For other segments: close MIS positions, mark NRML as auto-squared
+          if (markAllCrypto) {
+            // Carry-forward calculation for CRYPTO
+            const user = await User.findOne({ userId: trade.userId }).select('wallet').lean();
+            const initialBalance = user?.wallet?.balance || 0;
+            // Use originalQty if already saved (re-processing), else trade.quantity
+            const originalQty = trade.originalQty || trade.quantity || trade.lots || 1;
+            const entryLtp = trade.entryPrice || trade.price || 0;
+
+            console.log(`Auto-square DEBUG: ${trade.tradeId} userId=${trade.userId} initialBalance=${initialBalance} trade.originalQty=${trade.originalQty} trade.quantity=${trade.quantity} using originalQty=${originalQty}`);
+
+            // P&L = (End LTP - Entry LTP) × Qty (BUY side)
+            // P&L = (Entry LTP - End LTP) × Qty (SELL side)
+            const multiplier = trade.side === 'BUY' ? 1 : -1;
+            const pnl = (ltp - entryLtp) * originalQty * multiplier;
+
+            // Net Balance = Initial Balance + P&L
+            const netBalance = initialBalance + pnl;
+
+            // Next Day Qty = (Net Balance × Carry Forward Leverage) / End LTP
+            const nextDayQty = Math.floor((netBalance * carryForwardLeverage) / ltp);
+            // Carry Forward Qty = Next Day Qty - Original Qty (for display in autosquare tab)
+            const carryForwardQty = nextDayQty - originalQty;
+
+            console.log(`Auto-square: ${trade.tradeId}: origQty=${originalQty} netBalance=${netBalance} carryFwdLeverage=${carryForwardLeverage}x nextDayQty=${nextDayQty} carryFwdQty=${carryForwardQty} pnl=${pnl}`);
+
+            // Update user wallet balance with P&L
+            await User.updateOne(
+              { userId: trade.userId },
+              { $set: { 'wallet.balance': netBalance } }
+            );
+
+            await Trade.findByIdAndUpdate(trade._id, {
+              isAutoSquared: true,
+              autoSquaredAt: EODSettlement.parseCloseTimeToDate(closeTime),
+              autoSquareLtp: ltp,
+              originalQty: originalQty,
+              pnlAtAutoSquare: pnl,
+              carryForwardQty: carryForwardQty,
+              netBalanceAtAutoSquare: netBalance,
+              quantity: nextDayQty
+            });
+            markedCount++;
+            console.log(`Auto-square: Marked CRYPTO position ${trade.tradeId} as auto-squared with LTP ${ltp} (trade remains OPEN for next day, carry qty: ${carryForwardQty})`);
+          } else if (trade.productType === 'MIS') {
+            const result = await TradingService.squareOffPosition(
+              trade._id.toString(),
+              'TIME_BASED',
+              ltp,
+              ltp, // bidPrice
+              ltp  // askPrice
+            );
+
+            if (result.success) {
+              closedCount++;
+              console.log(`Auto-square: Closed MIS position ${trade.tradeId} at ${ltp}`);
+            } else {
+              failedCount++;
+              console.error(`Auto-square: Failed to close MIS position ${trade.tradeId}: ${result.message}`);
+            }
+          } else {
+            // NRML/CARRYFORWARD: carry-forward calculation and mark as auto-squared, keep OPEN for next day
+            const user = await User.findOne({ userId: trade.userId }).select('wallet').lean();
+            const initialBalance = user?.wallet?.balance || 0;
+            // Use originalQty if already saved (re-processing), else trade.quantity
+            const originalQty = trade.originalQty || trade.quantity || trade.lots || 1;
+            const entryLtp = trade.entryPrice || trade.price || 0;
+
+            console.log(`Auto-square NRML DEBUG: ${trade.tradeId} userId=${trade.userId} initialBalance=${initialBalance} trade.originalQty=${trade.originalQty} trade.quantity=${trade.quantity} using originalQty=${originalQty}`);
+
+            // P&L = (End LTP - Entry LTP) × Qty (BUY) or (Entry - End) × Qty (SELL)
+            const multiplier = trade.side === 'BUY' ? 1 : -1;
+            const pnl = (ltp - entryLtp) * originalQty * multiplier;
+
+            // Net Balance = Initial Balance + P&L
+            const netBalance = initialBalance + pnl;
+
+            // Next Day Qty = (Net Balance × Carry Forward Leverage) / End LTP
+            const nextDayQty = Math.floor((netBalance * carryForwardLeverage) / ltp);
+            // Carry Forward Qty = Next Day Qty - Original Qty (for display in autosquare tab)
+            const carryForwardQty = nextDayQty - originalQty;
+
+            console.log(`Auto-square NRML: ${trade.tradeId}: origQty=${originalQty} netBalance=${netBalance} carryFwdLeverage=${carryForwardLeverage}x nextDayQty=${nextDayQty} carryFwdQty=${carryForwardQty} pnl=${pnl}`);
+
+            // Update user wallet balance with P&L
+            await User.updateOne(
+              { userId: trade.userId },
+              { $set: { 'wallet.balance': netBalance } }
+            );
+
+            await Trade.findByIdAndUpdate(trade._id, {
+              isAutoSquared: true,
+              autoSquaredAt: EODSettlement.parseCloseTimeToDate(closeTime),
+              autoSquareLtp: ltp,
+              originalQty: originalQty,
+              pnlAtAutoSquare: pnl,
+              carryForwardQty: carryForwardQty,
+              netBalanceAtAutoSquare: netBalance,
+              quantity: nextDayQty
+            });
+            markedCount++;
+            console.log(`Auto-square: Marked NRML position ${trade.tradeId} as auto-squared with LTP ${ltp} (trade remains OPEN for next day, carry qty: ${carryForwardQty})`);
+          }
         } catch (error) {
-          console.error(`Auto-square: Failed to mark ${trade.tradeId} as auto-squared:`, error);
+          failedCount++;
+          console.error(`Auto-square: Error processing ${trade.tradeId}:`, error.message);
         }
       }
-      
-      console.log(`Auto-square: Completed for admin ${adminId} segment ${segment}`);
+
+      console.log(`Auto-square: Completed for admin ${adminId} segment ${segment}. Closed: ${closedCount}, Marked: ${markedCount}, Failed: ${failedCount}`);
       
     } catch (error) {
       console.error(`Auto-square: Error for admin ${adminId} segment ${segment}:`, error);

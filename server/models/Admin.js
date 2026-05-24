@@ -158,7 +158,32 @@ const adminSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
-  
+
+  /**
+   * Platform charges percentage: When isFranchiseRoot is true, this % of brokerage/P&L goes to SuperAdmin
+   * as platform charges. The remaining stays within the franchise subtree.
+   */
+  platformChargesPercentage: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100,
+  },
+
+  /**
+   * Admin-specific crypto trading timing.
+   * When set, applies to this admin's entire hierarchy.
+   * Format: HH:mm (24-hour format)
+   */
+  cryptoStartTime: {
+    type: String,
+    default: null,
+  },
+  cryptoEndTime: {
+    type: String,
+    default: null,
+  },
+
   /**
    * Segment-specific referral distribution settings.
    * SuperAdmin can disable for any admin/broker/subbroker per segment.
@@ -554,6 +579,8 @@ const adminSchema = new mongoose.Schema({
     monthlyBrokerageCharge: { type: Number, default: 0 },
     /** Where monthly incentive gets credited for INTERNAL admins: 'games_and_trading' | 'trading' | 'games' */
     monthlyIncentiveScope: { type: String, default: 'games_and_trading' },
+    /** Brokerage charge per crore turnover for BROKER and SUB_BROKER roles */
+    brokerageChargePerCrore: { type: Number, default: 0 },
     /** Brokerage restriction settings - control if brokerage goes to admin or Super Admin */
     restrictBrokerage: {
       games: { type: Boolean, default: false },    // Restrict games brokerage
@@ -664,6 +691,10 @@ const adminSchema = new mongoose.Schema({
         minQuantity: { type: Number, default: 1 },
         breakupQuantity: { type: Number, default: 0 }
       },
+      // Toggle to enable/disable Lot Settings mode for this segment
+      enableLotSettings: { type: Boolean, default: false },
+      // Toggle to enable/disable Quantity Settings mode for this segment
+      enableQuantitySettings: { type: Boolean, default: false },
       allowClientIntradayOnly: { type: Boolean, default: true },
       defaultIntradayOnly: { type: Boolean, default: false },
       allowLimitPendingOrders: { type: Boolean, default: true },
@@ -776,6 +807,10 @@ const adminSchema = new mongoose.Schema({
         segment: { type: String, trim: true, default: '' },
         symbol: { type: String, trim: true, default: '' },
         tradingSymbol: { type: String, trim: true, default: '' },
+        /** Allow trades within low-high range when toggle is ON */
+        allowWithinLowHigh: { type: Boolean, default: false },
+        /** Block trades outside low-high range when toggle is ON */
+        blockOutsideLowHigh: { type: Boolean, default: false },
       },
     ],
   },

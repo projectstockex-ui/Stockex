@@ -184,7 +184,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
             <>
               <div className={`${partnerMode === 'EXTERNAL' ? 'p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg' : ''}`}>
                 <label className="block text-sm text-gray-400 mb-1">
-                  {partnerMode === 'EXTERNAL' ? 'Monthly Brokerage Charge (₹) — from Limits' : 'Amount to Take (₹)'}
+                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore (₹) — from Limits' : 'Amount to Take (₹)'}
                 </label>
                 <input
                   type="number"
@@ -195,9 +195,9 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
                   min="0"
                   step="0.01"
                 />
-                {partnerMode === 'EXTERNAL' && targetAdmin.restrictMode?.monthlyBrokerageCharge > 0 && (
+                {partnerMode === 'EXTERNAL' && targetAdmin.restrictMode?.brokerageChargePerCrore > 0 && (
                   <p className="text-xs text-rose-400 mt-1">
-                    Preset from Limits: ₹{Number(targetAdmin.restrictMode.monthlyBrokerageCharge).toLocaleString()}
+                    Preset from Limits: ₹{Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
                   </p>
                 )}
               </div>

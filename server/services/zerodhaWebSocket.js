@@ -408,6 +408,19 @@ const processTicks = async (ticks) => {
     io.emit('market_tick', updates);
   }
 
+  // Check and trigger stoploss for all updated instruments
+  if (Object.keys(canonicalOnly).length > 0) {
+    const TradingService = (await import('./tradingService.js')).default;
+    for (const [tok, tickData] of Object.entries(canonicalOnly)) {
+      TradingService.checkAndTriggerStopLoss({
+        token: tok,
+        ltp: tickData.ltp,
+        bid: tickData.ltp,
+        ask: tickData.ltp,
+      }).catch((err) => console.error('checkAndTriggerStopLoss:', err?.message || err));
+    }
+  }
+
   // PHASE 3: BALANCED ASYNC PROCESSING - Run async operations with throttling
   // Use setImmediate to defer to next event loop iteration (non-blocking)
   if (Object.keys(canonicalOnly).length > 0) {

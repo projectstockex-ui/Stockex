@@ -19,6 +19,19 @@ const RESTRICTION_DENY_GAMES = [
 const denyInstrumentsCacheKey = (uiExchange, displaySegment) =>
   `${String(uiExchange || '').toUpperCase()}|${String(displaySegment || '').trim()}`;
 
+const ToggleSwitch = ({ label, checked, onChange }) => (
+  <div className="flex items-center justify-between py-2">
+    <span className="text-sm text-gray-300">{label}</span>
+    <button
+      type="button"
+      onClick={onChange}
+      className={`relative w-12 h-6 rounded-full transition-colors ${checked ? 'bg-green-600' : 'bg-dark-600'}`}
+    >
+      <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${checked ? 'left-7' : 'left-1'}`} />
+    </button>
+  </div>
+);
+
 function denyInstrumentPickerToken(row, instruments) {
   const sym = String(row.symbol || '').trim();
   const ts = String(row.tradingSymbol || '').trim();
@@ -58,6 +71,8 @@ function initialRestrictionsFromAdmin(adminUser) {
           segment: row.segment || '',
           symbol: row.symbol || '',
           tradingSymbol: row.tradingSymbol || '',
+          allowWithinLowHigh: row.allowWithinLowHigh || false,
+          blockOutsideLowHigh: row.blockOutsideLowHigh || false,
         }))
       : [],
     gameDenylist: Array.isArray(r?.gameDenylist)
@@ -591,7 +606,17 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
                             </div>
                           </div>
 
-                          <div className="md:col-span-2 flex justify-end">
+                          <div className="md:col-span-2 flex flex-col gap-2 justify-end">
+                            <ToggleSwitch
+                              label="Allow within Low-High"
+                              checked={row.allowWithinLowHigh || false}
+                              onChange={() => updateDenyRow(idx, 'allowWithinLowHigh', !row.allowWithinLowHigh)}
+                            />
+                            <ToggleSwitch
+                              label="Block Outside Low-High"
+                              checked={row.blockOutsideLowHigh || false}
+                              onChange={() => updateDenyRow(idx, 'blockOutsideLowHigh', !row.blockOutsideLowHigh)}
+                            />
                             <button
                               type="button"
                               onClick={() => removeDenyRow(idx)}

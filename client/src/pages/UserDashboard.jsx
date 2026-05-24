@@ -517,6 +517,7 @@ const UserDashboard = () => {
   const [mobileView, setMobileView] = useState('quotes');
   const [showBuySellModal, setShowBuySellModal] = useState(false);
   const [orderType, setOrderType] = useState('buy');
+  const [totalPnL, setTotalPnL] = useState(0); // Total P&L from open positions
 
   // Refresh segment permissions when modal opens
   useEffect(() => {
@@ -791,7 +792,15 @@ const UserDashboard = () => {
     fetchWallet();
     fetchUsdSpotClientSpreads();
     // REMOVED fetchMarketData completely - only use WebSocket live data
-    return () => {};
+    
+    // Periodic wallet refresh every 30 seconds to update balance after auto-square
+    const walletRefreshInterval = setInterval(() => {
+      fetchWallet();
+    }, 30000);
+    
+    return () => {
+      clearInterval(walletRefreshInterval);
+    };
   }, [fetchWallet, fetchUsdSpotClientSpreads]);
 
   const fetchMarketData = async () => {
@@ -1075,7 +1084,7 @@ const UserDashboard = () => {
 
   const openBuySell = (type, instrument = null) => {
     // Check if crypto trading is open (only applies in crypto mode)
-    if (cryptoOnly && !isCryptoTradingOpen()) {
+    if (cryptoOnly && !isCryptoTradingOpen() && type !== 'view') {
       const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || {};
       const startTimeStr = cryptoSettings.cryptoStartTime || '';
       const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
@@ -1086,8 +1095,14 @@ const UserDashboard = () => {
     }
     
     if (instrument) setSelectedInstrument(instrument);
-    setOrderType(type);
-    setShowBuySellModal(true);
+    if (type === 'view') {
+      // View slip - show buy/sell modal with default buy type for preview
+      setOrderType('buy');
+      setShowBuySellModal(true);
+    } else {
+      setOrderType(type);
+      setShowBuySellModal(true);
+    }
   };
 
   // Quick Trade handler - opens trading panel in sidebar (keep chart + panel on the same symbol)
@@ -1443,6 +1458,7 @@ const UserDashboard = () => {
             selectedInstrument={selectedInstrument}
             onRefreshPositions={refreshPositions}
             cryptoOnly={cryptoOnly}
+            onTotalPnLChange={setTotalPnL}
             mcxOnly={mcxOnly}
             forexOnly={forexOnly}
             usdRate={usdRate}
@@ -1469,6 +1485,7 @@ const UserDashboard = () => {
                 chartAnchorLtp={null}
                 segmentPermissionsGate={segmentPermissionsGate}
                 isCryptoTradingOpen={isCryptoTradingOpen()}
+                totalPnL={totalPnL}
               />
             </div>
           )}
@@ -2472,14 +2489,14 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </button>
                         <button
                           onClick={() => onBuySell('sell', crypto)}
-                          className="w-7 h-7 rounded-full bg-red-500 hover:bg-red-400 flex items-center justify-center text-white text-xs font-bold"
+                          className="px-2 py-1 bg-red-500 hover:bg-red-400 rounded text-white text-xs font-bold"
                         >
                           S
                         </button>
                         <button
                           onClick={() => onBuySell('buy', crypto)}
                           disabled={cryptoOnly && !isCryptoTradingOpen}
-                          className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
+                          className={`px-2 py-1 rounded text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                         >
                           B
                         </button>
@@ -2549,7 +2566,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                           <button
                             type="button"
                             onClick={() => onBuySell('sell', inst)}
-                            className="w-7 h-7 rounded-full bg-red-500 hover:bg-red-400 flex items-center justify-center text-white text-xs font-bold"
+                            className="px-2 py-1 bg-red-500 hover:bg-red-400 rounded text-white text-xs font-bold"
                           >
                             S
                           </button>
@@ -2557,7 +2574,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                             type="button"
                             onClick={() => onBuySell('buy', inst)}
                             disabled={cryptoOnly && !isCryptoTradingOpen}
-                            className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
+                            className={`px-2 py-1 rounded text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                           >
                             B
                           </button>
@@ -2598,13 +2615,13 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </button>
                         <button
                           onClick={() => onBuySell('sell', fx)}
-                          className="w-7 h-7 rounded-full bg-red-500 hover:bg-red-400 flex items-center justify-center text-white text-xs font-bold"
+                          className="px-2 py-1 bg-red-500 hover:bg-red-400 rounded text-white text-xs font-bold"
                         >
                           S
                         </button>
                         <button
                           onClick={() => onBuySell('buy', fx)}
-                          className="w-7 h-7 rounded-full bg-green-500 hover:bg-green-400 flex items-center justify-center text-white text-xs font-bold"
+                          className="px-2 py-1 bg-green-500 hover:bg-green-400 rounded text-white text-xs font-bold"
                         >
                           B
                         </button>
@@ -2709,14 +2726,14 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); onBuySell('sell', inst); }}
-                          className="w-7 h-7 rounded-full bg-red-500 hover:bg-red-400 flex items-center justify-center text-white text-xs font-bold"
+                          className="px-2 py-1 bg-red-500 hover:bg-red-400 rounded text-white text-xs font-bold"
                         >
                           S
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }}
                           disabled={cryptoOnly && !isCryptoTradingOpen}
-                          className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
+                          className={`px-2 py-1 rounded text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                         >
                           B
                         </button>
@@ -2795,19 +2812,19 @@ const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFutu
         </div>
       </div>
 
-      {/* Right: B/S Circle Buttons */}
+      {/* Right: BUY/SELL Buttons */}
       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        <button 
+        <button
           onClick={() => onBuySell('sell', instrument)}
-          className="w-7 h-7 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-xs font-bold transition-colors"
+          className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-bold transition-colors"
           title="Sell"
         >
           S
         </button>
-        <button 
+        <button
           onClick={() => onBuySell('buy', instrument)}
           disabled={isCrypto && !isCryptoTradingOpen}
-          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${isCrypto && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
+          className={`px-2 py-1 rounded text-xs font-bold transition-colors ${isCrypto && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
           title="Buy"
         >
           B
@@ -2990,6 +3007,8 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
   const fetchCandleData = async (instrument, interval) => {
     if (!instrument) return null;
 
+    console.log('[Chart] fetchCandleData called for:', instrument.symbol, 'isCrypto:', instrument.isCrypto, 'exchange:', instrument.exchange);
+
     setLoading(true);
     try {
       // For Zerodha instruments, fetch historical data from Kite API
@@ -3012,9 +3031,13 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           },
         });
 
+        console.log('[Chart] Zerodha history response:', data);
+
         if (data?.success && Array.isArray(data?.data) && data.data.length > 0) {
           console.log(`📊 Historical chart data loaded for ${instrument.symbol}:`, data.data.length, 'candles');
           return { candles: data.data, nativeInr: true };
+        } else {
+          console.warn('[Chart] Zerodha history failed:', data?.message || 'No data returned');
         }
 
         // Fallback: Create a single current candle with live WebSocket data if historical fails
@@ -3054,10 +3077,15 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
       if (instrument.isCrypto || instrument.exchange === 'BINANCE') {
         const binanceInterval = getBinanceInterval(interval);
         const sym = binanceCandleSymbol(instrument);
-        if (!sym) return null;
+        console.log('[Chart] Crypto candle fetch - symbol:', sym, 'interval:', binanceInterval);
+        if (!sym) {
+          console.warn('[Chart] No symbol for crypto instrument:', instrument);
+          return null;
+        }
         const { data } = await axios.get(`/api/binance/candles/${encodeURIComponent(sym)}`, {
           params: { interval: binanceInterval, limit: 500 },
         });
+        console.log('[Chart] Crypto candle response:', Array.isArray(data) ? data.length + ' candles' : 'invalid data');
         return Array.isArray(data) && data.length > 0 ? { candles: data, nativeInr: false } : null;
       }
 
@@ -3075,7 +3103,9 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
   useEffect(() => {
     if (!selectedInstrument || !chartContainerRef.current) return;
     if (chartRef.current) return;
-    
+
+    console.log('[Chart] Initializing chart for instrument:', selectedInstrument.symbol, 'isCrypto:', selectedInstrument.isCrypto);
+
     const initTimer = setTimeout(() => {
       if (!chartContainerRef.current || chartRef.current) return;
       
@@ -3164,9 +3194,11 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
       if (cancelled || !candlestickSeriesRef.current || !volumeSeriesRef.current) return;
 
       const pack = await fetchCandleData(selectedInstrument, chartInterval);
+      console.log('[Chart] Data pack received:', pack);
       const rawCandles = pack?.candles;
       const nativeInr = pack?.nativeInr === true;
       if (rawCandles && Array.isArray(rawCandles) && rawCandles.length > 0) {
+        console.log('[Chart] Processing candles:', rawCandles.length);
         // Validate, deduplicate, and sort candles by time
         const seenTimes = new Set();
         const candles = rawCandles
@@ -3354,7 +3386,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
   );
 };
 
-const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5, setShowReferralModal, isCryptoTradingOpen = true }) => {
+const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5, setShowReferralModal, isCryptoTradingOpen = true, onTotalPnLChange }) => {
   const [positions, setPositions] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -3434,6 +3466,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       
       const pnl = filteredPositions.reduce((sum, p) => sum + (p.unrealizedPnL || 0), 0);
       setTotalPnL(pnl);
+      if (onTotalPnLChange) onTotalPnLChange(pnl);
     } catch (error) {
       console.error('Error fetching positions:', error);
     }
@@ -3802,6 +3835,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       return sum + pnl;
     }, 0);
     setTotalPnL(calculatedPnL);
+    if (onTotalPnLChange) onTotalPnLChange(calculatedPnL);
   }, [positions, marketData, usdRate]);
 
   return (
@@ -3835,7 +3869,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           <button
             onClick={() => executeQuickTrade('sell')}
             disabled={quickTrading || !selectedInstrument}
-            className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-xs font-bold transition-colors"
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-bold transition-colors"
             title={selectedInstrument ? 'Sell' : 'Select an instrument first'}
           >
             S
@@ -3859,7 +3893,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           <button
             onClick={() => executeQuickTrade('buy')}
             disabled={quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen)}
-            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${(quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen)) ? 'bg-gray-600 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700'}`}
+            className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${(quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen)) ? 'bg-gray-600 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700'}`}
             title={selectedInstrument ? 'Buy' : 'Select an instrument first'}
           >
             B
@@ -4205,6 +4239,7 @@ const TradingPanel = ({
   chartAnchorLtp = null,
   segmentPermissionsGate = {},
   isCryptoTradingOpen = true,
+  totalPnL = 0,
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
   const [cryptoQuantity, setCryptoQuantity] = useState('1'); // Default for crypto/forex
@@ -4913,7 +4948,7 @@ const TradingPanel = ({
           type="button"
           onClick={() => {
             setOrderType('sell');
-            setTradeConfirmOpen(true);
+            handlePlaceOrder('sell');
           }}
           className={`flex-1 py-2 font-semibold transition ${
             orderType === 'sell' ? 'bg-red-600 text-white' : 'bg-dark-700 text-gray-400'
@@ -4921,13 +4956,13 @@ const TradingPanel = ({
         >
           <div className="text-xs opacity-70">{isUsdSpot ? 'Bid' : 'Bid'}</div>
           <div className="text-lg">{stripeBidPx != null && !isNaN(stripeBidPx) ? stripeBidPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
-          <div className="text-xs">SELL</div>
+          <div className="text-xs">S</div>
         </button>
         <button
           type="button"
           onClick={() => {
             setOrderType('buy');
-            setTradeConfirmOpen(true);
+            handlePlaceOrder('buy');
           }}
           disabled={isCryptoOnly && !isCryptoTradingOpen}
           className={`flex-1 py-2 font-semibold transition ${
@@ -4936,7 +4971,7 @@ const TradingPanel = ({
         >
           <div className="text-xs opacity-70">{isUsdSpot ? 'Ask' : 'Ask'}</div>
           <div className="text-lg">{stripeAskPx != null && !isNaN(stripeAskPx) ? stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
-          <div className="text-xs">BUY</div>
+          <div className="text-xs">B</div>
         </button>
       </div>
 
@@ -5149,14 +5184,17 @@ const TradingPanel = ({
             <>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Available Margin</span>
-                <span className="text-green-400 font-medium">
-                  {(((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className={`font-medium ${((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0) + (totalPnL || 0) < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                  {Math.max(0, ((isForex ? walletData?.forexWallet?.balance : walletData?.cryptoWallet?.balance) || 0) - ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0) + (totalPnL || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
                 <span className="text-gray-400">Used Margin</span>
                 <span className="text-yellow-400 font-medium">
-                  {((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {target && Number(target) > 0
+                    ? Number(target).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  }
                 </span>
               </div>
               <div className="flex justify-between text-sm">
@@ -5171,8 +5209,8 @@ const TradingPanel = ({
             <>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
-                <span className={isMCX ? 'text-yellow-400' : 'text-green-400'}>
-                  {(activeWallet.balance - activeWallet.usedMargin).toLocaleString()}
+                <span className={`${isMCX ? 'text-yellow-400' : (activeWallet.balance - activeWallet.usedMargin) < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                  {Math.max(0, activeWallet.balance - activeWallet.usedMargin).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
@@ -5191,23 +5229,34 @@ const TradingPanel = ({
           )}
       </div>
 
-      {/* Submit Button — opens confirm modal (breakup, bid/ask, limits) like stripe tap */}
-      <div className="p-4 border-t border-dark-600">
+      {/* Buy/Sell Buttons - Indian Standard: SELL left, BUY right */}
+      <div className="p-4 border-t border-dark-600 flex gap-3">
         <button
           type="button"
-          onClick={() => setTradeConfirmOpen(true)}
+          onClick={() => {
+            setOrderType('sell');
+            handlePlaceOrder('sell');
+          }}
           disabled={loading}
-          className={`w-full py-3 rounded-lg font-semibold transition ${
-            orderType === 'buy' 
-              ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800' 
-              : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
-          } disabled:opacity-50 disabled:cursor-not-allowed`}
+          className="flex-1 py-3 bg-red-600 hover:bg-red-700 disabled:bg-red-800 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? 'Placing Order...' : `${orderType === 'buy' ? 'BUY' : 'SELL'} ${instrument?.symbol}`}
+          S
         </button>
-        <div className="text-center text-xs text-gray-500 mt-2">
-          {productType} • {orderMode}
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setOrderType('buy');
+            handlePlaceOrder('buy');
+          }}
+          disabled={loading || (isCryptoOnly && !isCryptoTradingOpen)}
+          className={`flex-1 py-3 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed ${
+            (loading || (isCryptoOnly && !isCryptoTradingOpen))
+              ? 'bg-gray-600'
+              : 'bg-green-600 hover:bg-green-700'
+          }`}
+        >
+          B
+        </button>
       </div>
 
       {tradeConfirmOpen && (
@@ -6041,8 +6090,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                       >
                         + Add
                       </button>
-                      <button onClick={() => onBuySell('sell', crypto)} className="w-6 h-6 rounded-full bg-red-500 text-white text-xs font-bold">S</button>
-                      <button onClick={() => onBuySell('buy', crypto)} disabled={cryptoOnly && !isCryptoTradingOpen} className={`w-6 h-6 rounded-full text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500'}`}>B</button>
+                      <button onClick={() => onBuySell('sell', crypto)} className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600 rounded font-medium">SELL</button>
+                      <button onClick={() => onBuySell('buy', crypto)} disabled={cryptoOnly && !isCryptoTradingOpen} className={`px-2 py-1 text-xs rounded font-medium ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
                     </div>
                   </div>
                 );
@@ -6097,8 +6146,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                             +Add
                           </button>
                         )}
-                        <button type="button" onClick={() => onBuySell('sell', inst)} className="w-6 h-6 rounded-full bg-red-500 text-white text-[10px] font-bold">S</button>
-                        <button type="button" onClick={() => onBuySell('buy', inst)} disabled={cryptoOnly && !isCryptoTradingOpen} className={`w-6 h-6 rounded-full text-white text-[10px] font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500'}`}>B</button>
+                        <button type="button" onClick={() => onBuySell('sell', inst)} className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600 rounded font-medium">SELL</button>
+                        <button type="button" onClick={() => onBuySell('buy', inst)} disabled={cryptoOnly && !isCryptoTradingOpen} className={`px-2 py-1 text-xs rounded font-medium ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
                       </div>
                     </div>
                   );
@@ -6138,16 +6187,16 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                       <button
                         type="button"
                         onClick={() => onBuySell('sell', fx)}
-                        className="w-6 h-6 rounded-full bg-red-500 text-white text-xs font-bold"
+                        className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600 rounded font-medium"
                       >
-                        S
+                        SELL
                       </button>
                       <button
                         type="button"
                         onClick={() => onBuySell('buy', fx)}
-                        className="w-6 h-6 rounded-full bg-green-500 text-white text-xs font-bold"
+                        className="px-2 py-1 text-xs bg-green-500 hover:bg-green-600 rounded font-medium"
                       >
-                        B
+                        BUY
                       </button>
                     </div>
                   </div>
@@ -6190,8 +6239,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                       </div>
                     </div>
                     <div className="flex gap-1">
-                      <button onClick={(e) => { e.stopPropagation(); onBuySell('sell', inst); }} className="w-6 h-6 rounded-full bg-red-500 text-white text-xs font-bold">S</button>
-                      <button onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }} disabled={cryptoOnly && !isCryptoTradingOpen} className={`w-6 h-6 rounded-full text-white text-xs font-bold ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500'}`}>B</button>
+                      <button onClick={(e) => { e.stopPropagation(); onBuySell('sell', inst); }} className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600 rounded font-medium">SELL</button>
+                      <button onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }} disabled={cryptoOnly && !isCryptoTradingOpen} className={`px-2 py-1 text-xs rounded font-medium ${cryptoOnly && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
                       <button onClick={(e) => { e.stopPropagation(); removeFromWatchlist(inst); }} className="w-6 h-6 rounded-full bg-dark-600 text-gray-400 hover:bg-red-600 hover:text-white">
                         <X size={12} className="mx-auto" />
                       </button>
@@ -6248,20 +6297,20 @@ const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, on
           {changePercent ? `${change >= 0 ? '+' : ''}${parseFloat(changePercent).toFixed(2)}%` : '--'}
         </div>
       </div>
-      {/* Buy/Sell Buttons - Indian Standard: S left, B right (matching desktop) */}
-      <div className="flex gap-1">
+      {/* Buy/Sell Buttons - Indian Standard: SELL left, BUY right */}
+      <div className="flex gap-1 items-center">
         <button 
           onClick={onSell}
           className="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-700 rounded font-medium"
         >
-          S
+          SELL
         </button>
         <button 
           onClick={onBuy}
           disabled={isCryptoInstrument && !isCryptoTradingOpen}
           className={`px-3 py-1.5 text-xs rounded font-medium ${isCryptoInstrument && !isCryptoTradingOpen ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
         >
-          B
+          BUY
         </button>
       </div>
     </div>
@@ -6466,7 +6515,7 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
 
       {/* Buy/Sell Buttons - Indian Standard: SELL left, BUY right */}
       {selectedInstrument && (
-        <div className="flex gap-3 p-4 border-t border-dark-600">
+        <div className="flex gap-3 p-4 border-t border-dark-600 items-center">
           <button
             onClick={() => onBuySell('sell', selectedInstrument)}
             className="flex-1 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-semibold"
@@ -6479,6 +6528,13 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
             className={`flex-1 py-3 rounded-lg font-semibold ${selectedInstrument?.isCrypto && !isCryptoTradingOpen ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
           >
             BUY
+          </button>
+          <button
+            onClick={() => onBuySell('view', selectedInstrument)}
+            className="p-3 bg-dark-700 hover:bg-dark-600 rounded-lg text-gray-400"
+            title="View Order Slip"
+          >
+            <FileText size={20} />
           </button>
         </div>
       )}
@@ -7236,7 +7292,7 @@ const MobileProfilePanel = ({ user, walletData, onLogout }) => {
           </p>
           <div className="flex justify-between mt-2 text-sm">
             <span className="text-gray-400">Available Margin</span>
-            <span className="text-green-400">{walletData?.availableMargin?.toLocaleString() || '0.00'}</span>
+            <span className="text-green-400">{(walletData?.availableMargin || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Used Margin</span>
@@ -9226,7 +9282,7 @@ const BuySellModal = ({
           >
             <div className="text-xs opacity-70">Bid Price</div>
             <div className="text-xl">{liveBid != null && !isNaN(liveBid) ? liveBid.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
-            <div className="text-sm">SELL</div>
+            <div className="text-sm">S</div>
           </button>
           <button
             onClick={() => setOrderType('buy')}
@@ -9239,7 +9295,7 @@ const BuySellModal = ({
           >
             <div className="text-xs opacity-70">Ask Price</div>
             <div className="text-xl">{liveAsk != null && !isNaN(liveAsk) ? liveAsk.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
-            <div className="text-sm">BUY</div>
+            <div className="text-sm">B</div>
           </button>
         </div>
 
@@ -9399,21 +9455,32 @@ const BuySellModal = ({
             </div>
           )}
 
-          {/* Submit Button */}
-          <button
-            onClick={handlePlaceOrder}
-            disabled={loading || isCryptoTradingBlocked}
-            className={`w-full py-4 rounded-lg font-bold text-lg transition ${
-              orderType === 'buy' 
-                ? 'bg-green-600 hover:bg-green-700 disabled:bg-green-800' 
-                : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
-            }`}
-          >
-            {loading ? 'Placing Order...' : `${orderType === 'buy' ? 'BUY' : 'SELL'} ${instrument?.symbol}`}
-            <span className="ml-2 text-sm opacity-80">
-              ({productType === 'MIS' ? 'Intraday' : productType === 'NRML' ? 'Carry Forward' : 'Delivery'})
-            </span>
-          </button>
+          {/* Buy/Sell Buttons - Indian Standard: SELL left, BUY right */}
+          <div className="flex gap-3">
+            <button
+              onClick={() => {
+                setOrderType('sell');
+                handlePlaceOrder();
+              }}
+              disabled={loading || isCryptoTradingBlocked}
+              className="flex-1 py-4 bg-red-600 hover:bg-red-700 disabled:bg-red-800 rounded-lg font-bold text-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              S
+            </button>
+            <button
+              onClick={() => {
+                setOrderType('buy');
+                handlePlaceOrder();
+              }}
+              disabled={loading || isCryptoTradingBlocked}
+              className="flex-1 py-4 bg-green-600 hover:bg-green-700 disabled:bg-green-800 rounded-lg font-bold text-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              B
+            </button>
+          </div>
+          <div className="text-center text-xs text-gray-500 mt-2">
+            {productType === 'MIS' ? 'Intraday' : productType === 'NRML' ? 'Carry Forward' : 'Delivery'}
+          </div>
 
           {/* Info Text */}
           <p className="text-xs text-gray-500 text-center">

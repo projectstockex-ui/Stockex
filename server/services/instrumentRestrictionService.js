@@ -25,6 +25,8 @@ export function sanitizeInstrumentDenylist(raw) {
       segment: segment || '',
       symbol: symbol || '',
       tradingSymbol: tradingSymbol || '',
+      allowWithinLowHigh: Boolean(row.allowWithinLowHigh),
+      blockOutsideLowHigh: Boolean(row.blockOutsideLowHigh),
     });
   }
   return out;
@@ -116,4 +118,19 @@ export async function assertHierarchyInstrumentNotDenied(user, ctx) {
       );
     }
   }
+}
+
+/**
+ * Check if user is allowed to trade within low-high range for a specific instrument
+ * Returns true if allowWithinLowHigh is enabled for any matching denylist entry
+ */
+export async function isAllowedWithinLowHigh(user, ctx) {
+  const merged = await mergeInstrumentDenylistForAdminIds(collectHierarchyAdminIds(user));
+  if (!merged.length) return false;
+  for (const entry of merged) {
+    if (matchesInstrumentDeny(entry, ctx) && entry.allowWithinLowHigh) {
+      return true;
+    }
+  }
+  return false;
 }

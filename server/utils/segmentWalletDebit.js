@@ -1,6 +1,6 @@
 /**
- * Inter-wallet transfers: debit stamped balance on segment wallets (MCX / crypto / forex)
- * and clamp usedMargin so it never exceeds balance after withdrawal.
+ * Inter-wallet transfers: debit only free balance on segment wallets (MCX / crypto / forex)
+ * Free balance = balance - usedMargin (cannot transfer locked margin)
  */
 
 const MARGIN_SEGMENTS = new Set(['mcxWallet', 'cryptoWallet', 'forexWallet']);
@@ -26,22 +26,24 @@ export async function atomicMarginSegmentDebitForTransfer(User, userId, segmentK
   const balPath = `${key}.balance`;
   const umPath = `${key}.usedMargin`;
 
+  // Check if free balance (balance - usedMargin) >= amount
   const updated = await User.findOneAndUpdate(
-    { _id: userId, [balPath]: { $gte: amt } },
+    { 
+      _id: userId, 
+      $expr: {
+        $gte: [
+          { $subtract: [{ $toDouble: { $ifNull: [`$${key}.balance`, 0] } }, { $toDouble: { $ifNull: [`$${key}.usedMargin`, 0] } }] },
+          amt
+        ]
+      }
+    },
     [
       {
         $set: {
           [balPath]: {
             $subtract: [{ $toDouble: { $ifNull: [`$${key}.balance`, 0] } }, amt],
           },
-          [umPath]: {
-            $min: [
-              { $toDouble: { $ifNull: [`$${key}.usedMargin`, 0] } },
-              {
-                $subtract: [{ $toDouble: { $ifNull: [`$${key}.balance`, 0] } }, amt],
-              },
-            ],
-          },
+          // usedMargin remains unchanged (we only transfer free balance)
         },
       },
     ],

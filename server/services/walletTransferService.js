@@ -51,15 +51,18 @@ class WalletTransferService {
   /**
    * Balance user can move in one inter-wallet transfer:
    * games + segment wallets → full stamped balance; main + trading account → existing free-balance rules.
+   * For crypto/mcx/forex wallets: max transfer = balance - usedMargin (cannot transfer locked margin)
    */
   static getTransferSourceBalance(user, walletType) {
     switch (walletType) {
       case 'gamesWallet':
         return Number(user?.gamesWallet?.balance) || 0;
       case 'mcxWallet':
+        return Math.max(0, (user.mcxWallet?.balance || 0) - (user.mcxWallet?.usedMargin || 0));
       case 'cryptoWallet':
+        return Math.max(0, (user.cryptoWallet?.balance || 0) - (user.cryptoWallet?.usedMargin || 0));
       case 'forexWallet':
-        return getStampedSegmentBalance(user, walletType);
+        return Math.max(0, (user.forexWallet?.balance || 0) - (user.forexWallet?.usedMargin || 0));
       default:
         return this.getWalletBalance(user, walletType);
     }

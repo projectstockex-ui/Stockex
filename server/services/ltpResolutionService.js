@@ -59,6 +59,17 @@ export async function getLTP(key) {
   const symbol = String(key.symbol || '');
   const exchange = key.exchange ? String(key.exchange) : '';
 
+  // 0. In-memory Binance crypto data (most current, no I/O) — lazy import to avoid circular dep
+  if (exchange === 'BINANCE' || (token && String(token).toUpperCase().endsWith('USDT'))) {
+    try {
+      const { getCryptoPrice } = await import('./binanceWebSocket.js');
+      const cryptoTick = getCryptoPrice(token || symbol);
+      const cLtp = parseFloat(cryptoTick?.ltp);
+      if (Number.isFinite(cLtp) && cLtp > 0) return cLtp;
+    } catch { /* binance module may not be loaded yet */ }
+  }
+
+  // 1. Redis
   const r = await getRedis();
   if (r && token) {
     try {
@@ -70,6 +81,7 @@ export async function getLTP(key) {
     }
   }
 
+  // 2. Mongo Instrument.ltp
   const instOr = [];
   if (token) instOr.push({ token });
   if (symbol && exchange) instOr.push({ symbol, exchange });
@@ -81,6 +93,7 @@ export async function getLTP(key) {
     if (Number.isFinite(ltp) && ltp > 0) return ltp;
   }
 
+  // 3. Latest OPEN Trade.currentPrice / entryPrice
   const tradeQ = { status: 'OPEN' };
   if (symbol) tradeQ.symbol = symbol;
   if (exchange) tradeQ.exchange = exchange;

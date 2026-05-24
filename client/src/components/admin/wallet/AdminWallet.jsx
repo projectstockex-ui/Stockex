@@ -281,40 +281,71 @@ const AdminWallet = () => {
         {!walletData?.ledger?.length ? (
           <div className="text-center py-4 text-gray-400">No transactions yet</div>
         ) : (
-          <div className="space-y-2">
-            {walletData.ledger.slice(0, 10).map(entry => (
-              <div key={entry._id} className="flex items-center justify-between bg-dark-700 rounded p-3">
-                <div className="flex-1">
-                  <div className="text-sm font-medium">{entry.reason}</div>
-                  <div className="text-xs text-gray-400">{entry.description}</div>
-                  {/* Show user name and segment for brokerage entries */}
-                  {entry.reason === 'BROKERAGE' && (
-                    <div className="flex items-center gap-2 mt-1">
-                      {entry.userName && (
-                        <span className="text-xs text-blue-400">User: {entry.userName}</span>
-                      )}
-                      {entry.meta?.segment && (
-                        <span className={`text-xs px-2 py-0.5 rounded ${
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-dark-700">
+                <tr>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Date</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Type</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Description</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Segment</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">User</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold text-gray-300">Amount</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold text-gray-300">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {walletData.ledger.slice(0, 10).map(entry => (
+                  <tr key={entry._id} className="border-t border-dark-600 hover:bg-dark-700/50">
+                    <td className="px-4 py-3 text-xs text-gray-400">
+                      {new Date(entry.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        entry.type === 'CREDIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                      }`}>
+                        {entry.type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-sm font-medium">{entry.reason}</div>
+                      <div className="text-xs text-gray-400">{entry.description}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {entry.meta?.segment ? (
+                        <span className={`text-xs px-2 py-1 rounded ${
                           entry.meta.segment === 'MCX' ? 'bg-orange-500/20 text-orange-400' :
                           entry.meta.segment === 'CRYPTO' ? 'bg-purple-500/20 text-purple-400' :
                           entry.meta.segment === 'FOREX' ? 'bg-cyan-500/20 text-cyan-400' :
-                          'bg-blue-500/20 text-blue-400'
+                          entry.meta.segment === 'NSE' ? 'bg-blue-500/20 text-blue-400' :
+                          entry.meta.segment === 'BSE' ? 'bg-green-500/20 text-green-400' :
+                          'bg-gray-500/20 text-gray-400'
                         }`}>
                           {entry.meta.segment}
                         </span>
+                      ) : (
+                        <span className="text-xs text-gray-500">-</span>
                       )}
-                    </div>
-                  )}
-                  <div className="text-xs text-gray-500">{new Date(entry.createdAt).toLocaleString()}</div>
-                </div>
-                <div className="text-right ml-4">
-                  <div className={entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
-                    {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
-                  </div>
-                  <div className="text-xs text-gray-400">Bal: ₹{entry.balanceAfter.toLocaleString()}</div>
-                </div>
-              </div>
-            ))}
+                    </td>
+                    <td className="px-4 py-3">
+                      {entry.reason === 'BROKERAGE' && entry.userName ? (
+                        <span className="text-xs text-blue-400">{entry.userName}</span>
+                      ) : (
+                        <span className="text-xs text-gray-500">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className={entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
+                        {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs text-gray-400">
+                      ₹{entry.balanceAfter.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

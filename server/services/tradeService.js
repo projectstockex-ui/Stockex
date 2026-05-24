@@ -166,25 +166,58 @@ class TradeService {
     const segForTiming = 'CRYPTOFUT';
     console.log(`[CryptoTimeCheck] Using CRYPTOFUT timing for ${segU}`);
 
-    // Resolve crypto timing from hierarchy: Super Admin's settings take precedence
-    // Walk up: segmentSettings → user's admin → hierarchy path → system defaults
+    // Resolve crypto timing from hierarchy: Admin's own timing takes precedence
+    // Walk up: user's direct admin → hierarchy path → Super Admin segmentPermissions → system defaults
     let start = '';
     let close = '';
 
-    // 1. Try to get from the Super Admin at the top of this user's hierarchy
-    const superAdmin = await this._getSuperAdminForUser(user);
-    console.log(`[CryptoTimeCheck] Super Admin for user ${user?.username || user?._id}: ${superAdmin?.username || superAdmin?._id}`);
-    if (superAdmin) {
-      const saSegPerms = superAdmin.segmentPermissions instanceof Map
-        ? superAdmin.segmentPermissions.get(segForTiming)
-        : superAdmin.segmentPermissions?.[segForTiming];
-      const saSlice = saSegPerms && typeof saSegPerms.toObject === 'function' ? saSegPerms.toObject() : saSegPerms;
-      if (saSlice) {
-        start = (saSlice.cryptoStartTime || '').toString().trim();
-        close = (saSlice.cryptoClosingTime || '').toString().trim();
-        console.log(`[CryptoTimeCheck] From Super Admin segmentPermissions: start=${start}, close=${close}, segment=${segU}`);
+    // 1. Try to get from the user's direct admin (admin-specific timing)
+    const directAdmin = await Admin.findById(user.adminId).select('cryptoStartTime cryptoEndTime parentId hierarchyPath');
+    console.log(`[CryptoTimeCheck] Direct admin for user ${user?.username || user?._id}: ${directAdmin?.username || directAdmin?._id}`);
+    
+    if (directAdmin) {
+      // Check if direct admin has crypto timing set
+      if (directAdmin.cryptoStartTime && directAdmin.cryptoEndTime) {
+        start = directAdmin.cryptoStartTime.toString().trim();
+        close = directAdmin.cryptoEndTime.toString().trim();
+        console.log(`[CryptoTimeCheck] From direct admin crypto timing: start=${start}, close=${close}, admin=${directAdmin.username}`);
       } else {
-        console.log(`[CryptoTimeCheck] Super Admin segmentPermissions not found for ${segU}`);
+        console.log(`[CryptoTimeCheck] Direct admin has no crypto timing set, checking hierarchy`);
+        
+        // 2. Walk up hierarchy to find first admin with crypto timing
+        let currentAdmin = directAdmin;
+        while (currentAdmin && (!start || !close)) {
+          if (currentAdmin.cryptoStartTime && currentAdmin.cryptoEndTime) {
+            start = currentAdmin.cryptoStartTime.toString().trim();
+            close = currentAdmin.cryptoEndTime.toString().trim();
+            console.log(`[CryptoTimeCheck] Found crypto timing in hierarchy: start=${start}, close=${close}, admin=${currentAdmin.username}`);
+            break;
+          }
+          if (currentAdmin.parentId) {
+            currentAdmin = await Admin.findById(currentAdmin.parentId).select('cryptoStartTime cryptoEndTime parentId username');
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
+    // 3. If still not found, try Super Admin segmentPermissions
+    if (!start || !close) {
+      const superAdmin = await this._getSuperAdminForUser(user);
+      console.log(`[CryptoTimeCheck] Super Admin for user ${user?.username || user?._id}: ${superAdmin?.username || superAdmin?._id}`);
+      if (superAdmin) {
+        const saSegPerms = superAdmin.segmentPermissions instanceof Map
+          ? superAdmin.segmentPermissions.get(segForTiming)
+          : superAdmin.segmentPermissions?.[segForTiming];
+        const saSlice = saSegPerms && typeof saSegPerms.toObject === 'function' ? saSegPerms.toObject() : saSegPerms;
+        if (saSlice) {
+          start = (saSlice.cryptoStartTime || '').toString().trim();
+          close = (saSlice.cryptoClosingTime || '').toString().trim();
+          console.log(`[CryptoTimeCheck] From Super Admin segmentPermissions: start=${start}, close=${close}, segment=${segU}`);
+        } else {
+          console.log(`[CryptoTimeCheck] Super Admin segmentPermissions not found for ${segU}`);
+        }
       }
     }
 
@@ -629,14 +662,19 @@ static _SEGMENT_MERGE_FALLBACK = {
     applyOverlay(hierPlain, hierExplicitKeysMaybe);
     applyOverlay(userPlain, userExplicitKeysMaybe);
 
-    // After merging, if user's commission is 0 and admin's commission is > 0, use admin's commission
-    if (m.commission === 0 && hierPlain?.commission > 0) {
-      m.commission = hierPlain.commission;
-      console.log('[_mergeSegmentStack] Inherited admin commission:', m.commission);
-    }
-    if (m.commissionLot === 0 && hierPlain?.commissionLot > 0) {
-      m.commissionLot = hierPlain.commissionLot;
-      console.log('[_mergeSegmentStack] Inherited admin commissionLot:', m.commissionLot);
+    // After merging, inherit commission based on commissionType
+    // PER_CRORE and PER_TRADE use 'commission' field, PER_LOT uses 'commissionLot' field
+    const commType = m.commissionType || hierPlain?.commissionType || 'PER_LOT';
+    if (commType === 'PER_CRORE' || commType === 'PER_TRADE') {
+      if (m.commission === 0 && hierPlain?.commission > 0) {
+        m.commission = hierPlain.commission;
+        console.log('[_mergeSegmentStack] Inherited admin commission:', m.commission, 'for type:', commType);
+      }
+    } else if (commType === 'PER_LOT') {
+      if (m.commissionLot === 0 && hierPlain?.commissionLot > 0) {
+        m.commissionLot = hierPlain.commissionLot;
+        console.log('[_mergeSegmentStack] Inherited admin commissionLot:', m.commissionLot, 'for type:', commType);
+      }
     }
 
     const ei = Number(m.exposureIntraday);
@@ -1581,8 +1619,8 @@ static _SEGMENT_MERGE_FALLBACK = {
     console.log('[TradeService] Pure brokerage for distribution:', pureBrokerage, 'user commission rate:', userSegmentSettings.commission, userSegmentSettings.commissionType);
     console.log('[TradeService] Distribution check:', { admin: admin.name, adminRole: admin.role, userIsDemo: user.isDemo, userAdmin: user.admin });
 
-    // Process full brokerage distribution to hierarchy on trade open
-    // Distributes brokerage to Radha, Sohan, Roshini, SuperAdmin based on hierarchy
+    // Process FULL brokerage distribution (open+close) on position OPEN
+    // Full round-trip brokerage is credited to hierarchy when position opens
     console.log('[TradeService] Brokerage distribution check:', {
       tradeId: trade._id,
       brokerage: pureBrokerage,
@@ -1593,9 +1631,9 @@ static _SEGMENT_MERGE_FALLBACK = {
     if (pureBrokerage > 0) {
       setTimeout(async () => {
         try {
-          console.log('[TradeService] Calling distributeBrokerage for trade:', trade._id, 'amount:', pureBrokerage);
-          await this.distributeBrokerage(trade, pureBrokerage, admin, user);
-          console.log('[TradeService] Brokerage distributed on trade open:', trade._id, pureBrokerage);
+          console.log('[TradeService] Calling distributeBrokerage for full round-trip:', trade._id, 'amount:', pureBrokerage);
+          await this.distributeBrokerage(trade, pureBrokerage, admin, user, 'OPEN+CLOSE');
+          console.log('[TradeService] Full brokerage distributed on trade open:', trade._id, pureBrokerage);
         } catch (error) {
           console.error('[TradeService] Error processing brokerage distribution on trade open:', error);
         }
@@ -1734,12 +1772,9 @@ static _SEGMENT_MERGE_FALLBACK = {
     
     console.log('[TradeService] Pure brokerage from user commission rate:', pureBrokerage, 'charges.brokerage:', charges.brokerage);
     
-    // Process full brokerage distribution to hierarchy on trade close
-    // Distributes brokerage to Radha, Sohan, Roshini, SuperAdmin based on hierarchy
-    if (admin && !user.isDemo && pureBrokerage > 0) {
-      await this.distributeBrokerageWithPatti(trade, pureBrokerage, admin, user);
-      console.log('[TradeService] Brokerage distributed on trade close:', trade._id, pureBrokerage);
-    }
+    // Brokerage already fully distributed on trade OPEN (open+close combined)
+    // No brokerage distribution needed on close
+    console.log('[TradeService] Trade close - no brokerage distribution (already done on open):', trade._id);
 
     void import('./marginMonitorService.js').then((m) => m.invalidateMarginOpenTradesCache?.());
 
@@ -1750,6 +1785,77 @@ static _SEGMENT_MERGE_FALLBACK = {
   static async applyBBookAdminPnLSplit(trade, directAdmin, user, totalAdminPnL) {
     if (!directAdmin || !Number.isFinite(totalAdminPnL) || totalAdminPnL === 0) return;
 
+    // Build hierarchy chain to check for franchise root
+    const hierarchyChain = [];
+    let current = directAdmin;
+    while (current) {
+      hierarchyChain.push({ admin: current, role: current.role });
+      if (current.role === 'SUPER_ADMIN' || !current.parentId) break;
+      current = await Admin.findById(current.parentId);
+    }
+
+    // Check for franchise root in hierarchy
+    const franchiseRoot = findFranchiseRootInChain(hierarchyChain);
+
+    // If franchise root exists, P&L stays within franchise subtree only
+    // Platform charges are handled in brokerage distribution, not here
+    if (franchiseRoot) {
+      console.log('[applyBBookAdminPnLSplit] Franchise root detected - P&L stays within subtree:', {
+        franchiseRoot: franchiseRoot.name,
+        totalAdminPnL
+      });
+
+      // Distribute P&L within franchise subtree using patti logic
+      const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
+      
+      // Check if parent is within franchise subtree (not above franchise root)
+      let parentInSubtree = true;
+      if (split.parentAdmin) {
+        // Build franchise subtree admin IDs
+        const subtreeIds = new Set();
+        let current = franchiseRoot;
+        while (current) {
+          subtreeIds.add(current._id.toString());
+          if (current.role === 'SUPER_ADMIN' || !current.parentId) break;
+          current = await Admin.findById(current.parentId);
+        }
+        // Check if parent is in subtree
+        parentInSubtree = subtreeIds.has(split.parentAdmin._id.toString());
+        
+        if (!parentInSubtree) {
+          console.log('[applyBBookAdminPnLSplit] Parent is outside franchise subtree, ignoring patti split');
+          split.parentAdmin = null;
+          split.childPct = 100;
+        }
+      }
+      
+      if (!split.parentAdmin || split.childPct >= 100) {
+        directAdmin.tradingPnL.realized += totalAdminPnL;
+        directAdmin.tradingPnL.todayRealized += totalAdminPnL;
+        directAdmin.stats.totalPnL += totalAdminPnL;
+        await directAdmin.save();
+        console.log('[applyBBookAdminPnLSplit] P&L credited to directAdmin:', totalAdminPnL);
+        return;
+      }
+
+      const { child, parent } = splitByChildPercent(totalAdminPnL, split.childPct);
+      directAdmin.tradingPnL.realized += child;
+      directAdmin.tradingPnL.todayRealized += child;
+      directAdmin.stats.totalPnL += child;
+      await directAdmin.save();
+
+      const pa = await Admin.findById(split.parentAdmin._id);
+      if (pa && pa.status === 'ACTIVE') {
+        pa.tradingPnL.realized += parent;
+        pa.tradingPnL.todayRealized += parent;
+        pa.stats.totalPnL += parent;
+        await pa.save();
+        console.log('[applyBBookAdminPnLSplit] P&L split within subtree - child:', child, 'parent:', parent);
+      }
+      return;
+    }
+
+    // No franchise root - use normal patti distribution
     const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
     if (!split.parentAdmin || split.childPct >= 100) {
       directAdmin.tradingPnL.realized += totalAdminPnL;
@@ -1775,12 +1881,12 @@ static _SEGMENT_MERGE_FALLBACK = {
   }
 
   /** Book admin + parent split when patti resolves; else legacy hierarchy distribution. */
-  static async distributeBrokerageWithPatti(trade, totalBrokerage, directAdmin, user) {
+  static async distributeBrokerageWithPatti(trade, totalBrokerage, directAdmin, user, leg = null) {
     if (!totalBrokerage || totalBrokerage <= 0 || user?.isDemo || !directAdmin) return;
 
     const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
     if (!split.parentAdmin || split.childPct >= 100) {
-      await this.distributeBrokerage(trade, totalBrokerage, directAdmin, user);
+      await this.distributeBrokerage(trade, totalBrokerage, directAdmin, user, leg);
       return;
     }
 
@@ -1790,7 +1896,10 @@ static _SEGMENT_MERGE_FALLBACK = {
         directAdmin,
         child,
         trade,
-        `Book admin ${split.childPct}% (${split.source})`
+        `Book admin ${split.childPct}% (${split.source})`,
+        user,
+        leg,
+        directAdmin.isFranchiseRoot
       );
     }
     if (parent > 0) {
@@ -1800,14 +1909,20 @@ static _SEGMENT_MERGE_FALLBACK = {
           pa,
           parent,
           trade,
-          `Parent ${100 - split.childPct}% (${split.source})`
+          `Parent ${100 - split.childPct}% (${split.source})`,
+          user,
+          leg,
+          pa.isFranchiseRoot
         );
       } else {
         await this.creditBrokerageToAdmin(
           directAdmin,
           parent,
           trade,
-          `Parent share (${100 - split.childPct}%) — parent inactive, credited to book admin`
+          `Parent share (${100 - split.childPct}%) — parent inactive, credited to book admin`,
+          user,
+          leg,
+          directAdmin.isFranchiseRoot
         );
       }
     }
@@ -1816,14 +1931,15 @@ static _SEGMENT_MERGE_FALLBACK = {
   // Distribute brokerage through MLM hierarchy using cascading ₹ amounts.
   // Each admin keeps the difference between their calculated ₹ brokerage and the next parent's.
   // The user's rate is the true "bottom" — the full totalBrokerage is based on it.
-  static async distributeBrokerage(trade, totalBrokerage, directAdmin, user) {
+  static async distributeBrokerage(trade, totalBrokerage, directAdmin, user, leg = null) {
     try {
       console.log('[distributeBrokerage] Starting distribution:', {
         tradeId: trade._id,
         totalBrokerage,
         directAdmin: directAdmin.name,
         directAdminRole: directAdmin.role,
-        userId: user.userId
+        userId: user.userId,
+        leg: leg
       });
 
       // Build hierarchy chain from directAdmin up to SuperAdmin
@@ -1852,14 +1968,14 @@ static _SEGMENT_MERGE_FALLBACK = {
         turnover
       });
 
-      // Helper: convert a commission setting to ₹ amount for this trade (one-way)
+      // Helper: convert a commission setting to ₹ amount for this trade (round-trip: ×2)
       const commissionToInr = (commType, commissionValue) => {
         const comm = Number(commissionValue) || 0;
         if (comm <= 0) return 0;
-        if (commType === 'PER_LOT' || commType === 'PER_QUANTITY') return comm * lots;
-        if (commType === 'PER_TRADE') return comm;
-        if (commType === 'PER_CRORE') return (turnover / ONE_CRORE) * comm;
-        return comm * lots; // fallback
+        if (commType === 'PER_LOT' || commType === 'PER_QUANTITY') return comm * lots * 2;
+        if (commType === 'PER_TRADE') return comm * 2;
+        if (commType === 'PER_CRORE') return (turnover / ONE_CRORE) * comm * 2;
+        return comm * lots * 2; // fallback
       };
 
       // Read user's segment commission rate (this is the true "bottom" rate)
@@ -1947,29 +2063,42 @@ static _SEGMENT_MERGE_FALLBACK = {
       // Bottom admin (directAdmin) keeps: totalBrokerage (user's full) − their own ₹ amount (scaled to round-trip).
       // Top admin (SuperAdmin) keeps: their own ₹ amount (scaled to round-trip) − 0.
 
-      // Scale factor: totalBrokerage is round-trip (×2). Our one-way amounts need scaling.
-      // totalBrokerage = userBrokerageInr * 2 (ideally). Use actual ratio for precision.
-      const roundTripFactor = userBrokerageInr > 0 ? totalBrokerage / userBrokerageInr : 0;
+      // Scale factor: For half-leg distribution, totalBrokerage is already half of round-trip.
+      // Don't apply round-trip scaling - the amounts are already for the current leg.
+      const roundTripFactor = 1;
 
       if (roundTripFactor === 0 && totalBrokerage > 0) {
         // User has no rate configured but brokerage was charged — credit all to direct admin
         console.log('[distributeBrokerage] User rate is 0, crediting full amount to direct admin');
         await this.creditBrokerageToAdmin(
           directAdmin, totalBrokerage, trade,
-          `Full brokerage (₹${totalBrokerage.toFixed(2)}) — no user segment rate configured`
+          `Full brokerage (₹${totalBrokerage.toFixed(2)}) — no user segment rate configured`,
+          user,
+          leg,
+          directAdmin.isFranchiseRoot
         );
         return;
       }
 
-      // Build distribution amounts: each admin keeps diff between level below and their own rate
-      // levels[0] = user's rate (theoretical), levels[1] = directAdmin's rate, levels[2] = next admin's rate, etc.
-      const levels = [Math.round(userBrokerageInr * roundTripFactor * 100) / 100]; // level 0: user's rate (theoretical)
+      // Distribution: each admin keeps the difference between their rate and their parent's rate
+      // hierarchyChain = [Ashish(2000), Manish(1500), Ram(1000), SuperAdmin(500)]
+      // Ashish keeps: 2000-1500 = 500/crore worth
+      // Manish keeps: 1500-1000 = 500/crore worth
+      // Ram keeps: 1000-500 = 500/crore worth
+      // SuperAdmin keeps: 500-0 = 500/crore worth (remainder)
+
+      // Build levels array: each admin's ₹ amount based on their rate
+      const levels = [];
       for (const entry of hierarchyChain) {
         levels.push(Math.round(entry.brokerageInr * roundTripFactor * 100) / 100);
       }
-      levels.push(0); // SuperAdmin gets remainder (their rate is 0)
-      // levels: [userRateAmt, directAdminAmt, ..., superAdminAmt, 0]
-      // Admin i keeps: levels[i] - levels[i+1] (difference between their rate and parent's rate)
+      levels.push(0); // 0 at the end for SuperAdmin's parent (no parent)
+
+      console.log('[distributeBrokerage] Distribution levels:', {
+        totalBrokerage,
+        levels: levels.map((l, i) => ({ index: i, amount: l })),
+        chain: hierarchyChain.map(h => ({ name: h.admin.name, role: h.role, brokerageInr: h.brokerageInr }))
+      });
 
       // Check for franchise root in hierarchy
       const franchiseRoot = findFranchiseRootInChain(hierarchyChain);
@@ -1978,11 +2107,12 @@ static _SEGMENT_MERGE_FALLBACK = {
       let divertedToFranchiseRoot = 0;
       let totalDistributed = 0;
 
+      // Each admin gets: their rate - parent's rate (next in chain)
       for (let i = 0; i < hierarchyChain.length; i++) {
         const { admin, role } = hierarchyChain[i];
-        const myRateAmt = levels[i + 1];          // my own ₹ amount (my "rate") - levels[0] is user's rate, levels[1] is first admin's rate
-        const levelBelowAmt = i === 0 ? totalBrokerage : levels[i]; // user paid for first admin, parent's rate for others
-        const amount = Math.round((levelBelowAmt - myRateAmt) * 100) / 100;
+        const myRateAmt = levels[i];              // my own ₹ amount
+        const parentRateAmt = levels[i + 1];      // parent's ₹ amount (next in chain going up)
+        const amount = Math.round((myRateAmt - parentRateAmt) * 100) / 100;
 
         if (amount <= 0) continue;
 
@@ -1999,36 +2129,19 @@ static _SEGMENT_MERGE_FALLBACK = {
 
         console.log('[distributeBrokerage] Crediting:', {
           name: admin.name, role, amount,
-          myRate: myRateAmt, levelBelow: levelBelowAmt
+          myRate: myRateAmt, parentRate: parentRateAmt
         });
         await this.creditBrokerageToAdmin(
           admin, amount, trade,
-          `${role} share (₹${amount.toFixed(2)})`
+          `${role} share (₹${amount.toFixed(2)})`,
+          user,
+          leg,
+          !!franchiseRoot
         );
         totalDistributed += amount;
       }
 
-      // SuperAdmin keeps remainder (last admin's rate minus 0)
-      const saAmt = levels[levels.length - 2] || 0; // Last admin's rate
-      if (saAmt > 0) {
-        const saEntry = hierarchyChain[hierarchyChain.length - 1];
-        if (saEntry && saEntry.role === 'SUPER_ADMIN') {
-          if (franchiseRoot) {
-            divertedToFranchiseRoot += saAmt;
-          } else if (!adminReceivesHierarchyBrokerage(saEntry.admin, 'trading')) {
-            divertedToSuperAdmin += saAmt;
-          } else {
-            console.log('[distributeBrokerage] Crediting SA remainder:', { name: saEntry.admin.name, amount: saAmt });
-            await this.creditBrokerageToAdmin(
-              saEntry.admin, saAmt, trade,
-              `${saEntry.role} remainder (₹${saAmt.toFixed(2)})`
-            );
-            totalDistributed += saAmt;
-          }
-        }
-      }
-
-      // Handle rounding remainder
+      // Handle rounding remainder - give to SuperAdmin
       const remainder = Math.round((totalBrokerage - totalDistributed - divertedToSuperAdmin - divertedToFranchiseRoot) * 100) / 100;
       if (remainder > 0.01) {
         const topAdmin = hierarchyChain[hierarchyChain.length - 1]?.admin;
@@ -2038,7 +2151,7 @@ static _SEGMENT_MERGE_FALLBACK = {
           } else if (!adminReceivesHierarchyBrokerage(topAdmin, 'trading')) {
             divertedToSuperAdmin += remainder;
           } else {
-            await this.creditBrokerageToAdmin(topAdmin, remainder, trade, `Rounding remainder (₹${remainder.toFixed(2)})`);
+            await this.creditBrokerageToAdmin(topAdmin, remainder, trade, `Rounding remainder (₹${remainder.toFixed(2)})`, user, leg, !!franchiseRoot);
             totalDistributed += remainder;
           }
         }
@@ -2046,20 +2159,49 @@ static _SEGMENT_MERGE_FALLBACK = {
 
       // Handle franchise root diversion (SA share goes to franchise root instead)
       if (divertedToFranchiseRoot > 0 && franchiseRoot) {
-        franchiseRoot.temporaryWallet.balance = (franchiseRoot.temporaryWallet.balance || 0) + divertedToFranchiseRoot;
-        franchiseRoot.temporaryWallet.totalEarned = (franchiseRoot.temporaryWallet.totalEarned || 0) + divertedToFranchiseRoot;
-        await franchiseRoot.save();
-        await WalletLedger.create({
-          ownerType: 'ADMIN',
-          ownerId: franchiseRoot._id,
-          adminCode: franchiseRoot.adminCode,
-          type: 'CREDIT',
-          reason: 'TRADE_PNL',
-          amount: divertedToFranchiseRoot,
-          balanceAfter: franchiseRoot.temporaryWallet.balance,
-          description: `Trading brokerage — franchise root diversion (₹${divertedToFranchiseRoot.toFixed(2)}) [Temporary Wallet]`,
-          meta: { franchiseRootDiversion: true, tradeId: trade?._id },
+        const platformChargesPct = franchiseRoot.platformChargesPercentage || 0;
+        
+        // Platform charges apply to brokerage (always positive amount)
+        const platformCharges = Math.round((divertedToFranchiseRoot * platformChargesPct / 100) * 100) / 100;
+        const franchiseAmount = divertedToFranchiseRoot - platformCharges;
+
+        console.log('[distributeBrokerage] Franchise root brokerage diversion:', {
+          totalDiverted: divertedToFranchiseRoot,
+          platformChargesPct,
+          platformCharges,
+          franchiseAmount
         });
+
+        // Credit platform charges to SuperAdmin
+        if (platformCharges > 0) {
+          const superAdmin = hierarchyChain.find(h => h.role === 'SUPER_ADMIN')?.admin ||
+                            await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
+          if (superAdmin) {
+            await this.creditBrokerageToAdmin(
+              superAdmin, platformCharges, trade,
+              `Platform charges (${platformChargesPct}% from franchise root)`,
+              user, leg, false
+            );
+          }
+        }
+
+        // Credit remaining to franchise root
+        if (franchiseAmount > 0) {
+          franchiseRoot.temporaryWallet.balance = (franchiseRoot.temporaryWallet.balance || 0) + franchiseAmount;
+          franchiseRoot.temporaryWallet.totalEarned = (franchiseRoot.temporaryWallet.totalEarned || 0) + franchiseAmount;
+          await franchiseRoot.save();
+          await WalletLedger.create({
+            ownerType: 'ADMIN',
+            ownerId: franchiseRoot._id,
+            adminCode: franchiseRoot.adminCode,
+            type: 'CREDIT',
+            reason: 'BROKERAGE(INDEPENDENT)',
+            amount: franchiseAmount,
+            balanceAfter: franchiseRoot.temporaryWallet.balance,
+            description: `Trading brokerage — franchise root (₹${franchiseAmount.toFixed(2)}) [Temporary Wallet]`,
+            meta: { franchiseRootDiversion: true, tradeId: trade?._id, platformChargesDeducted: platformCharges },
+          });
+        }
       }
 
       if (divertedToSuperAdmin > 0) {
@@ -2074,7 +2216,8 @@ static _SEGMENT_MERGE_FALLBACK = {
           }
           await this.creditBrokerageToAdmin(
             saSink, divertedToSuperAdmin, trade,
-            `Super Admin — diverted from restricted admins (₹${divertedToSuperAdmin.toFixed(2)})`
+            `Super Admin — diverted from restricted admins (₹${divertedToSuperAdmin.toFixed(2)})`,
+            user
           );
         } else {
           console.error('[distributeBrokerage] No Super Admin to credit diverted brokerage');
@@ -2097,14 +2240,17 @@ static _SEGMENT_MERGE_FALLBACK = {
       if (recipient) {
         await this.creditBrokerageToAdmin(
           recipient, totalBrokerage, trade,
-          'Full brokerage (distribution error fallback)'
+          'Full brokerage (distribution error fallback)',
+          user,
+          leg,
+          directAdmin.isFranchiseRoot
         );
       }
     }
   }
   
   // Helper to credit brokerage to a single admin
-  static async creditBrokerageToAdmin(admin, amount, trade, description) {
+  static async creditBrokerageToAdmin(admin, amount, trade, description, user = null, leg = null, isFranchiseRoot = false) {
     if (!admin || amount <= 0) {
       console.log('[creditBrokerageToAdmin] Skipping - admin or amount invalid:', {
         admin: admin?.name,
@@ -2118,7 +2264,9 @@ static _SEGMENT_MERGE_FALLBACK = {
       role: admin.role,
       amount: amount,
       tradeId: trade._id,
-      description: description
+      description: description,
+      leg: leg,
+      isFranchiseRoot
     });
 
     admin.wallet.balance += amount;
@@ -2135,22 +2283,37 @@ static _SEGMENT_MERGE_FALLBACK = {
       tradingSegment = 'FOREX';
     }
 
+    // Build reason with leg indicator and franchise root tag
+    let reason = 'BROKERAGE';
+    if (isFranchiseRoot) {
+      reason = 'BROKERAGE(INDEPENDENT)';
+    } else if (leg === 'OPEN') {
+      reason = 'BROKERAGE_OPEN_LEG';
+    } else if (leg === 'CLOSE') {
+      reason = 'BROKERAGE_CLOSE_LEG';
+    } else if (leg === 'OPEN+CLOSE') {
+      reason = 'BROKERAGE';
+    }
+
     await WalletLedger.create({
       ownerType: 'ADMIN',
       ownerId: admin._id,
       adminCode: admin.adminCode,
       type: 'CREDIT',
-      reason: 'BROKERAGE',
+      reason: reason,
       amount: amount,
       balanceAfter: admin.wallet.balance,
       reference: { type: 'Trade', id: trade._id },
-      description: `Brokerage from ${trade.tradeId} - ${description}`,
+      description: `Brokerage from ${trade.tradeId} - ${description}${leg ? ` (${leg} LEG)` : ''}`,
       meta: {
         relatedUserId: trade.user,
+        userName: user?.username || user?.name || 'Unknown',
         segment: tradingSegment,
         tradeSymbol: trade.symbol,
         tradeSide: trade.side,
-        tradeQuantity: trade.quantity
+        tradeQuantity: trade.quantity,
+        leg: leg,
+        isFranchiseRoot
       }
     });
     

@@ -188,7 +188,7 @@ const tradeSchema = new mongoose.Schema({
   },
   closeReason: {
     type: String,
-    enum: ['MANUAL', 'RMS', 'TIME_BASED', 'EXPIRY', 'ADMIN', 'NETTING', null],
+    enum: ['MANUAL', 'RMS', 'TIME_BASED', 'EXPIRY', 'ADMIN', 'NETTING', 'STOP_LOSS', 'AUTO_SQUARE', 'AUTO_SQUARE_330', 'TARGET', null],
     default: null
   },
   // Track if trade was auto-squared (but not closed, moved to auto-square tab)
@@ -198,6 +198,31 @@ const tradeSchema = new mongoose.Schema({
   },
   autoSquaredAt: {
     type: Date,
+    default: null
+  },
+  autoSquareLtp: {
+    type: Number,
+    default: null
+  },
+  // Carry-forward calculation fields
+  originalQty: {
+    type: Number,
+    default: null
+  },
+  brokerageAtAutoSquare: {
+    type: Number,
+    default: null
+  },
+  pnlAtAutoSquare: {
+    type: Number,
+    default: null
+  },
+  carryForwardQty: {
+    type: Number,
+    default: null
+  },
+  netBalanceAtAutoSquare: {
+    type: Number,
     default: null
   },
   // Who/what closed the position (for TradePro engine)

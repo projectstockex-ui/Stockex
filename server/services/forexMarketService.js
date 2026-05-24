@@ -260,6 +260,16 @@ async function poll(io) {
       ask: tick.ask,
       ltp: tick.ltp,
     });
+
+    // Check and trigger stoploss
+    TradingService.checkAndTriggerStopLoss({
+      pair: pairU,
+      symbol: def.symbol,
+      bid: tick.bid,
+      ask: tick.ask,
+      ltp: tick.ltp,
+    }).catch((err) => console.error('checkAndTriggerStopLoss:', err?.message || err));
+
     await tickForexOpenPositions(pairU, tick);
   }
 }

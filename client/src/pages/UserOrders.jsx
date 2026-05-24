@@ -2,18 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
+import { io } from 'socket.io-client';
 import {
   Home, ArrowLeft, RefreshCw, Calendar, Filter, Download,
   TrendingUp, TrendingDown, Timer, CheckCircle, XCircle, AlertCircle,
   X, ChevronRight, Scissors
 } from 'lucide-react';
-import { 
-  IOSToast, 
-  IOSConfirmModal, 
-  IOSButton, 
+import {
+  IOSToast,
+  IOSConfirmModal,
+  IOSButton,
   IOSCard,
   useIOSToast,
-  useIOSConfirm 
+  useIOSConfirm
 } from '../components/IOSComponents';
 
 const UserOrders = () => {
@@ -37,6 +38,7 @@ const UserOrders = () => {
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
   const [stats, setStats] = useState({ totalPnL: 0, winRate: 0, totalTrades: 0 });
+  const [marketData, setMarketData] = useState({}); // Live market data from WebSocket
   
   // iOS-style hooks
   const { toast, showToast, hideToast } = useIOSToast();
@@ -64,6 +66,80 @@ const UserOrders = () => {
     window.addEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
     return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
   }, [user?.token, dateFilter, customDateFrom, customDateTo, mcxOnly, cryptoOnly, forexOnly]);
+
+  // Connect to Socket.IO for real-time market data
+  useEffect(() => {
+    if (!user?.token) return;
+
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
+    const socket = io(socketUrl);
+    const pending = {};
+    const MARKET_TICK_FLUSH_MS = 0;
+    let flushTimer = null;
+
+    const flushBatchedTicks = () => {
+      flushTimer = null;
+      const keys = Object.keys(pending);
+      if (keys.length === 0) return;
+      const batch = {};
+      for (const k of keys) {
+        batch[k] = pending[k];
+        delete pending[k];
+      }
+      setMarketData((prev) => ({ ...prev, ...batch }));
+    };
+
+    const queueTicks = (ticks) => {
+      if (!ticks || typeof ticks !== 'object' || Array.isArray(ticks)) return;
+      Object.assign(pending, ticks);
+      if (flushTimer) return;
+      flushTimer = setTimeout(flushBatchedTicks, MARKET_TICK_FLUSH_MS);
+    };
+
+    socket.on('connect', () => {
+      console.log('Socket.IO connected for UserOrders');
+    });
+
+    socket.on('market_tick', (ticks) => {
+      queueTicks(ticks);
+    });
+
+    socket.on('crypto_tick', (ticks) => {
+      queueTicks(ticks);
+    });
+
+    return () => {
+      if (flushTimer) clearTimeout(flushTimer);
+      socket.disconnect();
+    };
+  }, [user?.token]);
+
+  // Get current price from market data for live P&L calculation
+  const getCurrentPrice = (position) => {
+    const side = position.side;
+    const isCrypto = position.isCrypto || position.exchange === 'BINANCE';
+    const isForex = position.segment?.toUpperCase() === 'FOREX' || position.exchange?.toUpperCase() === 'FOREX';
+
+    if (isCrypto) {
+      // For crypto, use symbol to get market data
+      const data = marketData[position.symbol] || marketData[position.pair];
+      if (!data) return position.currentPrice || position.entryPrice;
+      return side === 'BUY' ? (data.bid || data.ltp || data.close || 0) : (data.ask || data.ltp || data.close || 0);
+    }
+
+    if (isForex) {
+      const data = marketData[position.symbol] || marketData[position.token];
+      if (!data) return position.currentPrice || position.entryPrice;
+      return side === 'BUY' ? (data.bid || data.ltp || data.close || 0) : (data.ask || data.ltp || data.close || 0);
+    }
+
+    // For Indian markets (NSE, BSE, MCX)
+    const token = position.token;
+    const symbol = position.symbol;
+    const data = marketData[token] || marketData[symbol];
+    if (!data) return position.currentPrice || position.entryPrice;
+    return data.ltp || data.last_price || data.close || position.currentPrice || position.entryPrice;
+  };
 
   const getDateRange = () => {
     const now = new Date();
@@ -148,7 +224,7 @@ const UserOrders = () => {
       const filteredHistory = filterByMode(filterByDate(allHistory));
       const filteredPending = filterByMode(filterByDate(allPending));
 
-      setPositions(filteredPositions);
+      setPositions(filteredPositions.filter(t => !t.isAutoSquared));
       setClosedTrades(filteredHistory.filter(t => t.status === 'CLOSED'));
       setCancelledOrders(filteredHistory.filter(t => t.status === 'CANCELLED'));
       setAutoSquareOrders(filteredPositions.filter(t => t.isAutoSquared && t.status === 'OPEN'));
@@ -490,7 +566,17 @@ const UserOrders = () => {
         ) : (
           <div className="space-y-3">
             {getCurrentData().map((item, index) => {
-              const pnl = item.realizedPnL || item.pnl || item.unrealizedPnL || 0;
+              // Calculate live P&L for open positions using current market data
+              let pnl;
+              if (activeTab === 'positions' || activeTab === 'autosquare') {
+                const ltp = getCurrentPrice(item) || item.currentPrice || item.entryPrice;
+                pnl = item.side === 'BUY'
+                  ? (ltp - item.entryPrice) * item.quantity
+                  : (item.entryPrice - ltp) * item.quantity;
+              } else {
+                // For closed trades, use realized P&L from backend
+                pnl = item.realizedPnL || item.pnl || item.unrealizedPnL || 0;
+              }
               const isProfitable = pnl >= 0;
               
               return (
@@ -532,6 +618,8 @@ const UserOrders = () => {
                           <th className="pb-2">Product</th>
                           <th className="pb-2 text-right">Qty</th>
                           <th className="pb-2 text-right">Entry</th>
+                          {activeTab === 'autosquare' && <th className="pb-2 text-right">LTP @ End Time</th>}
+                          {activeTab === 'autosquare' && <th className="pb-2 text-right">Carry Qty</th>}
                           {activeTab === 'closed' && <th className="pb-2 text-right">Exit</th>}
                           <th className="pb-2">Status</th>
                           <th className="pb-2">Date</th>
@@ -559,14 +647,33 @@ const UserOrders = () => {
                           </td>
                           <td className="py-2 text-right">{item.quantity || item.lots || 1}</td>
                           <td className="py-2 text-right">₹{(item.entryPrice || item.price || 0).toLocaleString()}</td>
+                          {activeTab === 'autosquare' && (
+                            <td className="py-2 text-right">
+                              {item.autoSquareLtp && item.autoSquareLtp > 0 ? (
+                                <div>₹{item.autoSquareLtp.toLocaleString()}</div>
+                              ) : (
+                                <div className="text-red-400">LTP not captured</div>
+                              )}
+                              {item.autoSquaredAt && (
+                                <div className="text-[10px] text-gray-500">
+                                  @{new Date(item.autoSquaredAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                              )}
+                            </td>
+                          )}
+                          {activeTab === 'autosquare' && (
+                            <td className="py-2 text-right">
+                              <span className="text-purple-400 font-medium">{item.carryForwardQty || 0}</span>
+                            </td>
+                          )}
                           {activeTab === 'closed' && <td className="py-2 text-right">₹{(item.exitPrice || 0).toLocaleString()}</td>}
                           <td className="py-2">
                             <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
                               item.isAutoSquared && item.status === 'OPEN' ? 'bg-purple-500/20 text-purple-500' :
                               item.status === 'OPEN' ? 'bg-blue-500/20 text-blue-500' :
-                              item.status === 'CLOSED' ? 'bg-green-500/20 text-green-500' :
-                              item.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-500' :
-                              'bg-red-500/20 text-red-500'
+                              item.status === 'CLOSED' ? 'bg-green-500/20 text-green-400' :
+                              item.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-red-500/20 text-red-400'
                             }`}>
                               {item.isAutoSquared && item.status === 'OPEN' ? 'OPEN FOR NEXT DAY' : item.status}
                             </span>

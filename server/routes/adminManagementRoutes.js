@@ -8941,7 +8941,7 @@ router.put('/admins/:id/restrict-mode', protectAdmin, superAdminOnly, async (req
 
   try {
 
-    const { enabled, maxUsers, maxBrokers, maxSubBrokers, monthlyIncentiveAmount, monthlyBrokerageCharge, monthlyIncentiveScope } = req.body;
+    const { enabled, maxUsers, maxBrokers, maxSubBrokers, monthlyIncentiveAmount, monthlyBrokerageCharge, monthlyIncentiveScope, brokerageChargePerCrore } = req.body;
 
     
 
@@ -8997,7 +8997,13 @@ router.put('/admins/:id/restrict-mode', protectAdmin, superAdminOnly, async (req
 
     }
 
-    
+    if ((admin.role === 'BROKER' || admin.role === 'SUB_BROKER') && typeof brokerageChargePerCrore === 'number' && brokerageChargePerCrore >= 0) {
+
+      admin.restrictMode.brokerageChargePerCrore = brokerageChargePerCrore;
+
+    }
+
+
 
     admin.markModified('restrictMode');
 
@@ -9211,7 +9217,7 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
   try {
 
-    const { isFranchiseRoot } = req.body;
+    const { isFranchiseRoot, platformChargesPercentage } = req.body;
 
     if (typeof isFranchiseRoot !== 'boolean') {
 
@@ -9231,6 +9237,10 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
     admin.isFranchiseRoot = isFranchiseRoot;
 
+    if (isFranchiseRoot && platformChargesPercentage !== undefined) {
+      admin.platformChargesPercentage = platformChargesPercentage;
+    }
+
     await admin.save();
 
     
@@ -9247,6 +9257,8 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
         isFranchiseRoot: admin.isFranchiseRoot,
 
+        platformChargesPercentage: admin.platformChargesPercentage,
+
       }
 
     });
@@ -9259,6 +9271,38 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
 });
 
+
+/**
+ * PUT /admins/:id/crypto-timing
+ * Update admin-specific crypto trading timing (Super Admin only).
+ * When set, applies to this admin's entire hierarchy.
+ */
+router.put('/admins/:id/crypto-timing', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { cryptoStartTime, cryptoEndTime } = req.body;
+
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    if (admin.role === 'SUPER_ADMIN') return res.status(403).json({ message: 'Cannot set crypto timing on Super Admin' });
+
+    if (cryptoStartTime !== undefined) admin.cryptoStartTime = cryptoStartTime;
+    if (cryptoEndTime !== undefined) admin.cryptoEndTime = cryptoEndTime;
+
+    await admin.save();
+
+    res.json({
+      message: `Crypto timing updated for ${admin.name || admin.username}`,
+      admin: {
+        _id: admin._id,
+        username: admin.username,
+        cryptoStartTime: admin.cryptoStartTime,
+        cryptoEndTime: admin.cryptoEndTime,
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 
 /**

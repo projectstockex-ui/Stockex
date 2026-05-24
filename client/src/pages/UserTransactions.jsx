@@ -208,6 +208,9 @@ const UserTransactions = () => {
     if (item.reason === 'WITHDRAWAL' || item.displayType === 'WITHDRAWAL') return 'Withdrawal';
     if (item.reason === 'TRADE') return 'Trade P&L';
     if (item.reason === 'COMMISSION') return 'Commission';
+    if (item.reason === 'BROKERAGE_OPEN_LEG') return 'BROKERAGE(OPEN)';
+    if (item.reason === 'BROKERAGE_CLOSE_LEG') return 'BROKERAGE(CLOSE)';
+    if (item.reason === 'BROKERAGE') return 'BROKERAGE(OPEN+CLOSE)';
     return item.displayType || item.type || 'Transaction';
   };
 
@@ -371,40 +374,64 @@ const UserTransactions = () => {
           </div>
         ) : (
           <div className="bg-dark-800 rounded-xl overflow-hidden">
-            <div className="divide-y divide-dark-600">
-              {filteredData.length === 0 ? (
-                <div className="px-4 py-12 text-center text-gray-500">
-                  <Wallet size={32} className="mx-auto mb-2 opacity-50" />
-                  No transactions found
-                </div>
-              ) : (
-                filteredData.map((item, index) => (
-                  <div key={item._id || index} className="flex items-center justify-between p-4 hover:bg-dark-700 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-dark-600 flex items-center justify-center">
-                        {getTypeIcon(item)}
-                      </div>
-                      <div>
-                        <div className="font-medium">{getTypeLabel(item)}</div>
-                        <div className="text-xs text-gray-500">
-                          {item.description || formatDate(item.createdAt)}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className={`font-bold ${(item.displayAmount || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {(item.displayAmount || 0) >= 0 ? '+' : ''}₹{Math.abs(item.displayAmount || item.amount || 0).toLocaleString()}
-                      </div>
-                      {item.balanceAfter !== undefined && (
-                        <div className="text-xs text-gray-500">
-                          Bal: ₹{item.balanceAfter?.toLocaleString()}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+            {filteredData.length === 0 ? (
+              <div className="px-4 py-12 text-center text-gray-500">
+                <Wallet size={32} className="mx-auto mb-2 opacity-50" />
+                No transactions found
+              </div>
+            ) : (
+              <table className="w-full text-left text-[11px]">
+                <thead className="sticky top-0 bg-dark-800 text-gray-500">
+                  <tr>
+                    <th className="px-2 py-2 font-medium whitespace-nowrap">When (IST)</th>
+                    <th className="px-2 py-2 font-medium">Reason</th>
+                    <th className="px-2 py-2 font-medium text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dark-700">
+                  {filteredData.map((item, index) => {
+                    // Transform reason for brokerage legs
+                    let displayReason = item.reason;
+                    if (item.reason === 'BROKERAGE_OPEN_LEG') {
+                      displayReason = 'BROKERAGE(OPEN)';
+                    } else if (item.reason === 'BROKERAGE_CLOSE_LEG') {
+                      displayReason = 'BROKERAGE(CLOSE)';
+                    } else if (item.reason === 'BROKERAGE' && item.meta?.leg) {
+                      // New entries with leg in meta
+                      if (item.meta.leg === 'OPEN') displayReason = 'BROKERAGE(OPEN)';
+                      else if (item.meta.leg === 'CLOSE') displayReason = 'BROKERAGE(CLOSE)';
+                      else displayReason = 'BROKERAGE(OPEN+CLOSE)';
+                    } else if (item.reason === 'BROKERAGE') {
+                      // Old entries without leg info - show as plain BROKERAGE
+                      displayReason = 'BROKERAGE';
+                    }
+
+                    return (
+                      <tr key={item._id || index} className="hover:bg-dark-800/60">
+                        <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{formatDate(item.createdAt)}</td>
+                        <td className="px-2 py-2 align-top">
+                          <div className={`text-gray-200 font-medium ${(item.displayAmount || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {displayReason}
+                          </div>
+                          {item.description && (
+                            <div className="text-[10px] text-gray-500 mt-1">{item.description}</div>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right align-top tabular-nums">
+                          <span className={(item.displayAmount || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {(item.displayAmount || 0) >= 0 ? '+' : ''}₹
+                            {Math.abs(item.displayAmount || item.amount || 0).toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         )}
       </div>
