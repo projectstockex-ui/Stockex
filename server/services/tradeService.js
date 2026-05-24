@@ -1527,33 +1527,87 @@ static _SEGMENT_MERGE_FALLBACK = {
 
     console.log(`[TradeService.createTrade] Final requiredMargin: ${requiredMargin}`);
 
-    // 11. Validate margin - pass segment and exchange for MCX wallet check
-    await this.validateMargin(userId, requiredMargin, tradeData.segment, tradeData.exchange);
-    
-    // 12. Block margin - use MCX wallet for MCX trades
-    // Use separate wallets for crypto and forex
-    // isCrypto and isForex are already declared above (line 1098-1099)
+    const userSegmentSettingsForBrk = await this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
+    const turnoverForBrk = marginPrice * (tradeData.quantity || 0);
+    const ONE_CRORE_BRK = 10_000_000;
+    let pureBrokerage = 0;
+    if (userSegmentSettingsForBrk.commissionType === 'PER_CRORE') {
+      const commValue = userSegmentSettingsForBrk.commission || userSegmentSettingsForBrk.commissionLot || 0;
+      pureBrokerage = (turnoverForBrk / ONE_CRORE_BRK) * commValue * 2;
+    } else if (userSegmentSettingsForBrk.commissionType === 'PER_LOT') {
+      const commValue = userSegmentSettingsForBrk.commissionLot || userSegmentSettingsForBrk.commission || 0;
+      pureBrokerage = commValue * (tradeData.lots || lots) * 2;
+    } else if (userSegmentSettingsForBrk.commissionType === 'PER_TRADE') {
+      pureBrokerage = (userSegmentSettingsForBrk.commission || 0) * 2;
+    }
+    pureBrokerage = Math.round(pureBrokerage * 100) / 100;
+    const roundTripBrokerage =
+      pureBrokerage > 0 ? pureBrokerage : Math.round(brokerage * 2 * 100) / 100;
 
+    // 11. Validate margin + brokerage headroom on segment wallets
     if (isMcx) {
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { 'mcxWallet.usedMargin': requiredMargin } }
-      );
+      const bal = user.mcxWallet?.balance || 0;
+      const um = user.mcxWallet?.usedMargin || 0;
+      const free = bal - um;
+      const need = requiredMargin + roundTripBrokerage;
+      if (need > free) {
+        throw new Error(
+          `Insufficient margin in MCX Account. Required: ${need.toFixed(2)} ` +
+            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
+        );
+      }
     } else if (isCrypto) {
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { 'cryptoWallet.usedMargin': requiredMargin } }
-      );
+      const bal = user.cryptoWallet?.balance || 0;
+      const um = user.cryptoWallet?.usedMargin || 0;
+      const free = bal - um;
+      const need = requiredMargin + roundTripBrokerage;
+      if (need > free) {
+        throw new Error(
+          `Insufficient margin in Crypto Account. Required: ${need.toFixed(2)} ` +
+            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
+        );
+      }
     } else if (isForex) {
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { 'forexWallet.usedMargin': requiredMargin } }
-      );
+      const bal = user.forexWallet?.balance || 0;
+      const um = user.forexWallet?.usedMargin || 0;
+      const free = bal - um;
+      const need = requiredMargin + roundTripBrokerage;
+      if (need > free) {
+        throw new Error(
+          `Insufficient margin in Forex Account. Required: ${need.toFixed(2)} ` +
+            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
+        );
+      }
     } else {
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { 'wallet.usedMargin': requiredMargin, 'wallet.blocked': requiredMargin } }
-      );
+      const tb = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
+      const um = user.wallet?.usedMargin || 0;
+      const free = tb - um;
+      const need = requiredMargin + roundTripBrokerage;
+      if (need > free) {
+        throw new Error(
+          `Insufficient margin in Trading Account. Required: ${need.toFixed(2)} ` +
+            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
+        );
+      }
+    }
+
+    // 12. Block margin and debit round-trip brokerage on open (segment wallets)
+    if (isMcx) {
+      const inc = { 'mcxWallet.usedMargin': requiredMargin };
+      if (roundTripBrokerage > 0) inc['mcxWallet.balance'] = -roundTripBrokerage;
+      await User.updateOne({ _id: userId }, { $inc: inc });
+    } else if (isCrypto) {
+      const inc = { 'cryptoWallet.usedMargin': requiredMargin };
+      if (roundTripBrokerage > 0) inc['cryptoWallet.balance'] = -roundTripBrokerage;
+      await User.updateOne({ _id: userId }, { $inc: inc });
+    } else if (isForex) {
+      const inc = { 'forexWallet.usedMargin': requiredMargin };
+      if (roundTripBrokerage > 0) inc['forexWallet.balance'] = -roundTripBrokerage;
+      await User.updateOne({ _id: userId }, { $inc: inc });
+    } else {
+      const inc = { 'wallet.usedMargin': requiredMargin, 'wallet.blocked': requiredMargin };
+      if (roundTripBrokerage > 0) inc['wallet.tradingBalance'] = -roundTripBrokerage;
+      await User.updateOne({ _id: userId }, { $inc: inc });
     }
     
     // 13. Create trade with user's settings applied
@@ -1595,45 +1649,30 @@ static _SEGMENT_MERGE_FALLBACK = {
         stt: 0,
         total: brokerage + (brokerage * 0.18)
       },
-      commission: brokerage,
-      totalCharges: brokerage + (brokerage * 0.18)
+      commission: roundTripBrokerage,
+      totalCharges: roundTripBrokerage,
+      brokeragePrepaidRoundTrip: true,
+      walletBrokerageDebited: roundTripBrokerage > 0
     });
 
-    // Calculate pure brokerage from user's commission rate for distribution
-    const userSegmentSettings = await this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
-    const turnover = tradeData.price * tradeData.quantity;
-    const ONE_CRORE = 10_000_000;
-    let pureBrokerage = 0;
-    
-    if (userSegmentSettings.commissionType === 'PER_CRORE') {
-      const commValue = userSegmentSettings.commission || userSegmentSettings.commissionLot || 0;
-      pureBrokerage = (turnover / ONE_CRORE) * commValue * 2; // round-trip
-    } else if (userSegmentSettings.commissionType === 'PER_LOT') {
-      const commValue = userSegmentSettings.commissionLot || userSegmentSettings.commission || 0;
-      pureBrokerage = commValue * (tradeData.lots || lots) * 2; // round-trip
-    } else if (userSegmentSettings.commissionType === 'PER_TRADE') {
-      pureBrokerage = (userSegmentSettings.commission || 0) * 2; // round-trip
-    }
-    pureBrokerage = Math.round(pureBrokerage * 100) / 100;
-    
-    console.log('[TradeService] Pure brokerage for distribution:', pureBrokerage, 'user commission rate:', userSegmentSettings.commission, userSegmentSettings.commissionType);
+    console.log('[TradeService] Pure brokerage for distribution:', roundTripBrokerage, 'user commission rate:', userSegmentSettingsForBrk.commission, userSegmentSettingsForBrk.commissionType);
     console.log('[TradeService] Distribution check:', { admin: admin.name, adminRole: admin.role, userIsDemo: user.isDemo, userAdmin: user.admin });
 
     // Process FULL brokerage distribution (open+close) on position OPEN
     // Full round-trip brokerage is credited to hierarchy when position opens
     console.log('[TradeService] Brokerage distribution check:', {
       tradeId: trade._id,
-      brokerage: pureBrokerage,
+      brokerage: roundTripBrokerage,
       admin: admin.name,
       user: user.userId,
       adminRole: admin.role
     });
-    if (pureBrokerage > 0) {
+    if (roundTripBrokerage > 0) {
       setTimeout(async () => {
         try {
-          console.log('[TradeService] Calling distributeBrokerage for full round-trip:', trade._id, 'amount:', pureBrokerage);
-          await this.distributeBrokerage(trade, pureBrokerage, admin, user, 'OPEN+CLOSE');
-          console.log('[TradeService] Full brokerage distributed on trade open:', trade._id, pureBrokerage);
+          console.log('[TradeService] Calling distributeBrokerage for full round-trip:', trade._id, 'amount:', roundTripBrokerage);
+          await this.distributeBrokerage(trade, roundTripBrokerage, admin, user, 'OPEN+CLOSE');
+          console.log('[TradeService] Full brokerage distributed on trade open:', trade._id, roundTripBrokerage);
         } catch (error) {
           console.error('[TradeService] Error processing brokerage distribution on trade open:', error);
         }
@@ -1675,49 +1714,54 @@ static _SEGMENT_MERGE_FALLBACK = {
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase());
 
     if (isMcx) {
-      // MCX: Release usedMargin and add P&L to balance
+      const walletPnl = trade.realizedPnL ?? trade.netPnL ?? 0;
       const currentMcxBalance = user.mcxWallet?.balance || 0;
-      const newMcxBalance = currentMcxBalance + trade.netPnL;
+      const newMcxBalance = currentMcxBalance + walletPnl;
       await User.updateOne(
         { _id: user._id },
         { $inc: {
           'mcxWallet.usedMargin': -trade.marginUsed,
-          'mcxWallet.realizedPnL': trade.netPnL,
-          'mcxWallet.todayRealizedPnL': trade.netPnL
+          'mcxWallet.realizedPnL': walletPnl,
+          'mcxWallet.todayRealizedPnL': walletPnl
         }, $set: {
           'mcxWallet.balance': newMcxBalance
         }}
       );
     } else if (isCrypto) {
+      const walletPnl = trade.realizedPnL ?? trade.netPnL ?? 0;
       await User.updateOne(
         { _id: user._id },
         { $inc: {
           'cryptoWallet.usedMargin': -trade.marginUsed,
-          'cryptoWallet.balance': trade.netPnL,
-          'cryptoWallet.realizedPnL': trade.netPnL,
-          'cryptoWallet.todayRealizedPnL': trade.netPnL
+          'cryptoWallet.balance': walletPnl,
+          'cryptoWallet.realizedPnL': walletPnl,
+          'cryptoWallet.todayRealizedPnL': walletPnl
         }}
       );
     } else if (isForex) {
+      const walletPnl = trade.realizedPnL ?? trade.netPnL ?? 0;
       await User.updateOne(
         { _id: user._id },
         { $inc: {
           'forexWallet.usedMargin': -trade.marginUsed,
-          'forexWallet.balance': trade.netPnL,
-          'forexWallet.realizedPnL': trade.netPnL,
-          'forexWallet.todayRealizedPnL': trade.netPnL
+          'forexWallet.balance': walletPnl,
+          'forexWallet.realizedPnL': walletPnl,
+          'forexWallet.todayRealizedPnL': walletPnl
         }}
       );
     } else {
+      const walletPnl = trade.brokeragePrepaidRoundTrip
+        ? (trade.realizedPnL ?? trade.netPnL ?? 0)
+        : (trade.netPnL ?? 0);
       await User.updateOne(
         { _id: user._id },
         { $inc: {
           'wallet.usedMargin': -trade.marginUsed,
           'wallet.blocked': -trade.marginUsed,
-          'wallet.tradingBalance': trade.netPnL,
-          'wallet.cashBalance': trade.netPnL,
-          'wallet.realizedPnL': trade.netPnL,
-          'wallet.todayRealizedPnL': trade.netPnL
+          'wallet.tradingBalance': walletPnl,
+          'wallet.cashBalance': walletPnl,
+          'wallet.realizedPnL': walletPnl,
+          'wallet.todayRealizedPnL': walletPnl
         }}
       );
     }

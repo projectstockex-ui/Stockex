@@ -568,7 +568,17 @@ const UserOrders = () => {
             {getCurrentData().map((item, index) => {
               // Calculate live P&L for open positions using current market data
               let pnl;
-              if (activeTab === 'positions' || activeTab === 'autosquare') {
+              if (activeTab === 'autosquare') {
+                if (item.pnlAtAutoSquare != null && Number.isFinite(Number(item.pnlAtAutoSquare))) {
+                  pnl = Number(item.pnlAtAutoSquare);
+                } else {
+                  const endLtp = item.autoSquareLtp || item.currentPrice || item.entryPrice;
+                  const qty = item.originalQty || item.quantity;
+                  pnl = item.side === 'BUY'
+                    ? (endLtp - item.entryPrice) * qty
+                    : (item.entryPrice - endLtp) * qty;
+                }
+              } else if (activeTab === 'positions') {
                 const ltp = getCurrentPrice(item) || item.currentPrice || item.entryPrice;
                 pnl = item.side === 'BUY'
                   ? (ltp - item.entryPrice) * item.quantity
@@ -616,10 +626,12 @@ const UserOrders = () => {
                         <tr>
                           <th className="pb-2">Side</th>
                           <th className="pb-2">Product</th>
-                          <th className="pb-2 text-right">Qty</th>
+                          <th className="pb-2 text-right">
+                            {activeTab === 'autosquare' ? 'Orig Qty' : 'Qty'}
+                          </th>
                           <th className="pb-2 text-right">Entry</th>
                           {activeTab === 'autosquare' && <th className="pb-2 text-right">LTP @ End Time</th>}
-                          {activeTab === 'autosquare' && <th className="pb-2 text-right">Carry Qty</th>}
+                          {activeTab === 'autosquare' && <th className="pb-2 text-right">Next Day Qty</th>}
                           {activeTab === 'closed' && <th className="pb-2 text-right">Exit</th>}
                           <th className="pb-2">Status</th>
                           <th className="pb-2">Date</th>
@@ -645,7 +657,11 @@ const UserOrders = () => {
                               {item.productType || '-'}
                             </span>
                           </td>
-                          <td className="py-2 text-right">{item.quantity || item.lots || 1}</td>
+                          <td className="py-2 text-right">
+                            {activeTab === 'autosquare'
+                              ? (item.originalQty ?? item.quantity ?? item.lots ?? 1)
+                              : (item.quantity || item.lots || 1)}
+                          </td>
                           <td className="py-2 text-right">₹{(item.entryPrice || item.price || 0).toLocaleString()}</td>
                           {activeTab === 'autosquare' && (
                             <td className="py-2 text-right">
@@ -663,7 +679,9 @@ const UserOrders = () => {
                           )}
                           {activeTab === 'autosquare' && (
                             <td className="py-2 text-right">
-                              <span className="text-purple-400 font-medium">{item.carryForwardQty || 0}</span>
+                              <span className="text-purple-400 font-medium">
+                                {item.carryForwardQty ?? item.quantity ?? 0}
+                              </span>
                             </td>
                           )}
                           {activeTab === 'closed' && <td className="py-2 text-right">₹{(item.exitPrice || 0).toLocaleString()}</td>}

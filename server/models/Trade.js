@@ -256,6 +256,11 @@ const tradeSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  /** True after round-trip brokerage is debited from segment wallet balance on open */
+  walletBrokerageDebited: {
+    type: Boolean,
+    default: false
+  },
   totalCharges: {
     type: Number,
     default: 0

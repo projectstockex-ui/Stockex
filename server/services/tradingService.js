@@ -1027,29 +1027,45 @@ class TradingService {
     // Use appropriate wallet based on trade type
     let availableBalance;
     if (isCryptoWallet) {
-      availableBalance = user.cryptoWallet?.balance || 0;
-      // Only check marginRequired, don't include commission in balance check
-      if (marginRequired > availableBalance) {
-        throw new Error(`Insufficient crypto wallet balance. Required: ${marginRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
+      const cryptoBalance = user.cryptoWallet?.balance || 0;
+      const cryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
+      const cryptoFreeBalance = cryptoBalance - cryptoUsedMargin;
+      availableBalance = cryptoFreeBalance;
+      const cryptoOpenRequired = marginRequired + totalCommission;
+      if (cryptoOpenRequired > cryptoFreeBalance) {
+        throw new Error(
+          `Insufficient crypto wallet balance. Required: ${cryptoOpenRequired.toFixed(2)} ` +
+            `(margin ${marginRequired.toFixed(2)} + brokerage ${totalCommission.toFixed(2)}), ` +
+            `Available: ${cryptoFreeBalance.toFixed(2)}`
+        );
       }
     } else if (isForexWallet) {
-      availableBalance = user.forexWallet?.balance || 0;
-      // Only check marginRequired, don't include commission in balance check
-      if (marginRequired > availableBalance) {
-        throw new Error(`Insufficient forex wallet balance. Required: ${marginRequired.toFixed(2)}, Available: ${availableBalance.toFixed(2)}`);
+      const forexBalance = user.forexWallet?.balance || 0;
+      const forexUsedMargin = user.forexWallet?.usedMargin || 0;
+      const forexFreeBalance = forexBalance - forexUsedMargin;
+      availableBalance = forexFreeBalance;
+      const forexOpenRequired = marginRequired + totalCommission;
+      if (forexOpenRequired > forexFreeBalance) {
+        throw new Error(
+          `Insufficient forex wallet balance. Required: ${forexOpenRequired.toFixed(2)} ` +
+            `(margin ${marginRequired.toFixed(2)} + brokerage ${totalCommission.toFixed(2)}), ` +
+            `Available: ${forexFreeBalance.toFixed(2)}`
+        );
       }
     } else if (isMCXTradeEarly) {
-      // MCX trades use MCX wallet balance
-      // Re-fetch user to get latest MCX wallet balance
       const freshUser = await User.findById(user._id).select('mcxWallet');
       const mcxBalance = freshUser?.mcxWallet?.balance || 0;
-      console.log('[MCX Trade] FRESH mcxWallet:', JSON.stringify(freshUser?.mcxWallet), 'mcxBalance:', mcxBalance);
-
-      // SIMPLE CHECK: If MCX wallet balance > 0, allow trade (margin check done separately)
-      if (mcxBalance <= 0) {
-        throw new Error(`Cannot place trade. Your MCX wallet balance is ₹${mcxBalance}. Please add funds to your MCX wallet.`);
+      const mcxUsedMargin = freshUser?.mcxWallet?.usedMargin || 0;
+      const mcxFreeBalance = mcxBalance - mcxUsedMargin;
+      availableBalance = mcxFreeBalance;
+      const mcxOpenRequired = marginRequired + totalCommission;
+      if (mcxOpenRequired > mcxFreeBalance) {
+        throw new Error(
+          `Insufficient MCX wallet balance. Required: ${mcxOpenRequired.toLocaleString()} ` +
+            `(margin ${marginRequired.toLocaleString()} + brokerage ${totalCommission.toLocaleString()}), ` +
+            `Available: ${mcxFreeBalance.toLocaleString()}`
+        );
       }
-      // Update user object with fresh MCX wallet data
       user.mcxWallet = freshUser.mcxWallet;
     } else {
       // Regular trades (NSE/BSE) use trading balance with margin system
@@ -1090,15 +1106,17 @@ class TradingService {
       // UPDATED: Use leverage-based calculation: (balance * leverage) - usedMargin + pledge
       availableBalance = (walletBalance * leverage) - blockedMargin + Math.max(0, usablePledge);
 
-      // CRITICAL CHANGE: Compare required margin against total wallet balance instead of available balance
-      // This allows trades as long as required margin <= total balance, regardless of used margin
-      const totalWalletBalance = walletBalance;
+      const freeTradingBalance = walletBalance - blockedMargin;
+      availableBalance = freeTradingBalance + Math.max(0, usablePledge);
       const totalRequired = marginRequired + totalCommission;
 
-      // Check if user has enough for margin + commission
-      if (totalRequired > totalWalletBalance) {
+      if (totalRequired > freeTradingBalance + Math.max(0, usablePledge)) {
         const pledgeMsg = isNFOTrade && usablePledge > 0 ? ` (Pledge: ${Math.max(0, usablePledge).toLocaleString()} available)` : '';
-        throw new Error(`Insufficient funds. Required: ${totalRequired.toLocaleString()}, Available: ${totalWalletBalance.toLocaleString()}${pledgeMsg}`);
+        throw new Error(
+          `Insufficient funds. Required: ${totalRequired.toLocaleString()} ` +
+            `(margin ${marginRequired.toLocaleString()} + brokerage ${totalCommission.toLocaleString()}), ` +
+            `Available: ${freeTradingBalance.toLocaleString()}${pledgeMsg}`
+        );
       }
     }
 
@@ -1205,58 +1223,73 @@ class TradingService {
     // Block margin from appropriate wallet
     let newTradingBalance, newUsedMargin, newBlocked, newCryptoBalance, newCryptoUsedMargin;
     let newForexBalance = user.forexWallet?.balance || 0;
+    let newForexUsedMargin = user.forexWallet?.usedMargin || 0;
     let newMcxBalance, newMcxUsedMargin;
     
     if (isCryptoWallet) {
       const cryptoBalance = user.cryptoWallet?.balance || 0;
       const cryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
-      // Lock margin in usedMargin, don't deduct from balance
-      if (marginRequired > cryptoBalance) {
-        throw new Error(`Insufficient crypto wallet balance. Required: ${marginRequired.toFixed(2)}, Available: ${cryptoBalance.toFixed(2)}`);
-      }
-      newCryptoBalance = cryptoBalance;  // Balance unchanged
-      newCryptoUsedMargin = cryptoUsedMargin + marginRequired;  // Margin locked
+      const willOpenNow = orderData.orderType === 'MARKET';
+      // Lock margin in usedMargin; debit round-trip brokerage from balance when position opens now
+      newCryptoUsedMargin = cryptoUsedMargin + marginRequired;
+      newCryptoBalance = willOpenNow
+        ? Math.max(0, cryptoBalance - totalCommission)
+        : cryptoBalance;
 
       newTradingBalance = user.wallet.tradingBalance || 0;
       newUsedMargin = user.wallet.usedMargin || 0;
       newBlocked = user.wallet.blocked || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      console.log(`Crypto trade: Locking ${marginRequired.toFixed(2)} margin in usedMargin. Balance: ${newCryptoBalance.toFixed(2)}, UsedMargin: ${newCryptoUsedMargin.toFixed(2)}`);
+      console.log(
+        `Crypto trade: Locking ${marginRequired.toFixed(2)} margin, brokerage ${totalCommission.toFixed(2)} ` +
+          `${willOpenNow ? 'debited now' : 'deferred until fill'}. Balance: ${newCryptoBalance.toFixed(2)}, UsedMargin: ${newCryptoUsedMargin.toFixed(2)}`
+      );
 
       trade.marginUsed = marginRequired;
+      trade.walletBrokerageDebited = willOpenNow && totalCommission > 0;
     } else if (isForexWallet) {
       const forexBalance = user.forexWallet?.balance || 0;
-      // Only deduct marginRequired, don't include commission in balance check
-      const totalDeduction = marginRequired;
-      newForexBalance = forexBalance - totalDeduction;
-      newCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
+      const forexUsedMargin = user.forexWallet?.usedMargin || 0;
+      const willOpenNow = orderData.orderType === 'MARKET';
+      newForexUsedMargin = forexUsedMargin + marginRequired;
+      newForexBalance = willOpenNow
+        ? Math.max(0, forexBalance - totalCommission)
+        : forexBalance;
 
-      if (newForexBalance < 0) {
-        throw new Error(`Insufficient forex wallet balance. Required: ${totalDeduction.toFixed(2)}, Available: ${forexBalance.toFixed(2)}`);
-      }
-      
       newCryptoBalance = user.cryptoWallet?.balance || 0;
+      newCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
       newTradingBalance = user.wallet.tradingBalance || 0;
       newUsedMargin = user.wallet.usedMargin || 0;
       newBlocked = user.wallet.blocked || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      console.log(`Forex trade: Deducting ${totalDeduction.toFixed(2)} from forex wallet`);
-      
+      console.log(
+        `Forex trade: Locking ${marginRequired.toFixed(2)} margin, brokerage ${totalCommission.toFixed(2)} ` +
+          `${willOpenNow ? 'debited now' : 'deferred until fill'}. Balance: ${newForexBalance.toFixed(2)}, UsedMargin: ${newForexUsedMargin.toFixed(2)}`
+      );
+
       trade.marginUsed = marginRequired;
+      trade.walletBrokerageDebited = willOpenNow && totalCommission > 0;
     } else if (isMCXTrade) {
-      // MCX trades: Block margin in usedMargin, deduct only commission from balance
       const mcxBalance = user.mcxWallet?.balance || 0;
-      
-      // SIMPLE CHECK: If MCX wallet balance > required margin, allow trade
-      if (marginRequired > mcxBalance) {
-        throw new Error(`Insufficient MCX wallet balance. Required: ${marginRequired.toLocaleString()}, Available: ${mcxBalance.toLocaleString()}`);
+      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      const mcxFreeBalance = mcxBalance - mcxUsedMargin;
+      const willOpenNow = orderData.orderType === 'MARKET';
+      const mcxOpenRequired = marginRequired + totalCommission;
+
+      if (mcxOpenRequired > mcxFreeBalance) {
+        throw new Error(
+          `Insufficient MCX wallet balance. Required: ${mcxOpenRequired.toLocaleString()} ` +
+            `(margin ${marginRequired.toLocaleString()} + brokerage ${totalCommission.toLocaleString()}), ` +
+            `Available: ${mcxFreeBalance.toLocaleString()}`
+        );
       }
-      
-      // Update MCX wallet - do NOT deduct anything from balance, only track margin in usedMargin
-      newMcxBalance = mcxBalance; // Balance unchanged
-      newMcxUsedMargin = (user.mcxWallet?.usedMargin || 0) + marginRequired; // Block margin
+
+      newMcxUsedMargin = mcxUsedMargin + marginRequired;
+      newMcxBalance = willOpenNow
+        ? Math.max(0, mcxBalance - totalCommission)
+        : mcxBalance;
 
       // Regular wallet unchanged for MCX trades
       newTradingBalance = user.wallet.tradingBalance || 0;
@@ -1265,7 +1298,11 @@ class TradingService {
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
       newForexBalance = user.forexWallet?.balance || 0;
-      console.log(`MCX trade: Blocking ₹${marginRequired.toLocaleString()} margin. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`);
+      trade.walletBrokerageDebited = willOpenNow && totalCommission > 0;
+      console.log(
+        `MCX trade: Locking ₹${marginRequired.toLocaleString()} margin, brokerage ₹${totalCommission.toLocaleString()} ` +
+          `${willOpenNow ? 'debited now' : 'deferred until fill'}. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`
+      );
     } else {
       // Regular trades: Block margin in usedMargin, deduct only commission from balance
       // Available = tradingBalance - usedMargin, so margin is only tracked in usedMargin
@@ -1308,9 +1345,13 @@ class TradingService {
         marginFromWallet = marginRequired;
       }
       
-      newTradingBalance = walletBalance - totalCommission; // Only commission deducted
-      newUsedMargin = walletUsedMargin + marginFromWallet; // Block wallet margin
+      const willOpenNow = orderData.orderType === 'MARKET';
+      newTradingBalance = willOpenNow
+        ? Math.max(0, walletBalance - totalCommission)
+        : walletBalance;
+      newUsedMargin = walletUsedMargin + marginFromWallet;
       newBlocked = (user.wallet.blocked || 0) + marginFromWallet;
+      trade.walletBrokerageDebited = willOpenNow && totalCommission > 0;
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
       newForexBalance = user.forexWallet?.balance || 0;
@@ -1339,6 +1380,7 @@ class TradingService {
       updateFields['cryptoWallet.usedMargin'] = newCryptoUsedMargin;
     } else if (isForexWallet) {
       updateFields['forexWallet.balance'] = newForexBalance;
+      updateFields['forexWallet.usedMargin'] = newForexUsedMargin;
     } else if (isMCXTrade) {
       updateFields['mcxWallet.balance'] = newMcxBalance;
       updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
@@ -1392,6 +1434,7 @@ class TradingService {
     if (isForexWallet) {
       if (!user.forexWallet) user.forexWallet = {};
       user.forexWallet.balance = newForexBalance;
+      user.forexWallet.usedMargin = newForexUsedMargin;
     }
     if (isMCXTrade) {
       if (!user.mcxWallet) user.mcxWallet = {};
@@ -1549,6 +1592,53 @@ class TradingService {
       trade.currentPrice = tradeIsUsdSpot(trade) ? ref : currentPrice;
       trade.marketPrice = tradeIsUsdSpot(trade) ? ref : currentPrice;
       trade.openedAt = new Date();
+
+      const commissionDue = Number(trade.commission) || 0;
+      if (commissionDue > 0 && !trade.walletBrokerageDebited) {
+        const isMcxPending =
+          trade.exchange === 'MCX' ||
+          trade.segment === 'MCX' ||
+          trade.segment === 'MCXFUT' ||
+          trade.segment === 'MCXOPT';
+        let debitField = null;
+        let freeBalance = 0;
+
+        if (trade.isCrypto) {
+          const freshUser = await User.findById(trade.user).select('cryptoWallet.balance cryptoWallet.usedMargin');
+          const bal = freshUser?.cryptoWallet?.balance || 0;
+          const um = freshUser?.cryptoWallet?.usedMargin || 0;
+          freeBalance = bal - um;
+          debitField = 'cryptoWallet.balance';
+        } else if (trade.isForex) {
+          const freshUser = await User.findById(trade.user).select('forexWallet.balance forexWallet.usedMargin');
+          const bal = freshUser?.forexWallet?.balance || 0;
+          const um = freshUser?.forexWallet?.usedMargin || 0;
+          freeBalance = bal - um;
+          debitField = 'forexWallet.balance';
+        } else if (isMcxPending) {
+          const freshUser = await User.findById(trade.user).select('mcxWallet.balance mcxWallet.usedMargin');
+          const bal = freshUser?.mcxWallet?.balance || 0;
+          const um = freshUser?.mcxWallet?.usedMargin || 0;
+          freeBalance = bal - um;
+          debitField = 'mcxWallet.balance';
+        } else {
+          const freshUser = await User.findById(trade.user).select('wallet.tradingBalance wallet.usedMargin');
+          const bal = freshUser?.wallet?.tradingBalance || 0;
+          const um = freshUser?.wallet?.usedMargin || 0;
+          freeBalance = bal - um;
+          debitField = 'wallet.tradingBalance';
+        }
+
+        if (!debitField || commissionDue > freeBalance) {
+          console.warn(
+            `[executePendingOrder] Cannot open ${trade.symbol}: insufficient balance for brokerage ₹${commissionDue.toFixed(2)}`
+          );
+          return null;
+        }
+        await User.updateOne({ _id: trade.user }, { $inc: { [debitField]: -commissionDue } });
+        trade.walletBrokerageDebited = true;
+      }
+
       await trade.save();
       const uid = trade.user;
       const usr = uid ? await User.findById(uid) : null;
@@ -1694,7 +1784,7 @@ class TradingService {
 
     // Release blocked margin and add/subtract P&L to appropriate wallet
     let newUsedMargin, newBlocked, newTradingBalance, newCryptoBalance, newCryptoUsedMargin, newCryptoRealizedPnL;
-    let newForexBalance, newForexRealizedPnL;
+    let newForexBalance, newForexUsedMargin, newForexRealizedPnL;
     let newMcxBalance, newMcxUsedMargin, newMcxRealizedPnL;
     
     if (trade.isCrypto) {
@@ -1717,7 +1807,8 @@ class TradingService {
       newTradingBalance = user.wallet.tradingBalance || 0;
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
-      newForexBalance = (user.forexWallet?.balance || 0) + tradeCostReturned + netPnL;
+      newForexUsedMargin = Math.max(0, (user.forexWallet?.usedMargin || 0) - tradeCostReturned);
+      newForexBalance = (user.forexWallet?.balance || 0) + netPnL;
       newForexRealizedPnL = (user.forexWallet?.realizedPnL || 0) + netPnL;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
@@ -1770,6 +1861,7 @@ class TradingService {
       updateFields['cryptoWallet.realizedPnL'] = newCryptoRealizedPnL;
     } else if (trade.isForex) {
       updateFields['forexWallet.balance'] = newForexBalance;
+      updateFields['forexWallet.usedMargin'] = newForexUsedMargin;
       updateFields['forexWallet.realizedPnL'] = newForexRealizedPnL;
     } else if (isMCXTrade) {
       updateFields['mcxWallet.balance'] = newMcxBalance;
@@ -1777,6 +1869,7 @@ class TradingService {
       updateFields['mcxWallet.realizedPnL'] = newMcxRealizedPnL;
     } else {
       // Regular trading wallet (NSE/BSE)
+      updateFields['wallet.usedMargin'] = newUsedMargin;
       updateFields['wallet.blocked'] = newBlocked;
       updateFields['wallet.tradingBalance'] = newTradingBalance;
       updateFields['wallet.realizedPnL'] = newRealizedPnL;

@@ -8,6 +8,7 @@ import SystemSettings from '../models/SystemSettings.js';
 import { getLTPMapForTrades, cacheKeyForTrade } from '../services/ltpResolutionService.js';
 import TradingService from '../services/tradingService.js';
 import { getCryptoData } from '../services/binanceWebSocket.js';
+import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
 
 /**
  * TradePro Trading Engine - EOD Settlement Cron Jobs
@@ -44,6 +45,173 @@ class EODSettlement {
     // Convert IST date back to UTC timestamp
     const offset = now.getTime() - new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getTime();
     return new Date(istDate.getTime() + offset);
+  }
+
+  /** Resolve segment permission keys for autosquare settings lookup */
+  static segmentPermissionKeysForTrade(trade, segmentGroup) {
+    if (segmentGroup === 'CRYPTO' || trade.isCrypto || trade.exchange === 'BINANCE') {
+      return ['CRYPTOFUT', 'CRYPTOOPT', 'CRYPTO'];
+    }
+    if (segmentGroup === 'FOREX' || trade.isForex || trade.exchange === 'FOREX') {
+      return ['FOREXFUT', 'FOREXOPT', 'FOREX'];
+    }
+    if (segmentGroup === 'MCX' || trade.exchange === 'MCX') {
+      return ['MCXFUT', 'MCXOPT', 'MCX'];
+    }
+    const seg = String(trade.segment || '').toUpperCase();
+    if (seg) return [seg];
+    return [];
+  }
+
+  static getAutosquareSettingsForTrade(admin, trade, segmentGroup) {
+    let autosquarePercent = 90;
+    let carryForwardLeverage = 50;
+    const segPerms = admin?.segmentPermissions instanceof Map
+      ? Object.fromEntries(admin.segmentPermissions)
+      : admin?.segmentPermissions || {};
+
+    const keys = EODSettlement.segmentPermissionKeysForTrade(trade, segmentGroup);
+    for (const key of keys) {
+      const segSettings = segPerms[key];
+      if (!segSettings) continue;
+      const lot = segSettings.lotSettings || {};
+      const qty = segSettings.quantityModeSettings || {};
+      if (lot.autosquarePercent != null) autosquarePercent = Number(lot.autosquarePercent);
+      else if (qty.autosquarePercent != null) autosquarePercent = Number(qty.autosquarePercent);
+      if (lot.carryForwardLeverage > 0) carryForwardLeverage = Number(lot.carryForwardLeverage);
+      else if (qty.carryForwardLeverage > 0) carryForwardLeverage = Number(qty.carryForwardLeverage);
+      else if (segSettings.exposureCarryForward > 0) {
+        carryForwardLeverage = Number(segSettings.exposureCarryForward);
+      }
+      break;
+    }
+    return {
+      autosquarePercent: Number.isFinite(autosquarePercent) ? autosquarePercent : 90,
+      carryForwardLeverage: Number.isFinite(carryForwardLeverage) && carryForwardLeverage > 0
+        ? carryForwardLeverage
+        : 50,
+    };
+  }
+
+  /** Closing time for one segment key: admin setting first, then system default */
+  static getSegmentCloseTime(admin, segKey, sysSegDefaults = {}) {
+    const segPerms = admin?.segmentPermissions instanceof Map
+      ? Object.fromEntries(admin.segmentPermissions)
+      : admin?.segmentPermissions || {};
+    const segSettings = segPerms[segKey] || {};
+    let closeTime = String(segSettings.cryptoClosingTime || segSettings.closingTime || '').trim();
+    if (!closeTime) {
+      const sysSeg = sysSegDefaults[segKey] || {};
+      closeTime = String(sysSeg.cryptoClosingTime || sysSeg.closingTime || '').trim();
+    }
+    return closeTime;
+  }
+
+  /** Crypto end time for an admin hierarchy (Ram 23:15, Radga 22:30, etc.) */
+  static getCryptoClosingTimeForAdmin(admin, sysSegDefaults = {}) {
+    for (const key of ['CRYPTOFUT', 'CRYPTOOPT', 'CRYPTO']) {
+      const t = EODSettlement.getSegmentCloseTime(admin, key, sysSegDefaults);
+      if (t) return t;
+    }
+    return '';
+  }
+
+  static isPastClosingTimeIST(closeTime) {
+    const timeParts = String(closeTime).split(':').map(Number);
+    const hours = timeParts[0];
+    const minutes = timeParts[1];
+    const seconds = timeParts[2] || 0;
+    if (isNaN(hours) || isNaN(minutes)) return false;
+
+    const now = new Date();
+    const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const currentHours = istTime.getHours();
+    const currentMinutes = istTime.getMinutes();
+    const currentSeconds = istTime.getSeconds();
+
+    return (
+      currentHours > hours ||
+      (currentHours === hours && currentMinutes > minutes) ||
+      (currentHours === hours && currentMinutes === minutes && currentSeconds >= seconds)
+    );
+  }
+
+  /** Wallet field paths for segment-group autosquare (balance + usedMargin) */
+  static walletFieldsForSegmentGroup(segmentGroup) {
+    if (segmentGroup === 'CRYPTO') {
+      return { balancePath: 'cryptoWallet.balance', usedMarginPath: 'cryptoWallet.usedMargin' };
+    }
+    if (segmentGroup === 'FOREX') {
+      return { balancePath: 'forexWallet.balance', usedMarginPath: 'forexWallet.usedMargin' };
+    }
+    if (segmentGroup === 'MCX') {
+      return { balancePath: 'mcxWallet.balance', usedMarginPath: 'mcxWallet.usedMargin' };
+    }
+    return { balancePath: 'wallet.tradingBalance', usedMarginPath: 'wallet.usedMargin' };
+  }
+
+  /**
+   * Carry-forward qty for next session:
+   * nextDayQty = floor((walletBalance + positionPnL) × carryForwardLeverage / endLtp)
+   */
+  static async applyCarryForwardAutosquare(trade, { ltp, closeTime, segmentGroup, admin }) {
+    const { carryForwardLeverage } = EODSettlement.getAutosquareSettingsForTrade(
+      admin,
+      trade,
+      segmentGroup
+    );
+    const { balancePath, usedMarginPath } = EODSettlement.walletFieldsForSegmentGroup(segmentGroup);
+
+    const user = await User.findOne({ userId: trade.userId })
+      .select(`${balancePath.split('.')[0]} wallet.tradingBalance wallet.usedMargin`)
+      .lean();
+    if (!user) throw new Error(`User ${trade.userId} not found`);
+
+    const walletRoot = balancePath.split('.')[0];
+    const initialBalance = Number(user[walletRoot]?.balance) || 0;
+    const originalQty = trade.originalQty || trade.quantity || trade.lots || 1;
+    const entryLtp = Number(trade.entryPrice) || 0;
+    const multiplier = trade.side === 'BUY' ? 1 : -1;
+    const pnl = (Number(ltp) - entryLtp) * originalQty * multiplier;
+    const netBalance = Math.max(0, initialBalance + pnl);
+    const nextDayQty = Math.max(
+      0,
+      Math.floor((netBalance * carryForwardLeverage) / Number(ltp))
+    );
+    const carryForwardQty = nextDayQty;
+    const prevMargin = Number(trade.marginUsed) || Number(trade.requiredMargin) || 0;
+    const nextMargin =
+      originalQty > 0 && prevMargin > 0
+        ? Math.round((prevMargin * nextDayQty) / originalQty * 100) / 100
+        : Math.round(((nextDayQty * Number(ltp)) / carryForwardLeverage) * 100) / 100;
+
+    await User.updateOne({ userId: trade.userId }, { $set: { [balancePath]: netBalance } });
+
+    await Trade.findByIdAndUpdate(trade._id, {
+      isAutoSquared: true,
+      autoSquaredAt: EODSettlement.parseCloseTimeToDate(closeTime),
+      autoSquareLtp: ltp,
+      originalQty,
+      pnlAtAutoSquare: pnl,
+      carryForwardQty: nextDayQty,
+      netBalanceAtAutoSquare: netBalance,
+      quantity: nextDayQty,
+      productType: 'NRML',
+      leverage: carryForwardLeverage,
+      marginUsed: nextMargin,
+      requiredMargin: nextMargin,
+    });
+
+    const userDoc = await User.findOne({ userId: trade.userId }).select('_id').lean();
+    if (userDoc?._id) {
+      try {
+        await recalculateUsedMargin(userDoc._id);
+      } catch (err) {
+        console.warn(`[Auto-square] usedMargin recalc failed for ${trade.userId}:`, err.message);
+      }
+    }
+
+    return { originalQty, nextDayQty, carryForwardQty: nextDayQty, pnl, netBalance, carryForwardLeverage };
   }
   
   /**
@@ -139,21 +307,16 @@ class EODSettlement {
       await this.checkAndTriggerAutoSquare();
     };
     
-    // Monitor for balance-based auto-square trigger
-    // This runs every 10 seconds to check if wallet balance drops below autosquarePercent threshold
-    const checkBalanceBasedAutoSquare = async () => {
-      await this.checkBalanceBasedAutoSquare();
-    };
-    
     // Run immediately and then every minute
     checkLiveDataStop();
     setInterval(checkLiveDataStop, 60 * 1000);
     
-    // Run immediately and then every 10 seconds
-    checkBalanceBasedAutoSquare();
-    setInterval(checkBalanceBasedAutoSquare, 10 * 1000);
-    
-    console.log('EODSettlement: Dynamic auto-square scheduler initialized (checks every minute for live data stop, every 10 seconds for balance threshold)');
+    // NOTE: Balance-based autosquare removed — it fired immediately after trade open
+    // (free balance < 90% of balance+margin) and stamped wrong time (10:22 pm).
+    // Intraday 90% stop-out is handled by MarginMonitorService (margin level).
+    // EOD carry-forward runs only at each admin's cryptoClosingTime below.
+
+    console.log('EODSettlement: Dynamic auto-square scheduler initialized (checks every minute at admin segment close times)');
   }
   
   /**
@@ -182,71 +345,36 @@ class EODSettlement {
         const segmentsToCheck = ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'MCXFUT', 'MCXOPT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'];
         
         for (const segKey of segmentsToCheck) {
-          const segSettings = segPerms[segKey] || {};
-          let closeTime = segSettings.closingTime || segSettings.cryptoClosingTime || '';
-          
-          // For CRYPTO segments: Always use SystemSettings as primary source (Super Admin's setting)
-          if ((segKey === 'CRYPTOFUT' || segKey === 'CRYPTOOPT') && sysSegDefaults['CRYPTOFUT']) {
-            const cryptoFutSettings = sysSegDefaults['CRYPTOFUT'];
-            closeTime = cryptoFutSettings.cryptoClosingTime || closeTime;
-            console.log(`[Auto-square] Using SystemSettings CRYPTOFUT closing time: ${closeTime}`);
-          }
-          
-          // Fallback to system defaults if admin hasn't set closing time
+          let closeTime = EODSettlement.getSegmentCloseTime(admin, segKey, sysSegDefaults);
+
+          // Hardcoded fallbacks only when neither admin nor system has a close time
           if (!closeTime) {
-            const sysSeg = sysSegDefaults[segKey] || {};
-            closeTime = sysSeg.closingTime || sysSeg.cryptoClosingTime || '';
-            
-            // If still no closing time, use default market close times
-            if (!closeTime) {
-              if (segKey.startsWith('NSE') || segKey.startsWith('BSE')) {
-                closeTime = '15:30:00'; // NSE/BSE market close
-                console.log(`[Auto-square] Using default NSE/BSE closing time: ${closeTime}`);
-              } else if (segKey.startsWith('MCX')) {
-                closeTime = '23:30:00'; // MCX commodity close
-                console.log(`[Auto-square] Using default MCX closing time: ${closeTime}`);
-              } else if (segKey.startsWith('FOREX')) {
-                closeTime = '23:59:00'; // Forex end of day
-                console.log(`[Auto-square] Using default FOREX closing time: ${closeTime}`);
-              }
+            if (segKey.startsWith('NSE') || segKey.startsWith('BSE')) {
+              closeTime = '15:30:00';
+            } else if (segKey.startsWith('MCX')) {
+              closeTime = '23:30:00';
+            } else if (segKey.startsWith('FOREX')) {
+              closeTime = '23:59:00';
             }
           }
-          
-          if (closeTime) {
-            // Check if current time is past closing time (handle HH:MM or HH:MM:SS format)
-            const timeParts = closeTime.split(':').map(Number);
-            const hours = timeParts[0];
-            const minutes = timeParts[1];
-            const seconds = timeParts[2] || 0;
-            
-            if (!isNaN(hours) && !isNaN(minutes)) {
-              const now = new Date();
-              const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-              const currentHours = istTime.getHours();
-              const currentMinutes = istTime.getMinutes();
-              const currentSeconds = istTime.getSeconds();
-              
-              // If current time is at or past closing time, trigger auto-square for this admin's hierarchy
-              if (currentHours > hours || 
-                  (currentHours === hours && currentMinutes > minutes) ||
-                  (currentHours === hours && currentMinutes === minutes && currentSeconds >= seconds)) {
-                // Map segment key to segment group
-                let segmentGroup;
-                if (segKey.startsWith('NSE')) segmentGroup = 'NSE';
-                else if (segKey.startsWith('BSE')) segmentGroup = 'BSE';
-                else if (segKey.startsWith('MCX')) segmentGroup = 'MCX';
-                else if (segKey.startsWith('CRYPTO')) segmentGroup = 'CRYPTO';
-                else if (segKey.startsWith('FOREX')) segmentGroup = 'FOREX';
-                
-                if (segmentGroup) {
-                  console.log(`Auto-square: Triggering for admin ${admin._id} segment ${segmentGroup} (past closing time ${closeTime})`);
-                  try {
-                    await this.executeAdminHierarchyAutoSquare(admin._id, segmentGroup, closeTime);
-                    console.log(`Auto-square: Successfully completed for admin ${admin._id} segment ${segmentGroup}`);
-                  } catch (error) {
-                    console.error(`Auto-square: Failed for admin ${admin._id} segment ${segmentGroup}:`, error);
-                  }
-                }
+
+          if (closeTime && EODSettlement.isPastClosingTimeIST(closeTime)) {
+            let segmentGroup;
+            if (segKey.startsWith('NSE')) segmentGroup = 'NSE';
+            else if (segKey.startsWith('BSE')) segmentGroup = 'BSE';
+            else if (segKey.startsWith('MCX')) segmentGroup = 'MCX';
+            else if (segKey.startsWith('CRYPTO')) segmentGroup = 'CRYPTO';
+            else if (segKey.startsWith('FOREX')) segmentGroup = 'FOREX';
+
+            if (segmentGroup) {
+              console.log(
+                `Auto-square: Triggering for admin ${admin.adminCode || admin._id} ` +
+                  `segment ${segmentGroup} (close ${closeTime} IST)`
+              );
+              try {
+                await this.executeAdminHierarchyAutoSquare(admin._id, segmentGroup, closeTime);
+              } catch (error) {
+                console.error(`Auto-square: Failed for admin ${admin._id} segment ${segmentGroup}:`, error);
               }
             }
           }
@@ -259,84 +387,6 @@ class EODSettlement {
   }
   
   /**
-   * Check if wallet balance drops below autosquarePercent threshold and trigger auto-square
-   */
-  static async checkBalanceBasedAutoSquare() {
-    try {
-      const Admin = (await import('../models/Admin.js')).default;
-      const Trade = (await import('../models/Trade.js')).default;
-      const User = (await import('../models/User.js')).default;
-      
-      // Get all admins with segmentPermissions
-      const admins = await Admin.find({ segmentPermissions: { $exists: true, $ne: null } }).lean();
-      
-      for (const admin of admins) {
-        const segPerms = admin.segmentPermissions instanceof Map 
-          ? Object.fromEntries(admin.segmentPermissions) 
-          : admin.segmentPermissions || {};
-        
-        // Get autosquarePercent from admin settings
-        let autosquarePercent = 90; // default
-        for (const [segKey, segSettings] of Object.entries(segPerms)) {
-          if (segSettings?.lotSettings?.autosquarePercent) {
-            autosquarePercent = segSettings.lotSettings.autosquarePercent;
-          }
-        }
-        
-        // Find all users under this admin with open crypto positions
-        const trades = await Trade.find({
-          adminCode: admin?.adminCode,
-          isCrypto: true,
-          status: 'OPEN',
-          isAutoSquared: { $ne: true }
-        }).lean();
-        
-        if (trades.length === 0) continue;
-        
-        // Group trades by userId
-        const userTrades = {};
-        for (const trade of trades) {
-          if (!userTrades[trade.userId]) {
-            userTrades[trade.userId] = [];
-          }
-          userTrades[trade.userId].push(trade);
-        }
-        
-        // Check each user's wallet balance
-        for (const [userId, userTradeList] of Object.entries(userTrades)) {
-          const user = await User.findOne({ userId }).select('cryptoWallet wallet').lean();
-          if (!user) continue;
-          
-          const currentBalance = user.cryptoWallet?.balance || 0;
-          const usedMargin = user.cryptoWallet?.usedMargin || 0;
-          
-          // Calculate initial balance (current balance + used margin)
-          const initialBalance = currentBalance + usedMargin;
-          
-          // Calculate threshold (autosquarePercent of initial balance)
-          const threshold = (initialBalance * autosquarePercent) / 100;
-          
-          console.log(`[Balance Auto-Square Check] User: ${userId}, Initial: ${initialBalance.toFixed(2)}, Current: ${currentBalance.toFixed(2)}, Threshold: ${threshold.toFixed(2)} (${autosquarePercent}%)`);
-          
-          // If current balance is below threshold, trigger auto-square
-          if (currentBalance < threshold) {
-            console.log(`[Balance Auto-Square] TRIGGERED for user ${userId}: Current balance ${currentBalance.toFixed(2)} < threshold ${threshold.toFixed(2)}`);
-            
-            try {
-              await this.executeAdminHierarchyAutoSquare(admin._id, 'CRYPTO', null);
-              console.log(`[Balance Auto-Square] Successfully completed for user ${userId}`);
-            } catch (error) {
-              console.error(`[Balance Auto-Square] Failed for user ${userId}:`, error);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error checking balance-based auto-square:', error);
-    }
-  }
-  
-  /**
    * Execute auto-square for a specific admin hierarchy
    */
   static async executeAdminHierarchyAutoSquare(adminId, segment, closeTime = null) {
@@ -344,6 +394,7 @@ class EODSettlement {
       console.log(`Auto-square: Starting for admin ${adminId} segment ${segment}`);
       
       const Admin = (await import('../models/Admin.js')).default;
+      const SystemSettings = (await import('../models/SystemSettings.js')).default;
       
       // Build segment query
       let segmentQuery = {};
@@ -398,6 +449,18 @@ class EODSettlement {
       const Trade = (await import('../models/Trade.js')).default;
       const User = (await import('../models/User.js')).default;
       const admin = await Admin.findById(adminId).select('adminCode segmentPermissions').lean();
+
+      if (!closeTime && segment === 'CRYPTO') {
+        const sys = await SystemSettings.getSettings();
+        const sysSegDefaults = sys.adminSegmentDefaults instanceof Map
+          ? Object.fromEntries(sys.adminSegmentDefaults)
+          : sys.adminSegmentDefaults || {};
+        closeTime = EODSettlement.getCryptoClosingTimeForAdmin(admin, sysSegDefaults);
+      }
+
+      if (!closeTime) {
+        console.warn(`Auto-square: No closeTime for admin ${adminId} segment ${segment}; using current IST for stamp only`);
+      }
       
       // For ALL segments: select both MIS and NRML positions
       // MIS will be closed, NRML will be marked as auto-squared for carry-forward
@@ -480,48 +543,18 @@ class EODSettlement {
           // For CRYPTO: mark ALL positions as auto-squared and keep OPEN (no closing)
           // For other segments: close MIS positions, mark NRML as auto-squared
           if (markAllCrypto) {
-            // Carry-forward calculation for CRYPTO
-            const user = await User.findOne({ userId: trade.userId }).select('wallet').lean();
-            const initialBalance = user?.wallet?.balance || 0;
-            // Use originalQty if already saved (re-processing), else trade.quantity
-            const originalQty = trade.originalQty || trade.quantity || trade.lots || 1;
-            const entryLtp = trade.entryPrice || trade.price || 0;
-
-            console.log(`Auto-square DEBUG: ${trade.tradeId} userId=${trade.userId} initialBalance=${initialBalance} trade.originalQty=${trade.originalQty} trade.quantity=${trade.quantity} using originalQty=${originalQty}`);
-
-            // P&L = (End LTP - Entry LTP) × Qty (BUY side)
-            // P&L = (Entry LTP - End LTP) × Qty (SELL side)
-            const multiplier = trade.side === 'BUY' ? 1 : -1;
-            const pnl = (ltp - entryLtp) * originalQty * multiplier;
-
-            // Net Balance = Initial Balance + P&L
-            const netBalance = initialBalance + pnl;
-
-            // Next Day Qty = (Net Balance × Carry Forward Leverage) / End LTP
-            const nextDayQty = Math.floor((netBalance * carryForwardLeverage) / ltp);
-            // Carry Forward Qty = Next Day Qty - Original Qty (for display in autosquare tab)
-            const carryForwardQty = nextDayQty - originalQty;
-
-            console.log(`Auto-square: ${trade.tradeId}: origQty=${originalQty} netBalance=${netBalance} carryFwdLeverage=${carryForwardLeverage}x nextDayQty=${nextDayQty} carryFwdQty=${carryForwardQty} pnl=${pnl}`);
-
-            // Update user wallet balance with P&L
-            await User.updateOne(
-              { userId: trade.userId },
-              { $set: { 'wallet.balance': netBalance } }
-            );
-
-            await Trade.findByIdAndUpdate(trade._id, {
-              isAutoSquared: true,
-              autoSquaredAt: EODSettlement.parseCloseTimeToDate(closeTime),
-              autoSquareLtp: ltp,
-              originalQty: originalQty,
-              pnlAtAutoSquare: pnl,
-              carryForwardQty: carryForwardQty,
-              netBalanceAtAutoSquare: netBalance,
-              quantity: nextDayQty
+            const result = await EODSettlement.applyCarryForwardAutosquare(trade, {
+              ltp,
+              closeTime,
+              segmentGroup: 'CRYPTO',
+              admin,
             });
             markedCount++;
-            console.log(`Auto-square: Marked CRYPTO position ${trade.tradeId} as auto-squared with LTP ${ltp} (trade remains OPEN for next day, carry qty: ${carryForwardQty})`);
+            console.log(
+              `Auto-square CRYPTO ${trade.tradeId}: origQty=${result.originalQty} ` +
+                `walletAfterPnl=${result.netBalance.toFixed(2)} carryFwdLeverage=${result.carryForwardLeverage}x ` +
+                `nextDayQty=${result.nextDayQty} pnl=${result.pnl.toFixed(2)}`
+            );
           } else if (trade.productType === 'MIS') {
             const result = await TradingService.squareOffPosition(
               trade._id.toString(),
@@ -539,47 +572,23 @@ class EODSettlement {
               console.error(`Auto-square: Failed to close MIS position ${trade.tradeId}: ${result.message}`);
             }
           } else {
-            // NRML/CARRYFORWARD: carry-forward calculation and mark as auto-squared, keep OPEN for next day
-            const user = await User.findOne({ userId: trade.userId }).select('wallet').lean();
-            const initialBalance = user?.wallet?.balance || 0;
-            // Use originalQty if already saved (re-processing), else trade.quantity
-            const originalQty = trade.originalQty || trade.quantity || trade.lots || 1;
-            const entryLtp = trade.entryPrice || trade.price || 0;
-
-            console.log(`Auto-square NRML DEBUG: ${trade.tradeId} userId=${trade.userId} initialBalance=${initialBalance} trade.originalQty=${trade.originalQty} trade.quantity=${trade.quantity} using originalQty=${originalQty}`);
-
-            // P&L = (End LTP - Entry LTP) × Qty (BUY) or (Entry - End) × Qty (SELL)
-            const multiplier = trade.side === 'BUY' ? 1 : -1;
-            const pnl = (ltp - entryLtp) * originalQty * multiplier;
-
-            // Net Balance = Initial Balance + P&L
-            const netBalance = initialBalance + pnl;
-
-            // Next Day Qty = (Net Balance × Carry Forward Leverage) / End LTP
-            const nextDayQty = Math.floor((netBalance * carryForwardLeverage) / ltp);
-            // Carry Forward Qty = Next Day Qty - Original Qty (for display in autosquare tab)
-            const carryForwardQty = nextDayQty - originalQty;
-
-            console.log(`Auto-square NRML: ${trade.tradeId}: origQty=${originalQty} netBalance=${netBalance} carryFwdLeverage=${carryForwardLeverage}x nextDayQty=${nextDayQty} carryFwdQty=${carryForwardQty} pnl=${pnl}`);
-
-            // Update user wallet balance with P&L
-            await User.updateOne(
-              { userId: trade.userId },
-              { $set: { 'wallet.balance': netBalance } }
-            );
-
-            await Trade.findByIdAndUpdate(trade._id, {
-              isAutoSquared: true,
-              autoSquaredAt: EODSettlement.parseCloseTimeToDate(closeTime),
-              autoSquareLtp: ltp,
-              originalQty: originalQty,
-              pnlAtAutoSquare: pnl,
-              carryForwardQty: carryForwardQty,
-              netBalanceAtAutoSquare: netBalance,
-              quantity: nextDayQty
+            const segGroup =
+              segment === 'MCX' || trade.exchange === 'MCX'
+                ? 'MCX'
+                : trade.isForex
+                  ? 'FOREX'
+                  : 'NSE';
+            const result = await EODSettlement.applyCarryForwardAutosquare(trade, {
+              ltp,
+              closeTime,
+              segmentGroup: segGroup,
+              admin,
             });
             markedCount++;
-            console.log(`Auto-square: Marked NRML position ${trade.tradeId} as auto-squared with LTP ${ltp} (trade remains OPEN for next day, carry qty: ${carryForwardQty})`);
+            console.log(
+              `Auto-square NRML ${trade.tradeId} (${segGroup}): origQty=${result.originalQty} ` +
+                `nextDayQty=${result.nextDayQty} pnl=${result.pnl.toFixed(2)}`
+            );
           }
         } catch (error) {
           failedCount++;
