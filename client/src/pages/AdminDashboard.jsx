@@ -40,6 +40,15 @@ import BtcJackpotAdminPanel from '../components/admin/BtcJackpotAdminPanel.jsx';
 
 import AdminTradingTransactions from '../components/admin/AdminTradingTransactions.jsx';
 
+import OptionBuySellFields from '../components/admin/segment/OptionBuySellFields.jsx';
+import SegmentBrokerageFields from '../components/admin/segment/SegmentBrokerageFields.jsx';
+import { numInputValue, parseNumInput, parseIntInput, parseNonNegativeNumInput, patchSegmentField } from '../utils/segmentFormValues.js';
+import SegmentNumberInput from '../components/admin/segment/SegmentNumberInput.jsx';
+import { normalizeSegmentCommissionFields } from '../utils/segmentCommissionType.js';
+
+import InstrumentSegmentDefaultsModal from '../components/admin/instruments/InstrumentSegmentDefaultsModal.jsx';
+import InstrumentRulesModal from '../components/admin/instruments/InstrumentRulesModal.jsx';
+
 import {
 
   Users,
@@ -10059,9 +10068,9 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
     leverage: {
 
-      intraday: targetAdmin.defaultSettings?.leverage?.intraday ?? targetAdmin.leverageSettings?.intradayLeverage ?? 1,
+      intraday: targetAdmin.defaultSettings?.leverage?.intraday ?? targetAdmin.leverageSettings?.intradayLeverage,
 
-      carryForward: targetAdmin.defaultSettings?.leverage?.carryForward ?? targetAdmin.leverageSettings?.carryForwardLeverage ?? 1
+      carryForward: targetAdmin.defaultSettings?.leverage?.carryForward ?? targetAdmin.leverageSettings?.carryForwardLeverage
 
     },
 
@@ -10077,17 +10086,17 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
     lotSettings: {
 
-      maxLotSize: targetAdmin.defaultSettings?.lotSettings?.maxLotSize ?? 100,
+      maxLotSize: targetAdmin.defaultSettings?.lotSettings?.maxLotSize,
 
-      minLotSize: targetAdmin.defaultSettings?.lotSettings?.minLotSize ?? 1
+      minLotSize: targetAdmin.defaultSettings?.lotSettings?.minLotSize
 
     },
 
     quantitySettings: {
 
-      maxQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxQuantity ?? 50000,
+      maxQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxQuantity,
 
-      breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity ?? 5000,
+      breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity,
 
       maxLotQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxLotQuantity ?? 0,
 
@@ -10195,7 +10204,15 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
           const normalized = {};
 
-          Object.keys(sp).forEach(k => { normalized[k] = { ...sp[k] }; });
+          Object.keys(sp).forEach(k => {
+            const ob = sp[k]?.optionBuy || {};
+            const os = sp[k]?.optionSell || {};
+            const sysBase = data.adminSegmentDefaults?.[k] || {};
+            normalized[k] = normalizeSegmentCommissionFields(
+              { ...sp[k], optionBuy: ob, optionSell: os },
+              sysBase
+            );
+          });
 
           setSegDefs(normalized);
 
@@ -10362,27 +10379,10 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
       });
     }
 
-    setSegDefs(prev => {
-
-      const segData = { ...prev[seg] };
-
-      if (field.includes('.')) {
-
-        // Handle nested paths like 'quantitySettings.breakupQuantity'
-
-        const [parent, child] = field.split('.');
-
-        segData[parent] = { ...segData[parent], [child]: value };
-
-      } else {
-
-        segData[field] = value;
-
-      }
-
-      return { ...prev, [seg]: segData };
-
-    });
+    setSegDefs((prev) => ({
+      ...prev,
+      [seg]: patchSegmentField(prev[seg] || {}, field, value),
+    }));
 
   };
 
@@ -10688,11 +10688,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                   type="number"
                                   min="0"
                                   step="0.1"
-                                  value={s.intradayOnlyLeverage ?? 1}
-                                  onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    handleSegDefChange(expandedSeg, 'intradayOnlyLeverage', isNaN(val) ? 1 : val);
-                                  }}
+                                  value={numInputValue(s.intradayOnlyLeverage)}
+                                  onChange={(e) => handleSegDefChange(expandedSeg, 'intradayOnlyLeverage', parseNumInput(e.target.value))}
                                   className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                                 />
                               </div>
@@ -10701,11 +10698,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 <input
                                   type="number"
                                   min="0"
-                                  value={s.intradayOnlyMaxQty ?? 1000}
-                                  onChange={(e) => {
-                                    const val = parseInt(e.target.value, 10);
-                                    handleSegDefChange(expandedSeg, 'intradayOnlyMaxQty', isNaN(val) ? 1000 : val);
-                                  }}
+                                  value={numInputValue(s.intradayOnlyMaxQty)}
+                                  onChange={(e) => handleSegDefChange(expandedSeg, 'intradayOnlyMaxQty', parseIntInput(e.target.value))}
                                   className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                                 />
                               </div>
@@ -10789,29 +10783,17 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           <div className="grid grid-cols-2 gap-4 mb-4">
                             <div>
                               <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={s.lotSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'lotSettings.intradayLeverage', isNaN(val) ? 1 : val);
-                                }}
+                              <SegmentNumberInput
+                                value={s.lotSettings?.intradayLeverage}
+                                onChange={(v) => handleSegDefChange(expandedSeg, 'lotSettings.intradayLeverage', v)}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
                             <div>
                               <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={s.lotSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'lotSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
-                                }}
+                              <SegmentNumberInput
+                                value={s.lotSettings?.carryForwardLeverage}
+                                onChange={(v) => handleSegDefChange(expandedSeg, 'lotSettings.carryForwardLeverage', v)}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10822,11 +10804,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               <input
                                 type="number"
                                 min="0"
-                                value={s.maxLots ?? 100}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value, 10);
-                                  handleSegDefChange(expandedSeg, 'maxLots', isNaN(val) ? 100 : val);
-                                }}
+                                value={numInputValue(s.maxLots)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'maxLots', parseIntInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10835,11 +10814,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               <input
                                 type="number"
                                 min="0"
-                                value={s.minLots ?? 1}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value, 10);
-                                  handleSegDefChange(expandedSeg, 'minLots', isNaN(val) ? 1 : val);
-                                }}
+                                value={numInputValue(s.minLots)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'minLots', parseIntInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10848,11 +10824,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               <input
                                 type="number"
                                 min="0"
-                                value={s.lotSettings?.breakupLots ?? 0}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value, 10);
-                                  handleSegDefChange(expandedSeg, 'lotSettings.breakupLots', isNaN(val) ? 0 : val);
-                                }}
+                                value={numInputValue(s.lotSettings?.breakupLots)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'lotSettings.breakupLots', parseIntInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10865,11 +10838,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 min="0"
                                 max="100"
                                 step="1"
-                                value={s.lotSettings?.notificationPercent ?? 70}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'lotSettings.notificationPercent', isNaN(val) ? 70 : val);
-                                }}
+                                value={numInputValue(s.lotSettings?.notificationPercent)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'lotSettings.notificationPercent', parseNumInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10880,11 +10850,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 min="0"
                                 max="100"
                                 step="1"
-                                value={s.lotSettings?.autosquarePercent ?? 90}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'lotSettings.autosquarePercent', isNaN(val) ? 90 : val);
-                                }}
+                                value={numInputValue(s.lotSettings?.autosquarePercent)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'lotSettings.autosquarePercent', parseNumInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10898,29 +10865,17 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           <div className="grid grid-cols-2 gap-4 mb-4">
                             <div>
                               <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={s.quantityModeSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.intradayLeverage', isNaN(val) ? 1 : val);
-                                }}
+                              <SegmentNumberInput
+                                value={s.quantityModeSettings?.intradayLeverage}
+                                onChange={(v) => handleSegDefChange(expandedSeg, 'quantityModeSettings.intradayLeverage', v)}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
                             <div>
                               <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={s.quantityModeSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
-                                }}
+                              <SegmentNumberInput
+                                value={s.quantityModeSettings?.carryForwardLeverage}
+                                onChange={(v) => handleSegDefChange(expandedSeg, 'quantityModeSettings.carryForwardLeverage', v)}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10931,11 +10886,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               <input
                                 type="number"
                                 min="0"
-                                value={s.quantityModeSettings?.maxQuantity ?? 1000}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value, 10);
-                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.maxQuantity', isNaN(val) ? 1000 : val);
-                                }}
+                                value={numInputValue(s.quantityModeSettings?.maxQuantity)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'quantityModeSettings.maxQuantity', parseIntInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10944,11 +10896,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               <input
                                 type="number"
                                 min="0"
-                                value={s.quantityModeSettings?.minQuantity ?? 1}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value, 10);
-                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.minQuantity', isNaN(val) ? 1 : val);
-                                }}
+                                value={numInputValue(s.quantityModeSettings?.minQuantity)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'quantityModeSettings.minQuantity', parseIntInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10957,11 +10906,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               <input
                                 type="number"
                                 min="0"
-                                value={s.quantityModeSettings?.breakupQuantity ?? 0}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value, 10);
-                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.breakupQuantity', isNaN(val) ? 0 : val);
-                                }}
+                                value={numInputValue(s.quantityModeSettings?.breakupQuantity)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'quantityModeSettings.breakupQuantity', parseIntInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10973,11 +10919,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 type="number"
                                 min="0"
                                 step="0.000001"
-                                value={s.minExchangeQty ?? 0}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'minExchangeQty', isNaN(val) ? 0 : val);
-                                }}
+                                value={numInputValue(s.minExchangeQty)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'minExchangeQty', parseNumInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -10987,11 +10930,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 type="number"
                                 min="0"
                                 step="0.000001"
-                                value={s.maxExchangeQty ?? 0}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'maxExchangeQty', isNaN(val) ? 0 : val);
-                                }}
+                                value={numInputValue(s.maxExchangeQty)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'maxExchangeQty', parseNumInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -11004,11 +10944,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 min="0"
                                 max="100"
                                 step="1"
-                                value={s.quantityModeSettings?.notificationPercent ?? 70}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.notificationPercent', isNaN(val) ? 70 : val);
-                                }}
+                                value={numInputValue(s.quantityModeSettings?.notificationPercent)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'quantityModeSettings.notificationPercent', parseNumInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -11019,11 +10956,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 min="0"
                                 max="100"
                                 step="1"
-                                value={s.quantityModeSettings?.autosquarePercent ?? 90}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  handleSegDefChange(expandedSeg, 'quantityModeSettings.autosquarePercent', isNaN(val) ? 90 : val);
-                                }}
+                                value={numInputValue(s.quantityModeSettings?.autosquarePercent)}
+                                onChange={(e) => handleSegDefChange(expandedSeg, 'quantityModeSettings.autosquarePercent', parseNumInput(e.target.value))}
                                 className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                               />
                             </div>
@@ -11040,72 +10974,17 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                         )}
 
 
-                        {/* Brokerage */}
-
-                        <h4 className="text-xs font-semibold text-green-400 mb-2">Brokerage</h4>
-
-                        <div className="grid grid-cols-2 gap-3 mb-4">
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">
-
-                              {commissionAmountLabel(s.commissionType || 'PER_LOT')}
-
-                            </label>
-
-                            <input type="number" value={s.commissionLot || 0} onChange={e => handleSegDefChange(expandedSeg, 'commissionLot', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                            <p className="text-[10px] text-gray-600 mt-1">{commissionHelperText(s.commissionType || 'PER_LOT')}</p>
-
-                          </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-
-                            <select
-
-                              value={s.commissionType || 'PER_LOT'}
-
-                              onChange={(e) => {
-
-                                const ct = e.target.value;
-
-                                setSegDefs((prev) => ({
-
-                                  ...prev,
-
-                                  [expandedSeg]: {
-
-                                    ...prev[expandedSeg],
-
-                                    commissionType: ct,
-
-                                    commissionUnit: requiredUnitForCommissionType(ct),
-
-                                  },
-
-                                }));
-
-                              }}
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                            >
-
-                              <option value="PER_LOT">Per Lot</option>
-
-                              <option value="PER_TRADE">Per Trade</option>
-
-                              <option value="PER_CRORE">Per Crore</option>
-
-                            </select>
-
-
-                          </div>
-
-                        </div>
+                        <SegmentBrokerageFields
+                          slice={s}
+                          baseline={systemSegBaseline[expandedSeg]}
+                          compact
+                          onChange={(next) =>
+                            setSegDefs((prev) => ({
+                              ...prev,
+                              [expandedSeg]: { ...prev[expandedSeg], ...next },
+                            }))
+                          }
+                        />
 
 
 
@@ -11177,7 +11056,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                                   step={0.01}
 
-                                  value={s.cryptoSpreadUsdPerSide ?? 0}
+                                  value={numInputValue(s.cryptoSpreadUsdPerSide)}
 
                                   onChange={(e) =>
 
@@ -11187,7 +11066,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                                       'cryptoSpreadUsdPerSide',
 
-                                      Math.max(0, parseFloat(e.target.value) || 0)
+                                      parseNonNegativeNumInput(e.target.value)
 
                                     )
 
@@ -11211,11 +11090,11 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                                   step={1}
 
-                                  value={s.cryptoSpreadInr ?? 0}
+                                  value={numInputValue(s.cryptoSpreadInr)}
 
                                   onChange={(e) =>
 
-                                    handleSegDefChange(expandedSeg, 'cryptoSpreadInr', Math.max(0, parseFloat(e.target.value) || 0))
+                                    handleSegDefChange(expandedSeg, 'cryptoSpreadInr', parseNonNegativeNumInput(e.target.value))
 
                                   }
 
@@ -11234,143 +11113,22 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
 
                         {/* Option Buy/Sell - only for OPT segments */}
-
                         {isOpt && (
-
                           <>
-
                             <h4 className="text-xs font-semibold text-purple-400 mb-2">Option Buy / Sell</h4>
-
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-
-                              {['optionBuy', 'optionSell'].map(optType => {
-
-                                const opt = s[optType] || {};
-
-                                return (
-
-                                  <div key={optType} className="bg-dark-800 rounded-lg p-3">
-
-                                    <div className="flex items-center justify-between mb-2">
-
-                                      <h5 className="text-xs font-semibold">{optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}</h5>
-
-                                      <button type="button" onClick={() => handleSegDefChange(expandedSeg, optType, { ...opt, allowed: !opt.allowed })}
-
-                                        className={`px-2 py-0.5 rounded text-xs font-medium ${opt.allowed !== false ? 'bg-green-600' : 'bg-red-600'}`}>
-
-                                        {opt.allowed !== false ? 'Allowed' : 'Blocked'}
-
-                                      </button>
-
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-2">
-
-                                      <div>
-
-                                        <label className="block text-xs text-gray-400 mb-1">
-
-                                          {commissionAmountLabel(opt.commissionType || 'PER_LOT')}
-
-                                        </label>
-
-                                        <input type="number" value={opt.commission || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, commission: parseFloat(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-
-                                        <p className="text-[9px] text-gray-600 mt-0.5">{commissionHelperText(opt.commissionType || 'PER_LOT')}</p>
-
-                                      </div>
-
-                                      <div>
-
-                                        <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
-
-                                        <input type="number" value={opt.strikeSelection || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, strikeSelection: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-
-                                      </div>
-
-                                      <div>
-
-                                        <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSeg) ? 'Max Exch Qty' : 'Max Exch Lots'}</label>
-
-                                        <input type="number" value={opt.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, maxExchangeLots: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-
-                                      </div>
-
-                                      <div>
-
-                                        <label className="block text-xs text-gray-400 mb-1">Comm. Type</label>
-
-                                        <select
-
-                                          value={opt.commissionType || 'PER_LOT'}
-
-                                          onChange={(e) => {
-
-                                            const ct = e.target.value;
-
-                                            handleSegDefChange(expandedSeg, optType, {
-
-                                              ...opt,
-
-                                              commissionType: ct,
-
-                                              commissionUnit: requiredUnitForCommissionType(ct),
-
-                                            });
-
-                                          }}
-
-                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs"
-
-                                        >
-
-                                          <option value="PER_LOT">Per Lot</option>
-
-                                          <option value="PER_TRADE">Per Trade</option>
-
-                                          <option value="PER_CRORE">Per Crore</option>
-
-                                        </select>
-
-                                        <select
-
-                                          value={requiredUnitForCommissionType(opt.commissionType || 'PER_LOT')}
-
-                                          disabled
-
-                                          className="w-full mt-1 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-[10px] opacity-90 cursor-not-allowed"
-
-                                          title="Unit follows commission type"
-
-                                        >
-
-                                          {unitOptionsForCommissionType(opt.commissionType || 'PER_LOT').map((o) => (
-
-                                            <option key={o.value} value={o.value}>
-
-                                              {o.label}
-
-                                            </option>
-
-                                          ))}
-
-                                        </select>
-
-                                      </div>
-
-                                    </div>
-
-                                  </div>
-
-                                );
-
-                              })}
-
+                              {['optionBuy', 'optionSell'].map((optType) => (
+                                <OptionBuySellFields
+                                  key={optType}
+                                  segmentKey={expandedSeg}
+                                  optType={optType}
+                                  opt={s[optType] || {}}
+                                  compact
+                                  onChange={(next) => handleSegDefChange(expandedSeg, optType, next)}
+                                />
+                              ))}
                             </div>
-
-                        </>
-
+                          </>
                         )}
 
                   </div>
@@ -20178,10 +19936,6 @@ const InstrumentManagement = () => {
 
   const [loading, setLoading] = useState(true);
 
-  const [search, setSearch] = useState('');
-
-  const [filter, setFilter] = useState({ segment: '', category: '', enabled: '', optionType: '', expiryDate: '' });
-
   const [seeding, setSeeding] = useState(false);
 
   const [marketData, setMarketData] = useState({});
@@ -20192,15 +19946,19 @@ const InstrumentManagement = () => {
 
   const [stats, setStats] = useState({ total: 0, enabled: 0, disabled: 0, featured: 0 });
 
-  const [tradingModalInst, setTradingModalInst] = useState(null);
-
-  const [tradingForm, setTradingForm] = useState(null);
-
-  const [tradingSaving, setTradingSaving] = useState(false);
+  const [rulesModalInst, setRulesModalInst] = useState(null);
 
   const [scheduleSavingId, setScheduleSavingId] = useState(null);
 
+  const [panelSavingId, setPanelSavingId] = useState(null);
 
+  const [segmentRulesOpen, setSegmentRulesOpen] = useState(false);
+
+  const [segmentRulesKey, setSegmentRulesKey] = useState('NSEFUT');
+
+  const [segmentRulesCategory, setSegmentRulesCategory] = useState('');
+
+  const [expiryRange, setExpiryRange] = useState({ start: '', end: '' });
 
   useEffect(() => {
 
@@ -20210,15 +19968,11 @@ const InstrumentManagement = () => {
 
     fetchMarketData();
 
-    
-
-    // Refresh market data every 2 seconds
-
     const interval = setInterval(fetchMarketData, 2000);
 
     return () => clearInterval(interval);
 
-  }, [filter, pagination.page]);
+  }, [pagination.page, expiryRange.start, expiryRange.end]);
 
 
 
@@ -20266,37 +20020,11 @@ const InstrumentManagement = () => {
 
     try {
 
-      let url = '/api/instruments/admin?';
+      setLoading(true);
 
-      if (
-
-        filter.segment === 'CRYPTOFUT' ||
-
-        filter.segment === 'CRYPTOOPT' ||
-
-        filter.segment === 'FOREXFUT' ||
-
-        filter.segment === 'FOREXOPT'
-
-      ) {
-
-        url += `displaySegment=${filter.segment}&`;
-
-      } else if (filter.segment) {
-
-        url += `segment=${filter.segment}&`;
-
-      }
-
-      if (filter.category) url += `category=${filter.category}&`;
-
-      if (filter.enabled) url += `enabled=${filter.enabled}&`;
-
-      if (filter.expiryDate) url += `expiryDate=${filter.expiryDate}&`;
-
-      if (search) url += `search=${search}&`;
-
-      url += `page=${pagination.page}&limit=${pagination.limit}`;
+      let url = `/api/instruments/admin?page=${pagination.page}&limit=${pagination.limit}`;
+      if (expiryRange.start) url += `&startDate=${encodeURIComponent(expiryRange.start)}`;
+      if (expiryRange.end) url += `&endDate=${encodeURIComponent(expiryRange.end)}`;
 
       
 
@@ -20377,6 +20105,33 @@ const InstrumentManagement = () => {
   };
 
 
+
+  const toDateInputValue = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toISOString().slice(0, 10);
+  };
+
+  const saveInstrumentPanelVisibility = async (id, fromDate, untilDate) => {
+    if (!admin?.token) return;
+    setPanelSavingId(id);
+    try {
+      await axios.put(
+        `/api/instruments/admin/${id}`,
+        {
+          tradingPanelVisibleFrom: fromDate || null,
+          tradingPanelVisibleUntil: untilDate || null,
+        },
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+      );
+      await fetchInstruments();
+    } catch (e) {
+      alert(e.response?.data?.message || e.message || 'Save failed');
+    } finally {
+      setPanelSavingId(null);
+    }
+  };
 
   const saveInstrumentSchedule = async (id, datetimeLocalValue) => {
 
@@ -20655,85 +20410,25 @@ const InstrumentManagement = () => {
 
 
 
-  const handleSearch = (e) => {
-
-    e.preventDefault();
-
-    fetchInstruments();
-
-  };
-
-
-
-  const openTradingDefaultsModal = (inst) => {
+  const openRulesModal = (inst) => {
 
     const fresh = instruments.find((i) => String(i._id) === String(inst?._id)) || inst;
 
-    setTradingModalInst(fresh);
-
-    setTradingForm(instrumentToTradingForm(fresh));
+    setRulesModalInst(fresh);
 
   };
 
 
 
-  const closeTradingDefaultsModal = () => {
+  const openSegmentRules = (segmentKey, category = '') => {
 
-    setTradingModalInst(null);
+    setSegmentRulesKey(segmentKey || 'NSEFUT');
 
-    setTradingForm(null);
+    setSegmentRulesCategory(category);
 
-  };
-
-
-
-  const saveTradingDefaults = async () => {
-
-    if (!tradingModalInst?._id || !admin?.token) return;
-
-    setTradingSaving(true);
-
-    try {
-
-      const tradingDefaults = serializeInstrumentTradingForm(tradingForm);
-
-      const { data: saved } = await axios.put(
-
-        `/api/instruments/admin/${tradingModalInst._id}`,
-
-        { tradingDefaults },
-
-        { headers: { Authorization: `Bearer ${admin.token}` } }
-
-      );
-
-      const id = tradingModalInst._id;
-
-      if (saved && String(saved._id) === String(id)) {
-
-        setInstruments((prev) => prev.map((i) => (String(i._id) === String(id) ? { ...i, ...saved } : i)));
-
-      }
-
-      closeTradingDefaultsModal();
-
-      fetchInstruments();
-
-    } catch (error) {
-
-      alert(error.response?.data?.message || error.message || 'Save failed');
-
-    } finally {
-
-      setTradingSaving(false);
-
-    }
+    setSegmentRulesOpen(true);
 
   };
-
-
-
-  const categories = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'STOCKS', 'INDICES', 'MCX', 'COMMODITY', 'OTHER'];
 
 
 
@@ -20793,165 +20488,112 @@ const InstrumentManagement = () => {
 
 
 
-      <p className="text-sm text-gray-400 mb-4 max-w-4xl">
+      <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 mb-4">
 
-        Use <span className="text-white">All Segments</span> to list every contract. Turning a script <span className="text-red-300">off</span> locks it for clients
+        <div className="text-sm font-medium text-gray-200 mb-3">Expiry date range</div>
 
-        (they cannot request temporary access) until you turn it <span className="text-green-300">on</span> again. When a client requests access on a disabled script,
+        <div className="flex flex-wrap items-end gap-4">
 
-        it auto-opens for the duration they choose, then closes unless you opened it manually. Use the{' '}
+          <div className="flex flex-col gap-1">
 
-        <span className="text-sky-300">Auto re-open</span> calendar on each row to pick a date and time when a <strong>disabled</strong> script turns back on automatically
-
-        (server checks every minute); leave empty and use the status switch or Clear to control manually only.
-
-      </p>
-
-
-
-      {/* Filters */}
-
-      <div className="bg-dark-800 rounded-lg p-4 mb-6">
-
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-
-          <form onSubmit={handleSearch} className="md:col-span-2">
-
-            <div className="relative">
-
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-
-              <input
-
-                type="text"
-
-                placeholder="Search symbol or name..."
-
-                value={search}
-
-                onChange={e => setSearch(e.target.value)}
-
-                className="w-full bg-dark-700 border border-dark-600 rounded pl-10 pr-4 py-2"
-
-              />
-
-            </div>
-
-          </form>
-
-          <select
-
-            value={filter.segment}
-
-            onChange={e => setFilter({ ...filter, segment: e.target.value })}
-
-            className="bg-dark-700 border border-dark-600 rounded px-3 py-2"
-
-          >
-
-            <option value="">All Segments</option>
-
-            <option value="NSEFUT">NSEFUT</option>
-
-            <option value="NSEOPT">NSEOPT</option>
-
-            <option value="MCXFUT">MCXFUT</option>
-
-            <option value="MCXOPT">MCXOPT</option>
-
-            <option value="NSE-EQ">NSE-EQ</option>
-
-            <option value="BSE-FUT">BSE-FUT</option>
-
-            <option value="BSE-OPT">BSE-OPT</option>
-
-            <option value="CRYPTOFUT">CRYPTOFUT</option>
-
-            <option value="CRYPTOOPT">CRYPTOOPT</option>
-
-            <option value="FOREXFUT">FOREXFUT</option>
-
-            <option value="FOREXOPT">FOREXOPT</option>
-
-          </select>
-
-          <select
-
-            value={filter.category}
-
-            onChange={e => setFilter({ ...filter, category: e.target.value })}
-
-            className="bg-dark-700 border border-dark-600 rounded px-3 py-2"
-
-          >
-
-            <option value="">All Categories</option>
-
-            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-
-          </select>
-
-          <select
-
-            value={filter.enabled}
-
-            onChange={e => setFilter({ ...filter, enabled: e.target.value })}
-
-            className="bg-dark-700 border border-dark-600 rounded px-3 py-2"
-
-          >
-
-            <option value="">All Status</option>
-
-            <option value="true">Enabled</option>
-
-            <option value="false">Disabled</option>
-
-          </select>
-
-          <select
-
-            value={filter.optionType}
-
-            onChange={e => setFilter({ ...filter, optionType: e.target.value })}
-
-            className="bg-dark-700 border border-dark-600 rounded px-3 py-2"
-
-          >
-
-            <option value="">All Types</option>
-
-            <option value="CE">Calls (CE)</option>
-
-            <option value="PE">Puts (PE)</option>
-
-            <option value="FUT">Futures</option>
-
-          </select>
-
-          <div className="flex flex-col">
-
-            <label className="text-xs text-gray-400 mb-1">Expiry up to:</label>
+            <label className="text-xs text-gray-400">Start date</label>
 
             <input
 
               type="date"
 
-              value={filter.expiryDate}
+              value={expiryRange.start}
 
-              onChange={e => setFilter({ ...filter, expiryDate: e.target.value })}
+              onChange={(e) => {
 
-              className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                setExpiryRange((r) => ({ ...r, start: e.target.value }));
 
-              title="Show instruments expiring up to this date"
+                setPagination((p) => ({ ...p, page: 1 }));
+
+              }}
+
+              className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200"
 
             />
 
           </div>
 
+          <div className="flex flex-col gap-1">
+
+            <label className="text-xs text-gray-400">End date</label>
+
+            <input
+
+              type="date"
+
+              value={expiryRange.end}
+
+              onChange={(e) => {
+
+                setExpiryRange((r) => ({ ...r, end: e.target.value }));
+
+                setPagination((p) => ({ ...p, page: 1 }));
+
+              }}
+
+              className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200"
+
+            />
+
+          </div>
+
+          <button
+
+            type="button"
+
+            onClick={() => {
+
+              setExpiryRange({ start: '', end: '' });
+
+              setPagination((p) => ({ ...p, page: 1 }));
+
+            }}
+
+            className="px-3 py-2 text-sm rounded bg-dark-600 text-gray-300 hover:bg-dark-500"
+
+          >
+
+            Clear
+
+          </button>
+
         </div>
 
+        <p className="text-xs text-gray-500 mt-2">
+
+          Sirf is expiry range ke beech wale instruments list mein dikhenge. Dono khali = sab (active contracts).
+
+        </p>
+
       </div>
+
+
+
+      <p className="text-sm text-gray-400 mb-4">
+
+        Har row par <span className="text-amber-300">Rules</span> — LTP bracket + leverage, brokerage/crore, max/min/break qty, autosquare.{' '}
+        <span className="text-sky-300">Panel from / until</span> — user trading panel par script kab dikhegi (khali = no limit). Poori segment:{' '}
+
+        <button
+
+          type="button"
+
+          onClick={() => openSegmentRules('NSEFUT', '')}
+
+          className="text-amber-400 hover:text-amber-300 underline"
+
+        >
+
+          Segment rules
+
+        </button>.
+
+      </p>
 
 
 
@@ -21077,9 +20719,13 @@ const InstrumentManagement = () => {
 
                 <th className="text-center px-4 py-3 text-gray-400">Live</th>
 
-                <th className="text-center px-4 py-3 text-gray-400">Trading</th>
+                <th className="text-center px-4 py-3 text-gray-400">Rules</th>
 
                 <th className="text-left px-4 py-3 text-gray-400 min-w-[200px]">Auto re-open</th>
+
+                <th className="text-left px-4 py-3 text-gray-400 min-w-[180px]">Panel from</th>
+
+                <th className="text-left px-4 py-3 text-gray-400 min-w-[180px]">Panel until</th>
 
                 <th className="text-left px-4 py-3 text-gray-400">Client until</th>
 
@@ -21191,15 +20837,25 @@ const InstrumentManagement = () => {
 
                         type="button"
 
-                        onClick={() => openTradingDefaultsModal(inst)}
+                        onClick={() => openRulesModal(inst)}
 
-                        className="text-xs px-2 py-1 rounded bg-amber-600/20 text-amber-300 hover:bg-amber-600/35 border border-amber-600/40"
+                        className="text-xs px-2 py-1 rounded bg-amber-600/90 hover:bg-amber-600 text-white font-medium"
 
-                        title="Leverage, brokerage, exposure, margins (per instrument)"
+                        title="LTP bracket % up / % down"
 
                       >
 
-                        {inst.tradingDefaults?.enabled ? 'Edit rules' : 'Set rules'}
+                        Rules
+
+                        {(inst.ltpBracketPercentUp > 0 && inst.ltpBracketPercentDown > 0) ? (
+
+                          <span className="block text-[9px] text-amber-100/80 font-normal">
+
+                            {inst.ltpBracketPercentUp}%/{inst.ltpBracketPercentDown}%
+
+                          </span>
+
+                        ) : null}
 
                       </button>
 
@@ -21278,6 +20934,122 @@ const InstrumentManagement = () => {
                           </div>
 
                         )}
+
+                      </div>
+
+                    </td>
+
+                    <td className="px-4 py-3 align-top min-w-[180px]">
+
+                      <div className="flex flex-col gap-1">
+
+                        <input
+
+                          id={`mw-panel-from-${inst._id}`}
+
+                          key={`mw-panel-from-${inst._id}-${inst.tradingPanelVisibleFrom ?? ''}`}
+
+                          type="date"
+
+                          defaultValue={toDateInputValue(inst.tradingPanelVisibleFrom)}
+
+                          disabled={panelSavingId === inst._id}
+
+                          className="w-full max-w-[11rem] text-[11px] bg-dark-700 border border-dark-600 rounded px-1 py-1 text-gray-200 disabled:opacity-50"
+
+                          title="Trading panel par dikhna start (khali = abhi se)"
+
+                        />
+
+                        <div className="flex flex-wrap gap-1">
+
+                          <button
+
+                            type="button"
+
+                            disabled={panelSavingId === inst._id}
+
+                            onClick={() => {
+
+                              const fromEl = document.getElementById(`mw-panel-from-${inst._id}`);
+
+                              const untilEl = document.getElementById(`mw-panel-until-${inst._id}`);
+
+                              saveInstrumentPanelVisibility(inst._id, fromEl?.value || '', untilEl?.value || '');
+
+                            }}
+
+                            className="text-[10px] px-2 py-0.5 rounded bg-sky-700/50 text-sky-100 hover:bg-sky-600/60 disabled:opacity-50"
+
+                          >
+
+                            Apply
+
+                          </button>
+
+                          <button
+
+                            type="button"
+
+                            disabled={panelSavingId === inst._id || (!inst.tradingPanelVisibleFrom && !inst.tradingPanelVisibleUntil)}
+
+                            onClick={() => saveInstrumentPanelVisibility(inst._id, '', '')}
+
+                            className="text-[10px] px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-40"
+
+                          >
+
+                            Clear
+
+                          </button>
+
+                        </div>
+
+                        {inst.tradingPanelVisibleFrom ? (
+
+                          <div className="text-[10px] text-sky-400/90">
+
+                            from {new Date(inst.tradingPanelVisibleFrom).toLocaleDateString()}
+
+                          </div>
+
+                        ) : null}
+
+                      </div>
+
+                    </td>
+
+                    <td className="px-4 py-3 align-top min-w-[180px]">
+
+                      <div className="flex flex-col gap-1">
+
+                        <input
+
+                          id={`mw-panel-until-${inst._id}`}
+
+                          key={`mw-panel-until-${inst._id}-${inst.tradingPanelVisibleUntil ?? ''}`}
+
+                          type="date"
+
+                          defaultValue={toDateInputValue(inst.tradingPanelVisibleUntil)}
+
+                          disabled={panelSavingId === inst._id}
+
+                          className="w-full max-w-[11rem] text-[11px] bg-dark-700 border border-dark-600 rounded px-1 py-1 text-gray-200 disabled:opacity-50"
+
+                          title="Is date ke end tak trading panel par dikhega (khali = no end)"
+
+                        />
+
+                        {inst.tradingPanelVisibleUntil ? (
+
+                          <div className="text-[10px] text-sky-400/90">
+
+                            until {new Date(inst.tradingPanelVisibleUntil).toLocaleDateString()}
+
+                          </div>
+
+                        ) : null}
 
                       </div>
 
@@ -21427,25 +21199,53 @@ const InstrumentManagement = () => {
 
 
 
-      {tradingModalInst && tradingForm && (
+      {rulesModalInst && (
 
-        <InstrumentTradingRulesModal
+        <InstrumentRulesModal
 
-          instrument={tradingModalInst}
+          instrument={rulesModalInst}
 
-          tradingForm={tradingForm}
+          adminToken={admin?.token}
 
-          setTradingForm={setTradingForm}
+          onClose={() => setRulesModalInst(null)}
 
-          onClose={closeTradingDefaultsModal}
+          onSaved={(saved) => {
 
-          onSave={saveTradingDefaults}
+            const id = saved?._id;
 
-          saving={tradingSaving}
+            if (id) {
+
+              setInstruments((prev) =>
+
+                prev.map((i) => (String(i._id) === String(id) ? { ...i, ...saved } : i))
+
+              );
+
+            }
+
+            fetchInstruments();
+
+          }}
 
         />
 
       )}
+
+
+
+      <InstrumentSegmentDefaultsModal
+
+        open={segmentRulesOpen}
+
+        onClose={() => setSegmentRulesOpen(false)}
+
+        segmentKey={segmentRulesKey}
+
+        categoryLabel={segmentRulesCategory}
+
+        adminToken={admin?.token}
+
+      />
 
     </div>
 
@@ -33664,25 +33464,10 @@ const SystemDefaultSettings = () => {
 
   const handleAdminSegDefChange = (seg, field, value) => {
 
-    setAdminSegDefs((prev) => {
-
-      const segData = { ...(prev[seg] || {}) };
-
-      if (field.includes('.')) {
-
-        const [parent, child] = field.split('.');
-
-        segData[parent] = { ...(segData[parent] || {}), [child]: value };
-
-      } else {
-
-        segData[field] = value;
-
-      }
-
-      return { ...prev, [seg]: segData };
-
-    });
+    setAdminSegDefs((prev) => ({
+      ...prev,
+      [seg]: patchSegmentField(prev[seg] || {}, field, value),
+    }));
 
   };
 
@@ -34715,31 +34500,17 @@ const SystemDefaultSettings = () => {
                         <div className="grid grid-cols-2 gap-4 mb-4">
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.1"
-                              value={s.lotSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.intradayLeverage', isNaN(val) ? 1 : val);
-                              }}
-                              disabled={!showAdminDefLotSettingsButton}
+                            <SegmentNumberInput
+                              value={s.lotSettings?.intradayLeverage}
+                              onChange={(v) => handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.intradayLeverage', v)}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
                           </div>
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.1"
-                              value={s.lotSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
-                              }}
-                              disabled={!showAdminDefLotSettingsButton}
+                            <SegmentNumberInput
+                              value={s.lotSettings?.carryForwardLeverage}
+                              onChange={(v) => handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.carryForwardLeverage', v)}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
                           </div>
@@ -34750,11 +34521,8 @@ const SystemDefaultSettings = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.maxLots ?? 100}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'maxLots', isNaN(val) ? 100 : val);
-                              }}
+                              value={numInputValue(s.maxLots)}
+                              onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'maxLots', parseIntInput(e.target.value))}
                               disabled={!showAdminDefLotSettingsButton}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
@@ -34764,11 +34532,8 @@ const SystemDefaultSettings = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.minLots ?? 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'minLots', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.minLots)}
+                              onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'minLots', parseIntInput(e.target.value))}
                               disabled={!showAdminDefLotSettingsButton}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
@@ -34778,11 +34543,8 @@ const SystemDefaultSettings = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.lotSettings?.breakupLots ?? 0}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.breakupLots', isNaN(val) ? 0 : val);
-                              }}
+                              value={numInputValue(s.lotSettings?.breakupLots)}
+                              onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'lotSettings.breakupLots', parseIntInput(e.target.value))}
                               disabled={!showAdminDefLotSettingsButton}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefLotSettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
@@ -34801,11 +34563,8 @@ const SystemDefaultSettings = () => {
                             type="number"
                             min="0"
                             step="0.1"
-                            value={s.quantityModeSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value);
-                              handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.intradayLeverage', isNaN(val) ? 1 : val);
-                            }}
+                            value={numInputValue(s.quantityModeSettings?.intradayLeverage)}
+                            onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.intradayLeverage', parseNumInput(e.target.value))}
                             disabled={!showAdminDefQuantitySettingsButton}
                             className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                           />
@@ -34816,11 +34575,8 @@ const SystemDefaultSettings = () => {
                               type="number"
                               min="0"
                               step="0.1"
-                              value={s.quantityModeSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.carryForwardLeverage)}
+                              onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.carryForwardLeverage', parseNumInput(e.target.value))}
                               disabled={!showAdminDefQuantitySettingsButton}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
@@ -34832,11 +34588,8 @@ const SystemDefaultSettings = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.quantityModeSettings?.maxQuantity ?? 1000}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.maxQuantity', isNaN(val) ? 1000 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.maxQuantity)}
+                              onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.maxQuantity', parseIntInput(e.target.value))}
                               disabled={!showAdminDefQuantitySettingsButton}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
@@ -34846,11 +34599,8 @@ const SystemDefaultSettings = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.quantityModeSettings?.minQuantity ?? 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.minQuantity', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.minQuantity)}
+                              onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.minQuantity', parseIntInput(e.target.value))}
                               disabled={!showAdminDefQuantitySettingsButton}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
@@ -34860,11 +34610,8 @@ const SystemDefaultSettings = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.quantityModeSettings?.breakupQuantity ?? 0}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.breakupQuantity', isNaN(val) ? 0 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.breakupQuantity)}
+                              onChange={(e) => handleAdminSegDefChange(adminDefExpandedSeg, 'quantityModeSettings.breakupQuantity', parseIntInput(e.target.value))}
                               disabled={!showAdminDefQuantitySettingsButton}
                               className={`w-full border rounded px-3 py-2 text-sm ${showAdminDefQuantitySettingsButton ? 'bg-dark-700 border-dark-600' : 'bg-dark-800 border-dark-700 opacity-50'}`}
                             />
@@ -34937,74 +34684,16 @@ const SystemDefaultSettings = () => {
 
 
 
-                    {/* Brokerage Settings */}
-
-                    <h4 className="text-sm font-semibold text-green-400 mb-3">Brokerage Settings</h4>
-
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-
-                      <div>
-
-                        <label className="block text-xs text-gray-400 mb-1">
-
-                          {commissionAmountLabel(s.commissionType || 'PER_LOT')}
-
-                        </label>
-
-                        <input type="number" value={s.commissionLot || 0}
-
-                          onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'commissionLot', parseFloat(e.target.value) || 0)}
-
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-
-                        <p className="text-[10px] text-gray-600 mt-1">{commissionHelperText(s.commissionType || 'PER_LOT')}</p>
-
-                      </div>
-
-                      <div>
-
-                        <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-
-                        <select value={s.commissionType || 'PER_LOT'}
-
-                          onChange={(e) => {
-
-                            const ct = e.target.value;
-
-                            setAdminSegDefs((prev) => ({
-
-                              ...prev,
-
-                              [adminDefExpandedSeg]: {
-
-                                ...prev[adminDefExpandedSeg],
-
-                                commissionType: ct,
-
-                                commissionUnit: requiredUnitForCommissionType(ct),
-
-                              },
-
-                            }));
-
-                          }}
-
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm">
-
-                          <option value="PER_LOT">Per Lot</option>
-
-                          <option value="PER_TRADE">Per Trade</option>
-
-                          <option value="PER_CRORE">Per Crore</option>
-
-                          <option value="PER_QUANTITY">Per Quantity</option>
-
-                        </select>
-
-
-                      </div>
-
-                    </div>
+                    <SegmentBrokerageFields
+                      slice={s}
+                      baseline={adminSegDefs[adminDefExpandedSeg]}
+                      onChange={(next) =>
+                        setAdminSegDefs((prev) => ({
+                          ...prev,
+                          [adminDefExpandedSeg]: { ...(prev[adminDefExpandedSeg] || {}), ...next },
+                        }))
+                      }
+                    />
 
 
 
@@ -35116,7 +34805,7 @@ const SystemDefaultSettings = () => {
 
                               step={0.01}
 
-                              value={s.cryptoSpreadUsdPerSide ?? 0}
+                              value={numInputValue(s.cryptoSpreadUsdPerSide)}
 
                               onChange={(e) =>
 
@@ -35126,7 +34815,7 @@ const SystemDefaultSettings = () => {
 
                                   'cryptoSpreadUsdPerSide',
 
-                                  Math.max(0, parseFloat(e.target.value) || 0)
+                                  parseNonNegativeNumInput(e.target.value)
 
                                 )
 
@@ -35150,7 +34839,7 @@ const SystemDefaultSettings = () => {
 
                               step={1}
 
-                              value={s.cryptoSpreadInr ?? 0}
+                              value={numInputValue(s.cryptoSpreadInr)}
 
                               onChange={(e) =>
 
@@ -35160,7 +34849,7 @@ const SystemDefaultSettings = () => {
 
                                   'cryptoSpreadInr',
 
-                                  Math.max(0, parseFloat(e.target.value) || 0)
+                                  parseNonNegativeNumInput(e.target.value)
 
                                 )
 
@@ -35181,151 +34870,21 @@ const SystemDefaultSettings = () => {
 
 
                     {/* Option Buy/Sell - only for OPT segments */}
-
                     {isOpt && (
-
                       <>
-
                         <h4 className="text-sm font-semibold text-purple-400 mb-3">Option Buy / Sell Settings</h4>
-
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                          {['optionBuy', 'optionSell'].map(optType => {
-
-                            const opt = s[optType] || {};
-
-                            return (
-
-                              <div key={optType} className="bg-dark-700 rounded-lg p-4">
-
-                                <div className="flex items-center justify-between mb-3">
-
-                                  <h5 className="text-sm font-semibold">{optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}</h5>
-
-                                  <button
-
-                                    onClick={() => handleAdminSegDefChange(adminDefExpandedSeg, optType, { ...opt, allowed: !opt.allowed })}
-
-                                    className={`px-3 py-1 rounded text-xs font-medium ${opt.allowed !== false ? 'bg-green-600' : 'bg-red-600'}`}
-
-                                  >
-
-                                    {opt.allowed !== false ? 'Allowed' : 'Blocked'}
-
-                                  </button>
-
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-
-                                  <div>
-
-                                    <label className="block text-xs text-gray-400 mb-1">
-
-                                      {commissionAmountLabel(opt.commissionType || 'PER_LOT')}
-
-                                    </label>
-
-                                    <input type="number" value={opt.commission || 0}
-
-                                      onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, optType, { ...opt, commission: parseFloat(e.target.value) || 0 })}
-
-                                      className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm" />
-
-                                    <p className="text-[9px] text-gray-600 mt-0.5">{commissionHelperText(opt.commissionType || 'PER_LOT')}</p>
-
-                                  </div>
-
-                                  <div>
-
-                                    <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
-
-                                    <input type="number" value={opt.strikeSelection || 0}
-
-                                      onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, optType, { ...opt, strikeSelection: parseInt(e.target.value) || 0 })}
-
-                                      className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm" />
-
-                                  </div>
-
-                                  <div>
-
-                                    <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(adminDefExpandedSeg) ? 'Max Exchange Qty' : 'Max Exchange Lots'}</label>
-
-                                    <input type="number" value={opt.maxExchangeLots || 0}
-
-                                      onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, optType, { ...opt, maxExchangeLots: parseInt(e.target.value) || 0 })}
-
-                                      className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm" />
-
-                                  </div>
-
-                                  <div>
-
-                                    <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-
-                                    <select value={opt.commissionType || 'PER_LOT'}
-
-                                      onChange={(e) => {
-
-                                        const ct = e.target.value;
-
-                                        handleAdminSegDefChange(adminDefExpandedSeg, optType, {
-
-                                          ...opt,
-
-                                          commissionType: ct,
-
-                                          commissionUnit: requiredUnitForCommissionType(ct),
-
-                                        });
-
-                                      }}
-
-                                      className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm">
-
-                                      <option value="PER_LOT">Per Lot</option>
-
-                                      <option value="PER_TRADE">Per Trade</option>
-
-                                      <option value="PER_CRORE">Per Crore</option>
-
-                                    </select>
-
-                                    <select
-
-                                      value={requiredUnitForCommissionType(opt.commissionType || 'PER_LOT')}
-
-                                      disabled
-
-                                      className="w-full mt-1 bg-dark-800 border border-dark-600 rounded px-2 py-1 text-[10px] opacity-90 cursor-not-allowed"
-
-                                      title="Unit follows commission type"
-
-                                    >
-
-                                      {unitOptionsForCommissionType(opt.commissionType || 'PER_LOT').map((o) => (
-
-                                        <option key={o.value} value={o.value}>{o.label}</option>
-
-                                      ))}
-
-                                    </select>
-
-                                  </div>
-
-                                </div>
-
-                              </div>
-
-                            );
-
-                          })}
-
+                          {['optionBuy', 'optionSell'].map((optType) => (
+                            <OptionBuySellFields
+                              key={optType}
+                              segmentKey={adminDefExpandedSeg}
+                              optType={optType}
+                              opt={s[optType] || {}}
+                              onChange={(next) => handleAdminSegDefChange(adminDefExpandedSeg, optType, next)}
+                            />
+                          ))}
                         </div>
-
                       </>
-
                     )}
 
                   </div>
@@ -45507,25 +45066,7 @@ const MySegmentSettings = () => {
 
 
 
-  const defaultSegmentSettings = {
-
-    enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0,
-
-    maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, cryptoSpreadInr: 0, cryptoSpreadUsdPerSide: 0,
-
-    cryptoStartTime: '', cryptoClosingTime: '', cryptoReferenceSymbol: '', cryptoPricePerLotInr: 0,
-
-    cryptoLotSizeLots: 1,
-
-    cryptoLotSizeQuantity: 0,
-
-    allowLimitPendingOrders: true,
-
-    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
-
-    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
-
-  };
+  const defaultSegmentSettings = { enabled: false };
 
 
 
@@ -46160,7 +45701,7 @@ const MySegmentSettings = () => {
 
                         step={0.01}
 
-                        value={segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide ?? 0}
+                        value={numInputValue(segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide)}
 
                         onChange={(e) =>
 
@@ -46170,7 +45711,7 @@ const MySegmentSettings = () => {
 
                             'cryptoSpreadUsdPerSide',
 
-                            Math.max(0, parseFloat(e.target.value) || 0)
+                            parseNonNegativeNumInput(e.target.value)
 
                           )
 
@@ -46194,7 +45735,7 @@ const MySegmentSettings = () => {
 
                         step={1}
 
-                        value={segmentPermissions[expandedSegment].cryptoSpreadInr ?? 0}
+                        value={numInputValue(segmentPermissions[expandedSegment].cryptoSpreadInr)}
 
                         onChange={(e) =>
 
@@ -46204,7 +45745,7 @@ const MySegmentSettings = () => {
 
                             'cryptoSpreadInr',
 
-                            Math.max(0, parseFloat(e.target.value) || 0)
+                            parseNonNegativeNumInput(e.target.value)
 
                           )
 
@@ -46225,129 +45766,26 @@ const MySegmentSettings = () => {
 
 
               {/* Option Buy/Sell Settings - only for OPT segments */}
-
               {expandedSegment.includes('OPT') && (
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                  {['optionBuy', 'optionSell'].map(optType => (
-
-                    <div key={optType} className="bg-dark-700 rounded-lg p-4">
-
-                      <div className="flex items-center justify-between mb-3">
-
-                        <h4 className="text-sm font-semibold text-purple-400">
-
-                          {optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}
-
-                        </h4>
-
-                        <button
-
-                          onClick={() => handleOptionChange(expandedSegment, optType, 'allowed', !segmentPermissions[expandedSegment][optType]?.allowed)}
-
-                          className={`px-3 py-1 rounded text-xs font-medium ${
-
-                            segmentPermissions[expandedSegment][optType]?.allowed ? 'bg-green-600' : 'bg-red-600'
-
-                          }`}
-
-                        >
-
-                          {segmentPermissions[expandedSegment][optType]?.allowed ? 'Allowed' : 'Blocked'}
-
-                        </button>
-
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Commission ()</label>
-
-                          <input
-
-                            type="number"
-
-                            value={segmentPermissions[expandedSegment][optType]?.commission || 0}
-
-                            onChange={(e) => handleOptionChange(expandedSegment, optType, 'commission', Number(e.target.value))}
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
-
-                          <input
-
-                            type="number"
-
-                            value={segmentPermissions[expandedSegment][optType]?.strikeSelection || 50}
-
-                            onChange={(e) => handleOptionChange(expandedSegment, optType, 'strikeSelection', Number(e.target.value))}
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Max Exchange Qty' : 'Max Exchange Lots'}</label>
-
-                          <input
-
-                            type="number"
-
-                            value={segmentPermissions[expandedSegment][optType]?.maxExchangeLots || 100}
-
-                            onChange={(e) => handleOptionChange(expandedSegment, optType, 'maxExchangeLots', Number(e.target.value))}
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-
-                          <select
-
-                            value={segmentPermissions[expandedSegment][optType]?.commissionType || 'PER_LOT'}
-
-                            onChange={(e) => handleOptionChange(expandedSegment, optType, 'commissionType', e.target.value)}
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          >
-
-                            <option value="PER_LOT">Per Lot</option>
-
-                            <option value="PER_TRADE">Per Trade</option>
-
-                            <option value="PER_CRORE">Per Crore</option>
-
-                          </select>
-
-                        </div>
-
-                      </div>
-
-                    </div>
-
+                  {['optionBuy', 'optionSell'].map((optType) => (
+                    <OptionBuySellFields
+                      key={optType}
+                      segmentKey={expandedSegment}
+                      optType={optType}
+                      opt={segmentPermissions[expandedSegment]?.[optType] || {}}
+                      onChange={(next) =>
+                        setSegmentPermissions((prev) => ({
+                          ...prev,
+                          [expandedSegment]: {
+                            ...(prev[expandedSegment] || {}),
+                            [optType]: next,
+                          },
+                        }))
+                      }
+                    />
                   ))}
-
                 </div>
-
               )}
 
             </div>
@@ -48428,76 +47866,7 @@ const AllUsersManagement = () => {
 
   
 
-  const defaultSegmentSettings = {
-
-    enabled: false,
-
-
-    maxExchangeLots: 100,
-
-    commissionType: 'PER_LOT',
-
-    commissionLot: 0,
-
-    maxLots: 50,
-
-    minLots: 1,
-
-    orderLots: 10,
-
-    exposureIntraday: 1,
-
-    exposureCarryForward: 1,
-
-    cryptoSpreadInr: 0,
-
-    cryptoSpreadUsdPerSide: 0,
-
-    cryptoStartTime: '',
-
-    cryptoClosingTime: '',
-
-    cryptoReferenceSymbol: '',
-
-    cryptoPricePerLotInr: 0,
-
-    cryptoLotSizeLots: 1,
-
-    cryptoLotSizeQuantity: 0,
-
-    allowLimitPendingOrders: true,
-
-    optionBuy: {
-
-      allowed: true,
-
-  
-      commissionType: 'PER_LOT',
-
-      commission: 0,
-
-      strikeSelection: 50,
-
-      maxExchangeLots: 100
-
-    },
-
-    optionSell: {
-
-      allowed: true,
-
-  
-      commissionType: 'PER_LOT',
-
-      commission: 0,
-
-      strikeSelection: 50,
-
-      maxExchangeLots: 100
-
-    }
-
-  };
+  const defaultSegmentSettings = { enabled: false };
 
   
 
@@ -48941,21 +48310,7 @@ const AllUsersManagement = () => {
 
     const normalizedSegments = allSegments.reduce((acc, seg) => {
       const userSeg = user.segmentPermissions?.[seg] || {};
-      acc[seg] = {
-        ...defaultSegmentSettings,
-        // Deep merge for nested objects - user values override defaults
-        optionBuy: { ...defaultSegmentSettings.optionBuy, ...(userSeg.optionBuy || {}) },
-        optionSell: { ...defaultSegmentSettings.optionSell, ...(userSeg.optionSell || {}) },
-        lotSettings: { ...defaultSegmentSettings.lotSettings, ...(userSeg.lotSettings || {}) },
-        quantityModeSettings: { ...defaultSegmentSettings.quantityModeSettings, ...(userSeg.quantityModeSettings || {}) },
-        // Then spread userSeg for any top-level fields (but not nested ones since they're already merged)
-        ...Object.keys(userSeg).reduce((acc2, key) => {
-          if (key !== 'optionBuy' && key !== 'optionSell' && key !== 'lotSettings' && key !== 'quantityModeSettings') {
-            acc2[key] = userSeg[key];
-          }
-          return acc2;
-        }, {})
-      };
+      acc[seg] = { ...defaultSegmentSettings, ...userSeg };
       return acc;
     }, {});
 
@@ -49071,29 +48426,22 @@ const AllUsersManagement = () => {
       }
 
       // Hierarchy check for lotSettings.breakupLots
+      // Breakup lots is a per-order cap: child can be stricter (lower),
+      // but cannot exceed parent's cap.
       if (childField === 'breakupLots') {
         const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.breakupLots;
-        const fallbackValue = segmentDefaultsBaseline[segment]?.breakupLots;
-        const limit = parentValue ?? fallbackValue;
-
-        if (limit !== undefined && value < limit) {
-          alert(`You cannot set Breakup Lots lower than ${limit}. Your parent's minimum is ${limit}.`);
+        if (parentValue !== undefined && value > parentValue) {
+          alert(`You cannot set Breakup Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
           return;
         }
       }
 
-      setEditFormData(prev => ({
+      setEditFormData((prev) => ({
         ...prev,
         segmentPermissions: {
           ...prev.segmentPermissions,
-          [segment]: {
-            ...prev.segmentPermissions[segment],
-            [parentField]: {
-              ...(prev.segmentPermissions[segment][parentField] || {}),
-              [childField]: value
-            }
-          }
-        }
+          [segment]: patchSegmentField(prev.segmentPermissions[segment] || {}, field, value),
+        },
       }));
       return;
     }
@@ -49359,24 +48707,12 @@ const AllUsersManagement = () => {
       }
     }
 
-    setEditFormData(prev => ({
-
+    setEditFormData((prev) => ({
       ...prev,
-
       segmentPermissions: {
-
         ...prev.segmentPermissions,
-
-        [segment]: {
-
-          ...prev.segmentPermissions[segment],
-
-          [field]: value
-
-        }
-
-      }
-
+        [segment]: patchSegmentField(prev.segmentPermissions[segment] || {}, field, value),
+      },
     }));
 
   };
@@ -50882,7 +50218,7 @@ const AllUsersManagement = () => {
 
                             step={0.01}
 
-                            value={editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadUsdPerSide ?? 0}
+                            value={numInputValue(editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadUsdPerSide)}
 
                             onChange={(e) =>
 
@@ -50892,7 +50228,7 @@ const AllUsersManagement = () => {
 
                                 'cryptoSpreadUsdPerSide',
 
-                                Math.max(0, parseFloat(e.target.value) || 0)
+                                parseNonNegativeNumInput(e.target.value)
 
                               )
 
@@ -50916,7 +50252,7 @@ const AllUsersManagement = () => {
 
                             step={1}
 
-                            value={editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadInr ?? 0}
+                            value={numInputValue(editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadInr)}
 
                             onChange={(e) =>
 
@@ -50926,7 +50262,7 @@ const AllUsersManagement = () => {
 
                                 'cryptoSpreadInr',
 
-                                Math.max(0, parseFloat(e.target.value) || 0)
+                                parseNonNegativeNumInput(e.target.value)
 
                               )
 
@@ -54448,118 +53784,7 @@ const UserManagement = () => {
 
   const [scriptSettings, setScriptSettings] = useState({});
 
-  const defaultSegmentSettings = {
-
-    enabled: false,
-
-
-    maxExchangeLots: 100,
-
-    commissionType: 'PER_LOT',
-
-    commissionLot: 0,
-
-    maxLots: 50,
-
-    minLots: 1,
-
-    orderLots: 10,
-
-    exposureIntraday: 1,
-
-    exposureCarryForward: 1,
-
-    cryptoSpreadInr: 0,
-
-    cryptoSpreadUsdPerSide: 0,
-
-    cryptoStartTime: '',
-
-    cryptoClosingTime: '',
-
-    cryptoReferenceSymbol: '',
-
-    cryptoPricePerLotInr: 0,
-
-    cryptoLotSizeLots: 1,
-
-    cryptoLotSizeQuantity: 0,
-
-    allowLimitPendingOrders: true,
-
-    optionBuy: {
-
-      allowed: true,
-
-  
-      commissionType: 'PER_LOT',
-
-      commission: 0,
-
-      strikeSelection: 50,
-
-      maxExchangeLots: 100
-
-    },
-
-    optionSell: {
-
-      allowed: true,
-
-  
-      commissionType: 'PER_LOT',
-
-      commission: 0,
-
-      strikeSelection: 50,
-
-      maxExchangeLots: 100
-
-    },
-
-    defaultIntradayOnly: false,
-
-    intradayOnlyLeverage: 1,
-
-    intradayOnlyMaxQty: 1000,
-
-    enableLotSettings: false,
-
-    enableQuantitySettings: false,
-
-    lotSettings: {
-
-      intradayLeverage: 1,
-
-      carryForwardLeverage: 1,
-
-      breakupLots: 0,
-
-      notificationPercent: 70,
-
-      autosquarePercent: 90
-
-    },
-
-    quantityModeSettings: {
-
-      intradayLeverage: 1,
-
-      carryForwardLeverage: 1,
-
-      maxQuantity: 1000,
-
-      minQuantity: 1,
-
-      breakupQuantity: 0,
-
-      notificationPercent: 70,
-
-      autosquarePercent: 90
-
-    }
-
-  };
+  const defaultSegmentSettings = { enabled: false };
 
   const fetchParentSegmentBaseline = async (userId) => {
     try {
@@ -54921,21 +54146,7 @@ const UserManagement = () => {
       const userSeg = user.segmentPermissions?.[seg] || {};
       console.log('[Open Settings Modal] Segment:', seg, 'User data:', JSON.stringify(userSeg, null, 2));
       console.log('[Open Settings Modal] Segment:', seg, 'User enabled:', userSeg.enabled, 'Default enabled:', defaultSegmentSettings.enabled);
-      acc[seg] = {
-        ...defaultSegmentSettings,
-        // Deep merge for nested objects - USER values should override defaults
-        optionBuy: { ...defaultSegmentSettings.optionBuy, ...(userSeg.optionBuy || {}) },
-        optionSell: { ...defaultSegmentSettings.optionSell, ...(userSeg.optionSell || {}) },
-        lotSettings: { ...(userSeg.lotSettings || defaultSegmentSettings.lotSettings) },
-        quantityModeSettings: { ...(userSeg.quantityModeSettings || defaultSegmentSettings.quantityModeSettings) },
-        // Then spread userSeg for any top-level fields (but not nested ones since they're already merged)
-        ...Object.keys(userSeg).reduce((acc2, key) => {
-          if (key !== 'optionBuy' && key !== 'optionSell' && key !== 'lotSettings' && key !== 'quantityModeSettings') {
-            acc2[key] = userSeg[key];
-          }
-          return acc2;
-        }, {})
-      };
+      acc[seg] = { ...defaultSegmentSettings, ...userSeg };
       console.log('[Open Settings Modal] Segment:', seg, 'Final enabled:', acc[seg].enabled);
       return acc;
     }, {});
@@ -55046,13 +54257,12 @@ const UserManagement = () => {
       }
 
       // Hierarchy check for lotSettings.breakupLots
+      // Breakup lots is a per-order cap: child can be stricter (lower),
+      // but cannot exceed parent's cap.
       if (childField === 'breakupLots') {
         const parentValue = segmentDefaultsBaseline[segment]?.[parentField]?.breakupLots;
-        const fallbackValue = segmentDefaultsBaseline[segment]?.breakupLots;
-        const limit = parentValue ?? fallbackValue;
-
-        if (limit !== undefined && value < limit) {
-          alert(`You cannot set Breakup Lots lower than ${limit}. Your parent's minimum is ${limit}.`);
+        if (parentValue !== undefined && value > parentValue) {
+          alert(`You cannot set Breakup Lots higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
           return;
         }
       }
@@ -55287,24 +54497,12 @@ const UserManagement = () => {
       }
     }
 
-    setEditFormData(prev => ({
-
+    setEditFormData((prev) => ({
       ...prev,
-
       segmentPermissions: {
-
         ...prev.segmentPermissions,
-
-        [segment]: {
-
-          ...prev.segmentPermissions[segment],
-
-          [field]: value
-
-        }
-
-      }
-
+        [segment]: patchSegmentField(prev.segmentPermissions[segment] || {}, field, value),
+      },
     }));
 
   };
@@ -55851,63 +55049,7 @@ const UserManagement = () => {
 
                       <button
 
-                        onClick={() => {
-                          setSelectedUser(user);
-                          // Load user's segment data for settings modal with defaults
-                          const allSegments = ['nseopt', 'nsefut', 'mcxopt', 'mcxfut', 'bse-opt', 'bse-fut', 'cryptofut', 'cryptoopt', 'forexopt', 'forexfut'];
-                          const defaultSegmentSettings = {
-                            enabled: false,
-                                                    maxLots: 50,
-                            minLots: 1,
-                            orderLots: 10,
-                            maxExchangeLots: 1000,
-                            exposureIntraday: 1,
-                            exposureCarryForward: 1,
-                            commissionType: 'PER_LOT',
-                            commissionLot: 0,
-                            optionBuy: { allowed: true, commissionType: 'PER_LOT', commissionLot: 0 },
-                            optionSell: { allowed: true, commissionType: 'PER_LOT', commissionLot: 0 },
-                            defaultIntradayOnly: false,
-                            intradayOnlyLeverage: 1,
-                            intradayOnlyMaxQty: 1000,
-                            allowLimitPendingOrders: true,
-                            enableLotSettings: false,
-                            enableQuantitySettings: false,
-                            lotSettings: {
-                              intradayLeverage: 1,
-                              carryForwardLeverage: 1,
-                              breakupLots: 0,
-                              notificationPercent: 70,
-                              autosquarePercent: 90
-                            },
-                            quantityModeSettings: {
-                              intradayLeverage: 1,
-                              carryForwardLeverage: 1,
-                              maxQuantity: 1000,
-                              minQuantity: 1,
-                              breakupQuantity: 0,
-                              notificationPercent: 70,
-                              autosquarePercent: 90
-                            },
-                            cryptoSpreadInr: 0,
-                            cryptoSpreadUsdPerSide: 0
-                          };
-                          const normalizedSegments = allSegments.reduce((acc, seg) => {
-                            const userSeg = user.segmentPermissions?.[seg] || {};
-                            acc[seg] = {
-                              ...defaultSegmentSettings,
-                              ...userSeg,
-                              // Deep merge for nested objects
-                              optionBuy: { ...defaultSegmentSettings.optionBuy, ...(userSeg.optionBuy || {}) },
-                              optionSell: { ...defaultSegmentSettings.optionSell, ...(userSeg.optionSell || {}) },
-                              lotSettings: { ...defaultSegmentSettings.lotSettings, ...(userSeg.lotSettings || {}) },
-                              quantityModeSettings: { ...defaultSegmentSettings.quantityModeSettings, ...(userSeg.quantityModeSettings || {}) }
-                            };
-                            return acc;
-                          }, {});
-                          // Use openSettingsModal to ensure baseline is loaded before modal opens
-                          openSettingsModal(user);
-                        }}
+                        onClick={() => openSettingsModal(user)}
 
                         className="p-2 hover:bg-dark-600 rounded transition text-gray-400 hover:text-white"
 
@@ -56410,11 +55552,8 @@ const UserManagement = () => {
                               type="number"
                               min="0"
                               step="0.1"
-                              value={s.intradayOnlyLeverage ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'intradayOnlyLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.intradayOnlyLeverage)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'intradayOnlyLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56423,11 +55562,8 @@ const UserManagement = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.intradayOnlyMaxQty ?? 1000}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleEditSegmentPermissionChange(segmentKey, 'intradayOnlyMaxQty', isNaN(val) ? 1000 : val);
-                              }}
+                              value={numInputValue(s.intradayOnlyMaxQty)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'intradayOnlyMaxQty', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56486,11 +55622,8 @@ const UserManagement = () => {
                               type="number"
                               min="0"
                               step="0.1"
-                              value={s.lotSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.intradayLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.lotSettings?.intradayLeverage)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'lotSettings.intradayLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56500,11 +55633,8 @@ const UserManagement = () => {
                               type="number"
                               min="0"
                               step="0.1"
-                              value={s.lotSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.lotSettings?.carryForwardLeverage)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'lotSettings.carryForwardLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56515,11 +55645,8 @@ const UserManagement = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.maxLots ?? 100}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleEditSegmentPermissionChange(segmentKey, 'maxLots', isNaN(val) ? 100 : val);
-                              }}
+                              value={numInputValue(s.maxLots)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'maxLots', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56528,11 +55655,8 @@ const UserManagement = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.minLots ?? 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleEditSegmentPermissionChange(segmentKey, 'minLots', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.minLots)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'minLots', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56541,11 +55665,8 @@ const UserManagement = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.lotSettings?.breakupLots ?? 0}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.breakupLots', isNaN(val) ? 0 : val);
-                              }}
+                              value={numInputValue(s.lotSettings?.breakupLots)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'lotSettings.breakupLots', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56558,11 +55679,8 @@ const UserManagement = () => {
                               min="0"
                               max="100"
                               step="1"
-                              value={s.lotSettings?.notificationPercent ?? 70}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.notificationPercent', isNaN(val) ? 70 : val);
-                              }}
+                              value={numInputValue(s.lotSettings?.notificationPercent)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'lotSettings.notificationPercent', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56573,11 +55691,8 @@ const UserManagement = () => {
                               min="0"
                               max="100"
                               step="1"
-                              value={s.lotSettings?.autosquarePercent ?? 90}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'lotSettings.autosquarePercent', isNaN(val) ? 90 : val);
-                              }}
+                              value={numInputValue(s.lotSettings?.autosquarePercent)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'lotSettings.autosquarePercent', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56595,11 +55710,8 @@ const UserManagement = () => {
                               type="number"
                               min="0"
                               step="0.1"
-                              value={s.quantityModeSettings?.intradayLeverage ?? s.exposureIntraday ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.intradayLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.intradayLeverage)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.intradayLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56609,11 +55721,8 @@ const UserManagement = () => {
                               type="number"
                               min="0"
                               step="0.1"
-                              value={s.quantityModeSettings?.carryForwardLeverage ?? s.exposureCarryForward ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.carryForwardLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.carryForwardLeverage)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.carryForwardLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56624,11 +55733,8 @@ const UserManagement = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.quantityModeSettings?.maxQuantity ?? 1000}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.maxQuantity', isNaN(val) ? 1000 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.maxQuantity)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.maxQuantity', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56637,11 +55743,8 @@ const UserManagement = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.quantityModeSettings?.minQuantity ?? 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.minQuantity', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.minQuantity)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.minQuantity', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56650,11 +55753,8 @@ const UserManagement = () => {
                             <input
                               type="number"
                               min="0"
-                              value={s.quantityModeSettings?.breakupQuantity ?? 0}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.breakupQuantity', isNaN(val) ? 0 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.breakupQuantity)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.breakupQuantity', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56667,11 +55767,8 @@ const UserManagement = () => {
                               min="0"
                               max="100"
                               step="1"
-                              value={s.quantityModeSettings?.notificationPercent ?? 70}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.notificationPercent', isNaN(val) ? 70 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.notificationPercent)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.notificationPercent', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56682,11 +55779,8 @@ const UserManagement = () => {
                               min="0"
                               max="100"
                               step="1"
-                              value={s.quantityModeSettings?.autosquarePercent ?? 90}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.autosquarePercent', isNaN(val) ? 90 : val);
-                              }}
+                              value={numInputValue(s.quantityModeSettings?.autosquarePercent)}
+                              onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'quantityModeSettings.autosquarePercent', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -56695,100 +55789,35 @@ const UserManagement = () => {
                     )}
 
 
-                    {/* Brokerage */}
-                    <h4 className="text-xs font-semibold text-green-400 mb-2">Brokerage</h4>
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">
-                          {commissionAmountLabel(s.commissionType || 'PER_LOT')}
-                        </label>
-                        <input type="number" value={s.commissionLot || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, 'commissionLot', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                        <p className="text-[10px] text-gray-600 mt-1">{commissionHelperText(s.commissionType || 'PER_LOT')}</p>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-                        <select
-                          value={s.commissionType || 'PER_LOT'}
-                          onChange={(e) => {
-                            const ct = e.target.value;
-                            handleEditSegmentPermissionChange(expandedSegment, 'commissionType', ct);
-                            handleEditSegmentPermissionChange(expandedSegment, 'commissionUnit', requiredUnitForCommissionType(ct));
-                          }}
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                        >
-                          <option value="PER_LOT">Per Lot</option>
-                          <option value="PER_TRADE">Per Trade</option>
-                          <option value="PER_CRORE">Per Crore</option>
-                        </select>
-                      </div>
-                    </div>
+                    <SegmentBrokerageFields
+                      slice={s}
+                      baseline={segmentDefaultsBaseline[segmentKey]}
+                      compact
+                      onChange={(next) => {
+                        Object.entries(next).forEach(([k, v]) => {
+                          if (k === 'optionBuy' || k === 'optionSell') return;
+                          if (s[k] !== v) handleEditSegmentPermissionChange(expandedSegment, k, v);
+                        });
+                      }}
+                    />
 
-                    {/* Option Buy / Sell */}
-                    <h4 className="text-xs font-semibold text-purple-400 mb-2">Option Buy / Sell</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {['optionBuy', 'optionSell'].map(optType => {
-                            const opt = s[optType] || {};
-                            return (
-                              <div key={optType} className="bg-dark-800 rounded-lg p-3">
-                                <div className="flex items-center justify-between mb-2">
-                                  <h5 className="text-xs font-semibold">{optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}</h5>
-                                  <button type="button" onClick={() => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, allowed: !opt.allowed })}
-                                    className={`px-2 py-0.5 rounded text-xs font-medium ${opt.allowed !== false ? 'bg-green-600' : 'bg-red-600'}`}>
-                                    {opt.allowed !== false ? 'Allowed' : 'Blocked'}
-                                  </button>
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <label className="block text-xs text-gray-400 mb-1">
-                                      {commissionAmountLabel(opt.commissionType || 'PER_LOT')}
-                                    </label>
-                                    <input type="number" value={opt.commission || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, commission: parseFloat(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-                                    <p className="text-[9px] text-gray-600 mt-0.5">{commissionHelperText(opt.commissionType || 'PER_LOT')}</p>
-                                  </div>
-                                  <div>
-                                    <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
-                                    <input type="number" value={opt.strikeSelection || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, strikeSelection: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-                                  </div>
-                                  <div>
-                                    <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSegment) ? 'Max Exch Qty' : 'Max Exch Lots'}</label>
-                                    <input type="number" value={opt.maxExchangeLots || 0} onChange={e => handleEditSegmentPermissionChange(expandedSegment, optType, { ...opt, maxExchangeLots: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-                                  </div>
-                                  <div>
-                                    <label className="block text-xs text-gray-400 mb-1">Comm. Type</label>
-                                    <select
-                                      value={opt.commissionType || 'PER_LOT'}
-                                      onChange={(e) => {
-                                        const ct = e.target.value;
-                                        handleEditSegmentPermissionChange(expandedSegment, optType, {
-                                          ...opt,
-                                          commissionType: ct,
-                                          commissionUnit: requiredUnitForCommissionType(ct),
-                                        });
-                                      }}
-                                      className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs"
-                                    >
-                                      <option value="PER_LOT">Per Lot</option>
-                                      <option value="PER_TRADE">Per Trade</option>
-                                      <option value="PER_CRORE">Per Crore</option>
-                                    </select>
-                                    <select
-                                      value={requiredUnitForCommissionType(opt.commissionType || 'PER_LOT')}
-                                      disabled
-                                      className="w-full mt-1 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-[10px] opacity-90 cursor-not-allowed"
-                                      title="Unit follows commission type"
-                                    >
-                                      {unitOptionsForCommissionType(opt.commissionType || 'PER_LOT').map((o) => (
-                                        <option key={o.value} value={o.value}>
-                                          {o.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
+                    {['NSEOPT', 'MCXOPT', 'CRYPTOOPT', 'BSE-OPT', 'FOREXOPT'].includes(segmentKey) && (
+                      <>
+                        <h4 className="text-xs font-semibold text-purple-400 mb-2">Option Buy / Sell</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {['optionBuy', 'optionSell'].map((optType) => (
+                            <OptionBuySellFields
+                              key={optType}
+                              segmentKey={segmentKey}
+                              optType={optType}
+                              opt={s[optType] || {}}
+                              compact
+                              onChange={(next) => handleEditSegmentPermissionChange(expandedSegment, optType, next)}
+                            />
+                          ))}
                         </div>
+                      </>
+                    )}
                   </div>
                 );
               })()}

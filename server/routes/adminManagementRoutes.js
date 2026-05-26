@@ -4338,7 +4338,11 @@ router.post('/users', protectAdmin, async (req, res) => {
 
     const isDemoUser = req.admin.isDemo === true || isDemo || false;
 
-    const demoExpiresAt = isDemoUser ? (req.admin.demoExpiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)) : null;
+    let demoExpiresAt = null;
+    if (isDemoUser) {
+      const { buildDemoExpiresAt } = await import('../utils/demoAccountUtils.js');
+      demoExpiresAt = await buildDemoExpiresAt(new Date());
+    }
 
     
 
@@ -12150,6 +12154,56 @@ router.get('/platform-charges/settings', protectAdmin, superAdminOnly, async (re
 });
 
 
+
+// ==================== DEMO USER TRIAL (Super Admin) ====================
+
+router.get('/demo-account/settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { getDemoAccountSettings } = await import('../utils/demoAccountUtils.js');
+    const effective = await getDemoAccountSettings();
+    const doc = await SystemSettings.findOne({ settingsType: 'global' }).select('demoAccountSettings').lean();
+    res.json({
+      effective,
+      stored: doc?.demoAccountSettings || {},
+      notes: {
+        noBrokerageOnDemo: true,
+        deleteOnExpiry: 'Expired demo users who did not convert to real are fully deleted (trades, wallet, user record).',
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.put('/demo-account/settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { trialDays, demoBalance } = req.body || {};
+    const settings = await SystemSettings.getSettings();
+    if (!settings.demoAccountSettings) settings.demoAccountSettings = {};
+    if (trialDays !== undefined) {
+      const d = parseInt(String(trialDays), 10);
+      if (!Number.isFinite(d) || d < 1 || d > 30) {
+        return res.status(400).json({ message: 'trialDays must be between 1 and 30' });
+      }
+      settings.demoAccountSettings.trialDays = d;
+    }
+    if (demoBalance !== undefined) {
+      const b = Number(demoBalance);
+      if (!Number.isFinite(b) || b < 0) {
+        return res.status(400).json({ message: 'demoBalance must be a non-negative number' });
+      }
+      settings.demoAccountSettings.demoBalance = b;
+    }
+    settings.updatedBy = req.admin._id;
+    settings.markModified('demoAccountSettings');
+    await settings.save();
+    const { getDemoAccountSettings } = await import('../utils/demoAccountUtils.js');
+    const effective = await getDemoAccountSettings();
+    res.json({ message: 'Demo account settings saved', effective, stored: settings.demoAccountSettings });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 router.put('/platform-charges/settings', protectAdmin, superAdminOnly, async (req, res) => {
 

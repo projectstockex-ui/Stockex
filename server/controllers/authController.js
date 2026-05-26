@@ -208,7 +208,10 @@ export const registerDemoUser = async (req, res) => {
       forexWallet: 100000,
       mcxWallet: 100000,
       gamesWallet: 100000,
-      demoExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+      demoExpiresAt: await (async () => {
+        const { buildDemoExpiresAt } = await import('../utils/demoAccountUtils.js');
+        return buildDemoExpiresAt(new Date());
+      })(),
     });
 
     // Create referral record if applicable

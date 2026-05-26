@@ -32,7 +32,7 @@ const games = [
     borderColor: 'border-orange-200',
     prize: '2x Returns',
     players: '3.1K',
-    timeframe: '1 Min'
+    timeframe: '15 Min'
   },
   {
     id: 'niftynumber',
@@ -69,6 +69,30 @@ const games = [
     prize: 'Top Prizes',
     players: '2.5K',
     timeframe: '1 Day'
+  },
+  {
+    id: 'btcjackpot',
+    name: 'BTC Jackpot',
+    description: 'Predict BTC USD price — top 20 nearest bids share the daily prize pool',
+    icon: Crown,
+    color: 'from-amber-500 to-yellow-500',
+    bgColor: 'bg-amber-50',
+    borderColor: 'border-amber-200',
+    prize: 'Top 20 Prizes',
+    players: '1.8K',
+    timeframe: '1 Day'
+  },
+  {
+    id: 'btcnumber',
+    name: 'BTC Number',
+    description: 'Pick the decimal (.00–.99) of BTC spot at result time & win',
+    icon: Hash,
+    color: 'from-amber-600 to-orange-600',
+    bgColor: 'bg-orange-50',
+    borderColor: 'border-orange-200',
+    prize: 'Fixed Profit',
+    players: '920',
+    timeframe: '1 Day'
   }
 ]
 
@@ -92,7 +116,7 @@ export default function GamesPage() {
             </div>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6">
               Predict & Win with<br />
-              <span className="text-yellow-accent">5 Exciting Games</span>
+              <span className="text-yellow-accent">7 Exciting Games</span>
             </h1>
             <p className="text-xl text-white/80 mb-8 max-w-2xl mx-auto">
               Test your market prediction skills across Nifty 50, Bitcoin, and more.
@@ -112,7 +136,7 @@ export default function GamesPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold text-deep-blue mb-4">
-              Our 5 Fantasy Games
+              Our 7 Fantasy Games
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
               Each game has unique mechanics. Click "How to Play" to learn the rules before you start.
@@ -175,7 +199,7 @@ export default function GamesPage() {
           <div className="grid md:grid-cols-3 gap-8">
             {[
               { step: "1", title: "Create Account", desc: "Sign up and fund your Games Wallet with tickets. 1 Ticket = ₹300.", icon: Shield },
-              { step: "2", title: "Choose a Game", desc: "Pick any of the 5 games, read the rules, and place your bet or bid.", icon: Gamepad2 },
+              { step: "2", title: "Choose a Game", desc: "Pick any of the 7 games, read the rules, and place your bet or bid.", icon: Gamepad2 },
               { step: "3", title: "Win Rewards", desc: "Get multiplied returns, fixed profits, or jackpot prizes based on the game!", icon: Trophy },
             ].map((s, idx) => (
               <div key={idx} className="relative">
@@ -202,7 +226,7 @@ export default function GamesPage() {
             Ready to Test Your Prediction Skills?
           </h2>
           <p className="text-lg text-white/70 mb-8">
-            Open your account and start playing 5 exciting games today.
+            Open your account and start playing 7 exciting games today.
           </p>
           <Link to="/login?register=true">
             <Button className="bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold px-8 py-6 text-lg">
@@ -419,6 +443,67 @@ export default function GamesPage() {
                   <Li><B>Bid early</B> — if someone bids the same amount, the earlier bid wins.</Li>
                   <Li>Watch the <B color="text-purple-600">Live Top 5</B> to see where you stand.</Li>
                   <Li>You only get <B color="text-red-500">1 chance per day</B> — choose wisely!</Li>
+                </TipsBox>
+              </>)}
+
+              {/* ===== BTC JACKPOT ===== */}
+              {howToPlayGame === 'btcjackpot' && (<>
+                <Section title="Game Overview" icon={Star} color="text-yellow-500">
+                  <Li>Place tickets with your <B color="text-amber-600">predicted BTC (USD) price</B> — one ticket per bid.</Li>
+                  <Li>All stakes go into the daily <B color="text-purple-600">prize pool (Bank)</B>.</Li>
+                  <Li>Top <B color="text-yellow-600">20</B> tickets nearest to the official BTC close win prizes.</Li>
+                  <Li>You can update your predicted price during the bidding window (stake stays the same).</Li>
+                </Section>
+                <Section title="Bidding Window" icon={Timer} color="text-blue-500">
+                  <Li>Bidding runs through the day (typically until <B color="text-blue-600">23:29 IST</B>).</Li>
+                  <Li>BTC is locked at result time; winners ranked by <B color="text-amber-600">nearest to official close</B>.</Li>
+                  <Li>Tie on distance → <B color="text-blue-600">earlier bid</B> ranks higher on the live board.</Li>
+                </Section>
+                <Section title="Bid Limits" icon={Coins} color="text-purple-500">
+                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (₹300)</Li>
+                  <Li>Maximum per ticket set by admin (often up to <B color="text-purple-600">5000 Tickets</B>)</Li>
+                </Section>
+                <HighlightBox title="How You Win" icon={Crown}>
+                  <Li>Live rank uses distance to <B color="text-amber-600">live BTC spot</B>.</Li>
+                  <Li>Final prizes use the <B color="text-amber-600">locked close price</B> at settlement.</Li>
+                  <Li>Winners: stake refunded + share of the prize pool by rank.</Li>
+                </HighlightBox>
+                <TipsBox>
+                  <Li>Bid prices close to live BTC for a better live rank.</Li>
+                  <Li>Earlier tickets win ties at the same distance.</Li>
+                  <Li>Watch the live top ranks before bidding closes.</Li>
+                </TipsBox>
+              </>)}
+
+              {/* ===== BTC NUMBER ===== */}
+              {howToPlayGame === 'btcnumber' && (<>
+                <Section title="Game Overview" icon={Star} color="text-yellow-500">
+                  <Li>Pick the <B color="text-amber-600">last 2 decimal digits</B> (.00 to .99) of BTC spot at result time.</Li>
+                  <Li>If BTC is <B color="text-yellow-600">76,123.65</B>, the winning number is <B color="text-yellow-600">65</B>.</Li>
+                  <Li>Correct guess wins a <B color="text-green-600">fixed profit</B> (same style as Nifty Number).</Li>
+                  <Li>Up to <B color="text-blue-600">10 bets per day</B> on different numbers.</Li>
+                </Section>
+                <Section title="Timing" icon={Timer} color="text-blue-500">
+                  <Li>Result declared at <B color="text-green-600">23:30 IST</B> (BTC spot locked at that time).</Li>
+                  <Li>Bidding window follows admin settings for start / end times.</Li>
+                </Section>
+                <Section title="Bet Limits" icon={Coins} color="text-purple-500">
+                  <Li>Min per bet: <B color="text-purple-600">1 Ticket</B></Li>
+                  <Li>Max per bet: <B color="text-purple-600">100 Tickets</B></Li>
+                  <Li>Max bets per day: <B color="text-purple-600">10</B></Li>
+                </Section>
+                <HighlightBox title="How You Win" icon={Crown}>
+                  <Li>Pick any number <B color="text-yellow-600">00–99</B> from the grid.</Li>
+                  <Li>Winning decimal comes from official BTC spot at result time.</Li>
+                  <Li>Match → fixed gross prize; no match → stake lost.</Li>
+                </HighlightBox>
+                <Example
+                  text="You bet 2 Tickets on number 65. BTC locks at 76,123.65."
+                  result="WIN! Fixed profit credited to your games wallet (minus brokerage per rules)"
+                />
+                <TipsBox>
+                  <Li>100 possible outcomes — spread picks across numbers to manage risk.</Li>
+                  <Li>Result time aligns with BTC Jackpot lock when both run same day.</Li>
                 </TipsBox>
               </>)}
 

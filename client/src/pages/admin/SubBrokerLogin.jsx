@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { UserCheck, Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Building2 } from 'lucide-react';
+import { Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Building2 } from 'lucide-react';
+import { StockExLogo } from '../../components/StockExLogo';
 import axios from 'axios';
 
 const SubBrokerLogin = () => {
@@ -88,10 +89,8 @@ const SubBrokerLogin = () => {
         <div className="absolute bottom-20 right-20 w-96 h-96 bg-rose-500/20 rounded-full blur-3xl" />
         
         <div className="relative z-10 text-center">
-          <div className="flex items-center justify-center gap-3 mb-8">
-            <div className="p-4 bg-gradient-to-br from-pink-600 to-rose-500 rounded-2xl">
-              <UserCheck className="w-12 h-12 text-white" />
-            </div>
+          <div className="flex items-center justify-center mb-8">
+            <StockExLogo className="h-16 w-auto max-w-[200px] object-contain" alt="StockEx" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-4">Sub-Broker Portal</h1>
           <p className="text-xl text-gray-300 mb-12">Manage your client accounts</p>
@@ -125,10 +124,8 @@ const SubBrokerLogin = () => {
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           <div className="text-center mb-8 lg:hidden">
-            <div className="inline-flex items-center gap-3 mb-4">
-              <div className="p-3 bg-gradient-to-br from-pink-600 to-rose-500 rounded-xl">
-                <UserCheck className="w-8 h-8 text-white" />
-              </div>
+            <div className="flex flex-col items-center gap-3 mb-4">
+              <StockExLogo className="h-12 w-auto max-w-[160px] object-contain" alt="StockEx" />
               <span className="text-2xl font-bold text-white">Sub-Broker Panel</span>
             </div>
           </div>

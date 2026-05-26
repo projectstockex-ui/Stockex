@@ -20,6 +20,7 @@ import {
   trackHierarchyEarnings 
 } from './superAdminEarningsService.js';
 import brokerageHierarchySharingService from './brokerageHierarchySharingService.js';
+import { resolveSegmentCommissionType } from '../utils/segmentCommissionType.js';
 
 /**
  * Checks if any admin in the hierarchy chain is marked as a franchise root.
@@ -340,8 +341,9 @@ class TradeService {
       totalWalletBalance = user.forexWallet?.balance || 0;
       walletType = 'Forex';
     } else {
-      totalWalletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
-      walletType = 'Main';
+      const { getNseBseBalance } = await import('../utils/nseBseWallet.js');
+      totalWalletBalance = getNseBseBalance(user);
+      walletType = 'NSE & BSE';
     }
 
     // CRITICAL CHANGE: Compare required margin against total wallet balance instead of available balance
@@ -397,9 +399,93 @@ class TradeService {
     cryptoPricePerLotInr: 0,
     cryptoLotSizeLots: 1,
     cryptoLotSizeQuantity: 0,
-    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
-    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000, intradayLeverage: 1, carryForwardLeverage: 1 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000, intradayLeverage: 1, carryForwardLeverage: 1 },
   };
+
+  /** Segments where option buy/sell blocks carry their own MIS / NRML leverage. */
+  static OPTION_LEVERAGE_SEGMENT_KEYS = new Set(['NSEOPT', 'MCXOPT', 'CRYPTOOPT']);
+
+  static segmentHasOptionSideLeverage(segmentKey) {
+    return TradeService.OPTION_LEVERAGE_SEGMENT_KEYS.has(String(segmentKey || '').toUpperCase());
+  }
+
+  /** Per-side leverage from hierarchy optionBuy / optionSell (OPT segments only). */
+  static resolveOptionSideLeverage(segmentKey, segmentSettings, { isOptionBuy, isIntraday }) {
+    if (!TradeService.segmentHasOptionSideLeverage(segmentKey)) return null;
+    const side = isOptionBuy ? segmentSettings?.optionBuy : segmentSettings?.optionSell;
+    if (!side || typeof side !== 'object') return null;
+    const raw = isIntraday ? side.intradayLeverage : side.carryForwardLeverage;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+    return null;
+  }
+
+  /** Same exposure priority for margin-preview and placeOrder (avoids UI vs server mismatch). */
+  static resolveSegmentExposureMultiplier(segmentSettings, { isIntraday, isOptionBuy, effectiveSegment, instrumentType }) {
+    const ss = segmentSettings || {};
+    const segKey = TradeService.resolveMarketWatchSegmentKey(
+      effectiveSegment,
+      instrumentType || (isOptionBuy ? 'OPTIONS' : 'FUTURES')
+    );
+    const optLev = TradeService.resolveOptionSideLeverage(segKey, ss, { isOptionBuy, isIntraday });
+    const candidates = isIntraday
+      ? [
+          optLev,
+          ss.quantityModeSettings?.intradayLeverage,
+          ss.lotSettings?.intradayLeverage,
+          ss.exposureIntraday,
+          ss.intradayLeverage,
+        ]
+      : [
+          optLev,
+          ss.quantityModeSettings?.carryForwardLeverage,
+          ss.lotSettings?.carryForwardLeverage,
+          ss.exposureCarryForward,
+          ss.carryForwardLeverage,
+        ];
+
+    let exposure = 1;
+    for (const v of candidates) {
+      if (v == null) continue;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 1) continue;
+      if (optLev != null && n === Number(optLev)) {
+        exposure = n;
+        break;
+      }
+      exposure = n;
+      break;
+    }
+
+    if (exposure === 1 && ss.quantityModeSettings) {
+      const qtyLev = isIntraday
+        ? ss.quantityModeSettings.intradayLeverage
+        : ss.quantityModeSettings.carryForwardLeverage;
+      if (Number(qtyLev) > 1) exposure = Number(qtyLev);
+    }
+
+    return exposure;
+  }
+
+  static isIndianQuantitySegmentKey(segment, exchange) {
+    const segU = String(segment || '').toUpperCase();
+    const ex = String(exchange || '').toUpperCase();
+    return (
+      ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'NSE', 'BSE', 'BSE-FUT', 'BSE-OPT', 'NFO', 'BFO', 'FNO', 'EQUITY'].includes(
+        segU
+      ) || ['NSE', 'NFO', 'BSE', 'BFO'].includes(ex)
+    );
+  }
+
+  /** Exchange contract lot (e.g. NIFTY 25) — not the qty-mode trading unit of 1. */
+  static getContractLotSize(instrument, orderData) {
+    const segU = String(orderData?.segment || '').toUpperCase();
+    if (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT') return 1;
+    if (instrument?.lotSize > 0) return Number(instrument.lotSize);
+    if (orderData?.lotSize > 0) return Number(orderData.lotSize);
+    return 1;
+  }
 
   /** Map trade segment + instrument type → Hierarchy / Default-settings segment key. */
   static resolveMarketWatchSegmentKey(segment, instrumentType) {
@@ -531,8 +617,8 @@ static _SEGMENT_MERGE_FALLBACK = {
   cryptoPricePerLotInr: 0,
   cryptoLotSizeLots: 1,
   cryptoLotSizeQuantity: 0,
-  optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
-  optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
+  optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000, intradayLeverage: 1, carryForwardLeverage: 1 },
+  optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000, intradayLeverage: 1, carryForwardLeverage: 1 },
 };
   static _sliceFromUserPermissions(user, segmentKey) {
     const sp = user.segmentPermissions;
@@ -594,7 +680,8 @@ static _SEGMENT_MERGE_FALLBACK = {
     hierPlain,
     hierExplicitKeysMaybe,
     userPlain,
-    userExplicitKeysMaybe
+    userExplicitKeysMaybe,
+    segmentKey = ''
   ) {
     const fb = TradeService._SEGMENT_MERGE_FALLBACK;
     let m = { ...fb, ...(systemSlicePlain && typeof systemSlicePlain === 'object' ? systemSlicePlain : {}) };
@@ -664,7 +751,12 @@ static _SEGMENT_MERGE_FALLBACK = {
 
     // After merging, inherit commission based on commissionType
     // PER_CRORE and PER_TRADE use 'commission' field, PER_LOT uses 'commissionLot' field
-    const commType = m.commissionType || hierPlain?.commissionType || 'PER_LOT';
+    const commType = resolveSegmentCommissionType(
+      m.commissionType,
+      hierPlain?.commissionType,
+      systemSlicePlain?.commissionType
+    );
+    if (commType) m.commissionType = commType;
     if (commType === 'PER_CRORE' || commType === 'PER_TRADE') {
       if (m.commission === 0 && hierPlain?.commission > 0) {
         m.commission = hierPlain.commission;
@@ -712,7 +804,8 @@ static _SEGMENT_MERGE_FALLBACK = {
       hierSlice,
       hierExplicitArr,
       userSlice,
-      userExplicitArr
+      userExplicitArr,
+      segmentKey
     );
 
     // Fallback: if result is empty or disabled, ensure SystemSettings defaults are applied
@@ -737,14 +830,27 @@ static _SEGMENT_MERGE_FALLBACK = {
       console.log(`[getUserSegmentSettings] Crypto timing override from SystemSettings CRYPTOFUT: start=${sysStart}, close=${sysClose}`);
     }
 
-    // Final fallback: if still no commission for crypto segments, use sensible defaults
-    if (isCrypto && (!result?.commission && !result?.commissionLot)) {
-      console.log('[getUserSegmentSettings] Using final fallback defaults for crypto segment:', segmentKey);
-      result = result || {};
-      result.enabled = true;
-      result.commission = 2000;
-      result.commissionType = 'PER_CRORE';
-      result.commissionUnit = null;
+    // Inherit commission fields from SystemSettings when hierarchy/user left them empty
+    if (result && systemSlicePlain) {
+      const commType = resolveSegmentCommissionType(
+        result.commissionType,
+        systemSlicePlain.commissionType
+      );
+      if (commType && !result.commissionType) result.commissionType = commType;
+      if (
+        (commType === 'PER_CRORE' || commType === 'PER_TRADE') &&
+        !result.commission &&
+        systemSlicePlain.commission > 0
+      ) {
+        result.commission = systemSlicePlain.commission;
+      }
+      if (
+        (commType === 'PER_LOT' || commType === 'PER_QUANTITY' || !commType) &&
+        !result.commissionLot &&
+        systemSlicePlain.commissionLot > 0
+      ) {
+        result.commissionLot = systemSlicePlain.commissionLot;
+      }
     }
 
     console.log('[getUserSegmentSettings] Final result for segment:', segmentKey, {
@@ -892,12 +998,28 @@ static _SEGMENT_MERGE_FALLBACK = {
     return merged;
   }
 
-  /** Apply instrument exposure overrides onto a copy of segment settings (margin path). */
+  /** Apply instrument tradingDefaults (segmentProfile + legacy exposure) onto segment settings. */
   static applyInstrumentExposureOverrides(instrument, segmentSettings) {
     const inst = instrument && typeof instrument.toObject === 'function' ? instrument.toObject() : instrument;
     if (!inst?.tradingDefaults?.enabled || !segmentSettings) return segmentSettings;
     const td = inst.tradingDefaults;
-    const out = { ...segmentSettings };
+    const sp = td.segmentProfile;
+    let out = { ...segmentSettings };
+    if (sp && typeof sp === 'object') {
+      out = { ...out, ...sp };
+      if (sp.lotSettings && typeof sp.lotSettings === 'object') {
+        out.lotSettings = { ...(out.lotSettings || {}), ...sp.lotSettings };
+      }
+      if (sp.quantityModeSettings && typeof sp.quantityModeSettings === 'object') {
+        out.quantityModeSettings = { ...(out.quantityModeSettings || {}), ...sp.quantityModeSettings };
+      }
+      if (sp.optionBuy && typeof sp.optionBuy === 'object') {
+        out.optionBuy = { ...(out.optionBuy || {}), ...sp.optionBuy };
+      }
+      if (sp.optionSell && typeof sp.optionSell === 'object') {
+        out.optionSell = { ...(out.optionSell || {}), ...sp.optionSell };
+      }
+    }
     const ei = this._numOrNull(td.exposureIntraday);
     const ec = this._numOrNull(td.exposureCarryForward);
     if (ei != null && ei > 0) out.exposureIntraday = ei;
@@ -906,8 +1028,9 @@ static _SEGMENT_MERGE_FALLBACK = {
   }
 
   /** Cap requested leverage by per-instrument max (MIS vs carry). */
-  static capLeverageFromInstrument(instrument, requestedLeverage, isIntraday, isOptionBuy) {
-    if (isOptionBuy) return 1;
+  static capLeverageFromInstrument(instrument, requestedLeverage, isIntraday, isOptionBuy, options = {}) {
+    const { allowOptionBuyLeverage = false } = options;
+    if (isOptionBuy && !allowOptionBuyLeverage) return 1;
     const inst = instrument && typeof instrument.toObject === 'function' ? instrument.toObject() : instrument;
     if (!inst?.tradingDefaults?.enabled) return Math.max(1, Number(requestedLeverage) || 1);
     const td = inst.tradingDefaults;
@@ -1048,11 +1171,17 @@ static _SEGMENT_MERGE_FALLBACK = {
     const isOptionSell = isOption && tradeData.side === 'SELL';
 
     const price = tradeData.price || tradeData.entryPrice || 0;
-    const lotSize = tradeData.lotSize || 1;
+    const lotSize = Math.max(1, Number(tradeData.lotSize) || 1);
     const isCryptoTurnover =
       tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(tradeData.segment || '').toUpperCase()) || tradeData.isForex || tradeData.exchange === 'FOREX';
-    const turnover = price * lots * lotSize;
+    // NSE/BSE send qty in `quantity`; `lots` arg may be qty — never multiply qty × lotSize × price twice
+    const orderQty =
+      tradeData.quantity != null && Number.isFinite(Number(tradeData.quantity)) && Number(tradeData.quantity) > 0
+        ? Number(tradeData.quantity)
+        : Math.max(0, Number(lots) || 0) * lotSize;
+    const exchangeLots = Math.max(Number(lots) || 0, orderQty / lotSize);
+    const turnover = price * orderQty;
     const ONE_CRORE = 10_000_000;
 
     /**
@@ -1061,10 +1190,11 @@ static _SEGMENT_MERGE_FALLBACK = {
      */
     const calcBrokerage = (commType, commission) => {
       commissionType = commType; // Store for cap enforcement
-      if (commType === 'PER_LOT' || commType === 'PER_QUANTITY') return commission * lots;
+      if (commType === 'PER_LOT') return commission * exchangeLots;
+      if (commType === 'PER_QUANTITY') return commission * orderQty;
       if (commType === 'PER_TRADE') return commission;
       if (commType === 'PER_CRORE') return (turnover / ONE_CRORE) * commission;
-      return commission * lots; // fallback: treat as per-lot
+      return commission * exchangeLots;
     };
     
     // First check script-specific settings
@@ -1077,7 +1207,7 @@ static _SEGMENT_MERGE_FALLBACK = {
       } else {
         brokerage = isIntraday ? scriptSettings.brokerage.intradayFuture : scriptSettings.brokerage.carryFuture;
       }
-      brokerage = brokerage * lots;
+      brokerage = brokerage * exchangeLots;
     } else {
       // Fall back to segment settings
       if (isOptionBuy && segmentSettings?.optionBuy) {
@@ -1123,7 +1253,7 @@ static _SEGMENT_MERGE_FALLBACK = {
         brokerage = (turnover / ONE_CRORE) * fallbackComm;
         commissionType = 'PER_CRORE';
       } else {
-        brokerage = fallbackComm * lots;
+        brokerage = fallbackComm * exchangeLots;
         commissionType = 'PER_LOT';
       }
       console.log('[calculateUserBrokerage] Forced brokerage:', brokerage, 'commissionType:', commissionType);
@@ -1231,6 +1361,8 @@ static _SEGMENT_MERGE_FALLBACK = {
       );
     }
 
+    segmentSettings = TradeService.applyInstrumentExposureOverrides(instrumentDoc, segmentSettings);
+
     const rawScriptSettings = this.getUserScriptSettings(user, tradeData.symbol, tradeData.category);
     const scriptSettings = this.mergeScriptSettingsWithInstrument(instrumentDoc, rawScriptSettings);
     
@@ -1255,21 +1387,32 @@ static _SEGMENT_MERGE_FALLBACK = {
       throw new Error(`Trading in ${tradeData.symbol} is blocked for your account`);
     }
     
-    // 6. Get leverage from admin charges
-    // Option buy = no leverage (full premium required as per SEBI/Zerodha rules)
+    // 6. Get leverage from admin charges / hierarchy option buy-sell blocks
     let leverage = 1;
     const isCrypto = tradeData.isCrypto;
     const isForex = ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(tradeData.segment || '').toUpperCase()) || tradeData.isForex || tradeData.exchange === 'FOREX';
     const isOptionBuy = tradeData.instrumentType === 'OPTIONS' && tradeData.side === 'BUY';
     const isIntradayProduct = tradeData.productType === 'MIS' || tradeData.productType === 'INTRADAY';
+    const hierarchySegKey = TradeService.resolveMarketWatchSegmentKey(tradeData.segment, tradeData.instrumentType);
+    const isOptionsOnOptSegment =
+      tradeData.instrumentType === 'OPTIONS' && TradeService.segmentHasOptionSideLeverage(hierarchySegKey);
+    const segmentSettingsForOptionLev = TradeService.applyInstrumentExposureOverrides(instrumentDoc, segmentSettings);
+    const optionSideLeverage = isOptionsOnOptSegment
+      ? TradeService.resolveOptionSideLeverage(hierarchySegKey, segmentSettingsForOptionLev, {
+          isOptionBuy,
+          isIntraday: isIntradayProduct,
+        })
+      : null;
+    if (optionSideLeverage != null) {
+      leverage = optionSideLeverage;
+    }
 
-    if (!isOptionBuy && isIntradayProduct) {
+    if (!isOptionBuy && isIntradayProduct && optionSideLeverage == null) {
       if (tradeData.segment === 'EQUITY') {
         leverage = admin.charges?.intradayLeverage || 5;
       } else if (tradeData.instrumentType === 'FUTURES') {
         leverage = admin.charges?.futuresLeverage || 1;
       } else if (tradeData.instrumentType === 'OPTIONS') {
-        // Only option sell gets leverage
         leverage = admin.charges?.optionSellLeverage || 1;
       } else if (isCrypto) {
         // For crypto, use segment settings leverage instead of admin.charges.cryptoLeverage
@@ -1304,21 +1447,30 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
     }
 
-    leverage = this.capLeverageFromInstrument(instrumentDoc, leverage, isIntradayProduct, isOptionBuy);
+    leverage = this.capLeverageFromInstrument(instrumentDoc, leverage, isIntradayProduct, isOptionBuy, {
+      allowOptionBuyLeverage: isOptionsOnOptSegment && isOptionBuy,
+    });
 
     // Priority 2: Use segment exposure/leverage if no fixed margin
-    // Dynamically resolve from all possible sources (admin sets these via UI)
-    const segmentSettingsForMargin = TradeService.applyInstrumentExposureOverrides(instrumentDoc, segmentSettings);
+    const segmentSettingsForMargin = segmentSettingsForOptionLev || TradeService.applyInstrumentExposureOverrides(instrumentDoc, segmentSettings);
     if (segmentSettingsForMargin) {
       const isIntraday = tradeData.productType === 'MIS' || tradeData.productType === 'INTRADAY';
+      const optLev =
+        optionSideLeverage ??
+        TradeService.resolveOptionSideLeverage(hierarchySegKey, segmentSettingsForMargin, {
+          isOptionBuy,
+          isIntraday,
+        });
       const candidates = isIntraday
         ? [
+            optLev,
             segmentSettingsForMargin?.quantityModeSettings?.intradayLeverage,
             segmentSettingsForMargin?.lotSettings?.intradayLeverage,
             segmentSettingsForMargin?.exposureIntraday,
             segmentSettingsForMargin?.intradayLeverage
           ]
         : [
+            optLev,
             segmentSettingsForMargin?.quantityModeSettings?.carryForwardLeverage,
             segmentSettingsForMargin?.lotSettings?.carryForwardLeverage,
             segmentSettingsForMargin?.exposureCarryForward,
@@ -1326,8 +1478,18 @@ static _SEGMENT_MERGE_FALLBACK = {
           ];
       let exposureNum = 1;
       for (const v of candidates) {
+        if (v == null) continue;
         const n = Number(v);
-        if (Number.isFinite(n) && n > 1) { exposureNum = n; break; }
+        if (Number.isFinite(n) && n > 0) {
+          if (optLev != null && n === Number(optLev)) {
+            exposureNum = n;
+            break;
+          }
+          if (n > 1) {
+            exposureNum = n;
+            break;
+          }
+        }
       }
 
       console.log('[OrderPlacement] Margin calculation debug:', {
@@ -1579,35 +1741,29 @@ static _SEGMENT_MERGE_FALLBACK = {
         );
       }
     } else {
-      const tb = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
-      const um = user.wallet?.usedMargin || 0;
+      const { getNseBseBalance, getNseBseUsedMargin } = await import('../utils/nseBseWallet.js');
+      const tb = getNseBseBalance(user);
+      const um = getNseBseUsedMargin(user);
       const free = tb - um;
       const need = requiredMargin + roundTripBrokerage;
       if (need > free) {
         throw new Error(
-          `Insufficient margin in Trading Account. Required: ${need.toFixed(2)} ` +
+          `Insufficient margin in NSE & BSE Wallet. Required: ${need.toFixed(2)} ` +
             `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
         );
       }
     }
 
-    // 12. Block margin and debit round-trip brokerage on open (segment wallets)
+    // 12. Block margin + round-trip brokerage in usedMargin (wallet balance unchanged)
+    const marginInc = requiredMargin + roundTripBrokerage;
     if (isMcx) {
-      const inc = { 'mcxWallet.usedMargin': requiredMargin };
-      if (roundTripBrokerage > 0) inc['mcxWallet.balance'] = -roundTripBrokerage;
-      await User.updateOne({ _id: userId }, { $inc: inc });
+      await User.updateOne({ _id: userId }, { $inc: { 'mcxWallet.usedMargin': marginInc } });
     } else if (isCrypto) {
-      const inc = { 'cryptoWallet.usedMargin': requiredMargin };
-      if (roundTripBrokerage > 0) inc['cryptoWallet.balance'] = -roundTripBrokerage;
-      await User.updateOne({ _id: userId }, { $inc: inc });
+      await User.updateOne({ _id: userId }, { $inc: { 'cryptoWallet.usedMargin': marginInc } });
     } else if (isForex) {
-      const inc = { 'forexWallet.usedMargin': requiredMargin };
-      if (roundTripBrokerage > 0) inc['forexWallet.balance'] = -roundTripBrokerage;
-      await User.updateOne({ _id: userId }, { $inc: inc });
+      await User.updateOne({ _id: userId }, { $inc: { 'forexWallet.usedMargin': marginInc } });
     } else {
-      const inc = { 'wallet.usedMargin': requiredMargin, 'wallet.blocked': requiredMargin };
-      if (roundTripBrokerage > 0) inc['wallet.tradingBalance'] = -roundTripBrokerage;
-      await User.updateOne({ _id: userId }, { $inc: inc });
+      await User.updateOne({ _id: userId }, { $inc: { 'nseBseWallet.usedMargin': marginInc } });
     }
     
     // 13. Create trade with user's settings applied
@@ -1652,7 +1808,8 @@ static _SEGMENT_MERGE_FALLBACK = {
       commission: roundTripBrokerage,
       totalCharges: roundTripBrokerage,
       brokeragePrepaidRoundTrip: true,
-      walletBrokerageDebited: roundTripBrokerage > 0
+      brokerageReservedInMargin: roundTripBrokerage > 0,
+      walletBrokerageDebited: false
     });
 
     console.log('[TradeService] Pure brokerage for distribution:', roundTripBrokerage, 'user commission rate:', userSegmentSettingsForBrk.commission, userSegmentSettingsForBrk.commissionType);
@@ -1667,7 +1824,7 @@ static _SEGMENT_MERGE_FALLBACK = {
       user: user.userId,
       adminRole: admin.role
     });
-    if (roundTripBrokerage > 0) {
+    if (roundTripBrokerage > 0 && !user.isDemo) {
       setTimeout(async () => {
         try {
           console.log('[TradeService] Calling distributeBrokerage for full round-trip:', trade._id, 'amount:', roundTripBrokerage);
@@ -1713,6 +1870,9 @@ static _SEGMENT_MERGE_FALLBACK = {
     const isForex = trade.isForex || trade.exchange === 'FOREX' ||
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase());
 
+    const marginRelease = (trade.marginUsed || 0) +
+      (trade.brokerageReservedInMargin ? (Number(trade.commission) || 0) : 0);
+
     if (isMcx) {
       const walletPnl = trade.realizedPnL ?? trade.netPnL ?? 0;
       const currentMcxBalance = user.mcxWallet?.balance || 0;
@@ -1720,7 +1880,7 @@ static _SEGMENT_MERGE_FALLBACK = {
       await User.updateOne(
         { _id: user._id },
         { $inc: {
-          'mcxWallet.usedMargin': -trade.marginUsed,
+          'mcxWallet.usedMargin': -marginRelease,
           'mcxWallet.realizedPnL': walletPnl,
           'mcxWallet.todayRealizedPnL': walletPnl
         }, $set: {
@@ -1732,7 +1892,7 @@ static _SEGMENT_MERGE_FALLBACK = {
       await User.updateOne(
         { _id: user._id },
         { $inc: {
-          'cryptoWallet.usedMargin': -trade.marginUsed,
+          'cryptoWallet.usedMargin': -marginRelease,
           'cryptoWallet.balance': walletPnl,
           'cryptoWallet.realizedPnL': walletPnl,
           'cryptoWallet.todayRealizedPnL': walletPnl
@@ -1743,7 +1903,7 @@ static _SEGMENT_MERGE_FALLBACK = {
       await User.updateOne(
         { _id: user._id },
         { $inc: {
-          'forexWallet.usedMargin': -trade.marginUsed,
+          'forexWallet.usedMargin': -marginRelease,
           'forexWallet.balance': walletPnl,
           'forexWallet.realizedPnL': walletPnl,
           'forexWallet.todayRealizedPnL': walletPnl
@@ -1756,10 +1916,9 @@ static _SEGMENT_MERGE_FALLBACK = {
       await User.updateOne(
         { _id: user._id },
         { $inc: {
-          'wallet.usedMargin': -trade.marginUsed,
-          'wallet.blocked': -trade.marginUsed,
-          'wallet.tradingBalance': walletPnl,
-          'wallet.cashBalance': walletPnl,
+          'nseBseWallet.usedMargin': -marginRelease,
+          'wallet.blocked': -(trade.marginUsed || 0),
+          'nseBseWallet.balance': walletPnl,
           'wallet.realizedPnL': walletPnl,
           'wallet.todayRealizedPnL': walletPnl
         }}
@@ -1777,13 +1936,24 @@ static _SEGMENT_MERGE_FALLBACK = {
     } else if (isForex) {
       balanceAfter = user.forexWallet?.balance || 0;
     } else {
-      balanceAfter = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
+      const { getNseBseBalance: gnb } = await import('../utils/nseBseWallet.js');
+      balanceAfter = gnb(user);
     }
 
     let walletDesc = '';
-    if (isMcx) walletDesc = ' (MCX)';
-    else if (isCrypto) walletDesc = ' (Crypto)';
-    else if (isForex) walletDesc = ' (Forex)';
+    let ledgerSegment = 'NSE/BSE';
+    if (isMcx) {
+      walletDesc = ' (MCX)';
+      ledgerSegment = 'MCX';
+    } else if (isCrypto) {
+      walletDesc = ' (Crypto)';
+      ledgerSegment = 'CRYPTO';
+    } else if (isForex) {
+      walletDesc = ' (Forex)';
+      ledgerSegment = 'FOREX';
+    } else {
+      walletDesc = ' (NSE/BSE)';
+    }
 
     await WalletLedger.create({
       ownerType: 'USER',
@@ -1794,7 +1964,8 @@ static _SEGMENT_MERGE_FALLBACK = {
       amount: Math.abs(trade.netPnL),
       balanceAfter: balanceAfter,
       reference: { type: 'Trade', id: trade._id },
-      description: `${trade.symbol} ${trade.side} P&L${walletDesc}`
+      description: `${trade.symbol} ${trade.side} P&L${walletDesc}`,
+      meta: { segment: ledgerSegment, tradeId: trade.tradeId || String(trade._id) },
     });
     
     // Calculate pure brokerage from user's commission rate (not charges.brokerage which uses fixed rate)
@@ -1972,10 +2143,96 @@ static _SEGMENT_MERGE_FALLBACK = {
     }
   }
 
+  /** Wallet segment label for user ledger / transfer UI. */
+  static resolveTradeWalletSegmentLabel(trade) {
+    if (
+      trade?.isCrypto ||
+      trade?.exchange === 'BINANCE' ||
+      ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(trade?.segment || '').toUpperCase())
+    ) {
+      return 'CRYPTO';
+    }
+    if (
+      trade?.isForex ||
+      trade?.exchange === 'FOREX' ||
+      ['FOREXFUT', 'FOREXOPT'].includes(String(trade?.segment || '').toUpperCase())
+    ) {
+      return 'FOREX';
+    }
+    const seg = String(trade?.segment || '').toUpperCase();
+    if (
+      trade?.exchange === 'MCX' ||
+      ['MCX', 'MCXFUT', 'MCXOPT', 'COMMODITY'].includes(seg) ||
+      String(trade?.instrumentType || '').toUpperCase() === 'COMMODITY'
+    ) {
+      return 'MCX';
+    }
+    return 'NSE/BSE';
+  }
+
+  /** User-visible ledger row when round-trip brokerage is charged at open. */
+  static async recordUserBrokerageLedgerOnOpen(trade, user) {
+    const amount = Math.round((Number(trade?.commission) || 0) * 100) / 100;
+    if (amount <= 0 || !user?._id || !trade?._id) return;
+
+    const existing = await WalletLedger.findOne({
+      ownerType: 'USER',
+      ownerId: user._id,
+      reason: 'BROKERAGE',
+      'reference.type': 'Trade',
+      'reference.id': trade._id,
+    }).lean();
+    if (existing) return;
+
+    const walletSeg = this.resolveTradeWalletSegmentLabel(trade);
+    const suffix =
+      walletSeg === 'MCX'
+        ? ' (MCX)'
+        : walletSeg === 'CRYPTO'
+          ? ' (Crypto)'
+          : walletSeg === 'FOREX'
+            ? ' (Forex)'
+            : ' (NSE/BSE)';
+
+    let balanceAfter = 0;
+    if (walletSeg === 'MCX') {
+      balanceAfter = user.mcxWallet?.balance || 0;
+    } else if (walletSeg === 'CRYPTO') {
+      balanceAfter = user.cryptoWallet?.balance || 0;
+    } else if (walletSeg === 'FOREX') {
+      balanceAfter = user.forexWallet?.balance || 0;
+    } else {
+      const { getNseBseBalance } = await import('../utils/nseBseWallet.js');
+      balanceAfter = getNseBseBalance(user);
+    }
+
+    await WalletLedger.create({
+      ownerType: 'USER',
+      ownerId: user._id,
+      adminCode: user.adminCode,
+      type: 'DEBIT',
+      reason: 'BROKERAGE',
+      amount,
+      balanceAfter,
+      reference: { type: 'Trade', id: trade._id },
+      description: `${trade.symbol || 'Trade'} ${trade.side || ''} Brokerage${suffix}`.trim(),
+      meta: {
+        tradeId: trade.tradeId || String(trade._id),
+        segment: walletSeg === 'NSE/BSE' ? 'NSE/BSE' : walletSeg,
+        prepaidRoundTrip: !!trade.brokeragePrepaidRoundTrip,
+        reservedInMargin: !!trade.brokerageReservedInMargin,
+      },
+    });
+  }
+
   // Distribute brokerage through MLM hierarchy using cascading ₹ amounts.
   // Each admin keeps the difference between their calculated ₹ brokerage and the next parent's.
   // The user's rate is the true "bottom" — the full totalBrokerage is based on it.
   static async distributeBrokerage(trade, totalBrokerage, directAdmin, user, leg = null) {
+    if (user?.isDemo) {
+      console.log('[distributeBrokerage] Skipped — demo user (no hierarchy brokerage):', user.userId || user._id);
+      return;
+    }
     try {
       console.log('[distributeBrokerage] Starting distribution:', {
         tradeId: trade._id,

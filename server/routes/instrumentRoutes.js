@@ -20,9 +20,17 @@ import {
   watchlistItemIsExpired
 } from '../utils/derivativeExpiry.js';
 import {
+  applyTradingPanelVisibilityToQuery,
+  sanitizeTradingPanelVisibilityBody,
+} from '../utils/tradingPanelVisibility.js';
+import {
   forcedCloseInstrumentsByIds,
   forcedOpenInstrumentsByIds
 } from '../services/instrumentForcedCloseService.js';
+import {
+  attachLtpBracketForUser,
+  sanitizeLtpBracketBody,
+} from '../services/ltpBracketService.js';
 
 /** Synthetic FX spot rows (DB) — client used to rely on hardcoded pairs only. */
 async function ensureForexSpotTabIfEmpty() {
@@ -410,6 +418,7 @@ function buildUserInstrumentListQuery(adminCode, { segment, category, search, di
     });
   }
   addActiveDerivExpiryToQuery(query);
+  applyTradingPanelVisibilityToQuery(query);
   return query;
 }
 
@@ -537,11 +546,12 @@ router.get('/user', protectUser, async (req, res) => {
 
     const instruments = await Instrument.find(query)
       .select(
-        'token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType lastBid lastAsk isEnabled adminLockedClosed clientTemporaryOpenUntil'
+        'token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType lastBid lastAsk isEnabled adminLockedClosed clientTemporaryOpenUntil ltpBracketPercentUp ltpBracketPercentDown'
       )
       .sort({ isFeatured: -1, exchange: 1, symbol: 1 });
 
-    res.json(instruments);
+    const userDoc = await User.findById(req.user._id).select('ltpBracketTokens').lean();
+    res.json(attachLtpBracketForUser(instruments, userDoc));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -552,8 +562,20 @@ router.get('/user', protectUser, async (req, res) => {
 // Get all instruments (admin view)
 router.get('/admin', protectAdmin, async (req, res) => {
   try {
-    let { segment, category, search, enabled, optionType, displaySegment, expiryDate, includeExpired } =
-      req.query;
+    let {
+      segment,
+      category,
+      search,
+      enabled,
+      optionType,
+      displaySegment,
+      expiryDate,
+      expiryFrom,
+      expiryTo,
+      startDate,
+      endDate,
+      includeExpired,
+    } = req.query;
     // UI historically sent segment=FOREXFUT; DB filter is on displaySegment
     if (!displaySegment && (segment === 'FOREXFUT' || segment === 'FOREXOPT')) {
       displaySegment = segment;
@@ -660,9 +682,33 @@ router.get('/admin', protectAdmin, async (req, res) => {
       }
     }
 
+    const rangeFrom = expiryFrom || startDate;
+    const rangeTo = expiryTo || endDate;
+    const hasExpiryRange = Boolean(rangeFrom || rangeTo);
+    if (hasExpiryRange) {
+      const expiryFilter = {};
+      if (rangeFrom) {
+        const fromDate = new Date(rangeFrom);
+        if (!Number.isNaN(fromDate.getTime())) {
+          fromDate.setHours(0, 0, 0, 0);
+          expiryFilter.$gte = fromDate;
+        }
+      }
+      if (rangeTo) {
+        const toDate = new Date(rangeTo);
+        if (!Number.isNaN(toDate.getTime())) {
+          toDate.setHours(23, 59, 59, 999);
+          expiryFilter.$lte = toDate;
+        }
+      }
+      if (Object.keys(expiryFilter).length > 0) {
+        query.expiry = { ...(query.expiry || {}), ...expiryFilter };
+      }
+    }
+
     // Market Watch: hide rolled / past F&O (same as user lists). Opt out: ?includeExpired=true
-    // Skip when `expiryDate` is set — that filter controls expiry range and can include the past.
-    if (!expiryDate && includeExpired !== 'true' && includeExpired !== '1') {
+    // Skip when expiry range filters are set — admin controls the window explicitly.
+    if (!expiryDate && !hasExpiryRange && includeExpired !== 'true' && includeExpired !== '1') {
       addActiveDerivExpiryToQuery(query);
     }
 
@@ -1053,10 +1099,24 @@ router.put('/admin/:id', protectAdmin, sanitizeInstrumentTradingDefaultsCommissi
       }
     }
 
+    let setBody = { ...req.body };
+    try {
+      const panelFields = sanitizeTradingPanelVisibilityBody(req.body);
+      setBody = { ...setBody, ...panelFields };
+    } catch (panelErr) {
+      return res.status(400).json({ message: panelErr.message });
+    }
+    try {
+      const bracketFields = sanitizeLtpBracketBody(req.body);
+      setBody = { ...setBody, ...bracketFields };
+    } catch (bracketErr) {
+      return res.status(400).json({ message: bracketErr.message });
+    }
+
     // $set merges top-level fields only (avoids ambiguous replace semantics on nested docs).
     const instrument = await Instrument.findByIdAndUpdate(
       req.params.id,
-      { $set: req.body },
+      { $set: setBody },
       { new: true, runValidators: true }
     );
     

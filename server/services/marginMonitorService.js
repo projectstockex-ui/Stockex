@@ -178,21 +178,33 @@ class MarginMonitorService {
       const currentWalletState = walletState[walletField];
       if (!currentWalletState) return;
       
-      // 4c. Check margin status with segment-specific settings (only if set)
-      const marginStatus = WalletService.checkMarginStatus(currentWalletState, riskConfig);
-      
-      // 4d. Handle STOP-OUT (most critical - check first)
-      if (marginStatus.action === 'STOP_OUT') {
-        console.log(`STOP-OUT triggered for user ${user.userId}. Margin Level: ${marginStatus.marginLevel}%`);
-        await this.triggerStopOut(userId, walletField, currentWalletState, riskConfig);
-      }
-      // 4e. Handle MARGIN CALL
-      else if (marginStatus.action === 'MARGIN_CALL') {
-        await this.triggerMarginCall(userId, walletField, currentWalletState, riskConfig);
-      }
-      // 4f. Check for recovery from margin call
-      else if (currentWalletState.marginCallActive && marginStatus.action === 'NONE') {
-        await this.handleMarginCallRecovery(userId, walletField, currentWalletState);
+      let marginStatus = { action: 'NONE', status: 'HEALTHY', marginLevel: currentWalletState.marginLevel };
+
+      // NSE/BSE: ledger balance % autosquare (e.g. 90% loss → square all to nil)
+      if (walletField === 'nseBseWallet') {
+        try {
+          const { checkAndRunLedgerAutosquare } = await import('./nseBseLedgerAutosquareService.js');
+          const ledgerResult = await checkAndRunLedgerAutosquare(userId, { preferBidAsk: false });
+          if (ledgerResult?.triggered) {
+            marginStatus = { action: 'STOP_OUT', status: 'CRITICAL', marginLevel: 0 };
+            const refreshed = await WalletService.recalculateWallet(userId, segment);
+            Object.assign(currentWalletState, refreshed[walletField] || {});
+          }
+        } catch (ledgerErr) {
+          console.error('[MarginMonitor] NSE/BSE ledger autosquare:', ledgerErr.message);
+        }
+      } else {
+        // Other segments: margin-level stop-out / margin call
+        marginStatus = WalletService.checkMarginStatus(currentWalletState, riskConfig);
+
+        if (marginStatus.action === 'STOP_OUT') {
+          console.log(`STOP-OUT triggered for user ${user.userId}. Margin Level: ${marginStatus.marginLevel}%`);
+          await this.triggerStopOut(userId, walletField, currentWalletState, riskConfig);
+        } else if (marginStatus.action === 'MARGIN_CALL') {
+          await this.triggerMarginCall(userId, walletField, currentWalletState, riskConfig);
+        } else if (currentWalletState.marginCallActive && marginStatus.action === 'NONE') {
+          await this.handleMarginCallRecovery(userId, walletField, currentWalletState);
+        }
       }
       
       // 4g. Push wallet update to UI via WebSocket

@@ -7,6 +7,7 @@ import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import TradingService from './tradingService.js';
 import WalletService from './walletService.js';
+import EODSettlement from '../cron/eodSettlement.js';
 import { calculatePortfolioReduction } from './autoSquareOffEngine.js';
 import { getLTPMapForTrades, cacheKeyForTrade } from './ltpResolutionService.js';
 
@@ -35,6 +36,7 @@ export async function autoSquareIntradayOnlyTrades() {
     const ltpMap = await getLTPMapForTrades(intradayOnlyTrades);
     
     let closedCount = 0;
+    let markedCount = 0;
     let failedCount = 0;
     
     for (const trade of intradayOnlyTrades) {
@@ -48,16 +50,29 @@ export async function autoSquareIntradayOnlyTrades() {
           continue;
         }
         
-        // Calculate exit price based on side
+        const po = typeof trade.toObject === 'function' ? trade.toObject() : trade;
+        if (EODSettlement.isNseBseAutosquareSegment(null, po)) {
+          const admin = trade.adminCode
+            ? await Admin.findOne({ adminCode: trade.adminCode }).select('adminCode segmentPermissions').lean()
+            : null;
+          await EODSettlement.applyCarryForwardAutosquare(po, {
+            ltp,
+            closeTime: '15:30:00',
+            segmentGroup: 'NSE',
+            admin,
+          });
+          markedCount++;
+          console.log(`[autoSquareIntradayOnlyTrades] NSE/BSE carry-forward (OPEN) ${trade.tradeId} at ${ltp}`);
+          continue;
+        }
+
         const exitPrice = trade.side === 'BUY' ? ltp : ltp;
-        
-        // Close the trade
         const result = await TradingService.squareOffPosition(
           trade._id.toString(),
           'AUTO_SQUARE_330',
           exitPrice,
-          ltp, // bidPrice
-          ltp  // askPrice
+          ltp,
+          ltp
         );
         
         if (result.success) {
@@ -73,11 +88,14 @@ export async function autoSquareIntradayOnlyTrades() {
       }
     }
     
-    console.log(`[autoSquareIntradayOnlyTrades] Completed. Closed: ${closedCount}, Failed: ${failedCount}`);
+    console.log(
+      `[autoSquareIntradayOnlyTrades] Completed. Marked OPEN: ${markedCount}, Closed: ${closedCount}, Failed: ${failedCount}`
+    );
     return { 
-      closedTrades: closedCount, 
+      closedTrades: closedCount,
+      markedOpen: markedCount,
       failedTrades: failedCount,
-      message: `Auto-square completed: ${closedCount} closed, ${failedCount} failed`
+      message: `Auto-square: ${markedCount} carry-forward (OPEN), ${closedCount} closed, ${failedCount} failed`
     };
   } catch (error) {
     console.error('[autoSquareIntradayOnlyTrades] Error:', error);

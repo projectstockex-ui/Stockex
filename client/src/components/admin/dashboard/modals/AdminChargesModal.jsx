@@ -13,6 +13,17 @@ import {
   commissionHelperText,
   unitOptionsForCommissionType,
 } from '../../../../utils/commissionTypeUnit.js';
+import OptionBuySellFields from '../../segment/OptionBuySellFields.jsx';
+import SegmentBrokerageFields from '../../segment/SegmentBrokerageFields.jsx';
+import { normalizeSegmentCommissionFields } from '../../../../utils/segmentCommissionType.js';
+import {
+  numInputValue,
+  parseNumInput,
+  parseIntInput,
+  parseNonNegativeNumInput,
+  patchSegmentField,
+} from '../../../../utils/segmentFormValues.js';
+import SegmentNumberInput from '../../segment/SegmentNumberInput.jsx';
 
 function normalizeCryptoIstClock24(inputStr) {
   const s = String(inputStr ?? '').trim();
@@ -135,8 +146,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
       perTrade: targetAdmin.defaultSettings?.brokerage?.perTrade ?? 0
     },
     leverage: {
-      intraday: targetAdmin.defaultSettings?.leverage?.intraday ?? targetAdmin.leverageSettings?.intradayLeverage ?? 1,
-      carryForward: targetAdmin.defaultSettings?.leverage?.carryForward ?? targetAdmin.leverageSettings?.carryForwardLeverage ?? 1
+      intraday: targetAdmin.defaultSettings?.leverage?.intraday ?? targetAdmin.leverageSettings?.intradayLeverage,
+      carryForward: targetAdmin.defaultSettings?.leverage?.carryForward ?? targetAdmin.leverageSettings?.carryForwardLeverage
     },
     charges: {
       depositFee: targetAdmin.defaultSettings?.charges?.depositFee ?? 0,
@@ -144,12 +155,12 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
       tradingFee: targetAdmin.defaultSettings?.charges?.tradingFee ?? 0
     },
     lotSettings: {
-      maxLotSize: targetAdmin.defaultSettings?.lotSettings?.maxLotSize ?? 100,
-      minLotSize: targetAdmin.defaultSettings?.lotSettings?.minLotSize ?? 1
+      maxLotSize: targetAdmin.defaultSettings?.lotSettings?.maxLotSize,
+      minLotSize: targetAdmin.defaultSettings?.lotSettings?.minLotSize
     },
     quantitySettings: {
-      maxQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxQuantity ?? 50000,
-      breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity ?? 5000,
+      maxQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxQuantity,
+      breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity,
       maxLotQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxLotQuantity ?? 0,
       maxBid: targetAdmin.defaultSettings?.quantitySettings?.maxBid ?? 0
     },
@@ -193,50 +204,46 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
   const [fetching, setFetching] = useState(true);
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  // Fetch segment/script settings on mount
-  useEffect(() => {
-    const fetchSegScript = async () => {
-      try {
-        const { data } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
-          headers: { Authorization: `Bearer ${token}` }
+  const loadSegScriptSettings = async () => {
+    try {
+      setFetching(true);
+      const { data } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (data.segmentPermissions) {
+        const sp = data.segmentPermissions;
+        const normalized = {};
+        Object.keys(sp).forEach((k) => {
+          const ob = sp[k]?.optionBuy || {};
+          const os = sp[k]?.optionSell || {};
+          const sysBase = data.adminSegmentDefaults?.[k] || {};
+          normalized[k] = normalizeSegmentCommissionFields(
+            { ...sp[k], optionBuy: ob, optionSell: os },
+            sysBase
+          );
         });
-        if (data.segmentPermissions) {
-          const sp = data.segmentPermissions;
-          const normalized = {};
-          Object.keys(sp).forEach(k => { 
-            normalized[k] = { 
-              ...sp[k],
-              intradayLeverage: sp[k]?.intradayLeverage ?? 1,
-              carryForwardLeverage: sp[k]?.carryForwardLeverage ?? 1,
-              maxIntradayQty: sp[k]?.maxIntradayQty ?? 0,
-              maxCarryQty: sp[k]?.maxCarryQty ?? 0,
-              quantitySettings: {
-                ...sp[k]?.quantitySettings,
-                maxQuantity: sp[k]?.quantitySettings?.maxQuantity ?? 0,
-                breakupQuantity: sp[k]?.quantitySettings?.breakupQuantity ?? 0,
-                maxLotQuantity: sp[k]?.quantitySettings?.maxLotQuantity ?? 0,
-                maxBid: sp[k]?.quantitySettings?.maxBid ?? 0
-              }
-            }; 
-          });
-          setSegDefs(normalized);
-        }
-        if (data.adminSegmentDefaults && typeof data.adminSegmentDefaults === 'object') {
-          setSystemSegBaseline({ ...data.adminSegmentDefaults });
-        }
-        if (data.scriptSettings) {
-          const ss = data.scriptSettings;
-          const normalized = {};
-          Object.keys(ss).forEach(k => { normalized[k] = { ...ss[k] }; });
-          setScriptDefs(normalized);
-        }
-      } catch (err) {
-        console.error('Error fetching segment/script settings:', err);
-      } finally {
-        setFetching(false);
+        setSegDefs(normalized);
       }
-    };
-    fetchSegScript();
+      if (data.adminSegmentDefaults && typeof data.adminSegmentDefaults === 'object') {
+        setSystemSegBaseline({ ...data.adminSegmentDefaults });
+      }
+      if (data.scriptSettings) {
+        const ss = data.scriptSettings;
+        const normalized = {};
+        Object.keys(ss).forEach((k) => {
+          normalized[k] = { ...ss[k] };
+        });
+        setScriptDefs(normalized);
+      }
+    } catch (err) {
+      console.error('Error fetching segment/script settings:', err);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSegScriptSettings();
   }, [targetAdmin._id, token]);
 
   useEffect(() => {
@@ -288,17 +295,10 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
   };
 
   const handleSegDefChange = (seg, field, value) => {
-    setSegDefs(prev => {
-      const segData = { ...prev[seg] };
-      if (field.includes('.')) {
-        // Handle nested paths like 'quantitySettings.breakupQuantity'
-        const [parent, child] = field.split('.');
-        segData[parent] = { ...segData[parent], [child]: value };
-      } else {
-        segData[field] = value;
-      }
-      return { ...prev, [seg]: segData };
-    });
+    setSegDefs((prev) => ({
+      ...prev,
+      [seg]: patchSegmentField(prev[seg] || {}, field, value),
+    }));
   };
 
   const handleScriptDefChange = (scriptKey, category, field, value) => {
@@ -357,6 +357,9 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
           type: 'success',
           text: response.data.message || (activeTab === 'segments' ? 'Segment permissions updated successfully' : 'Script settings updated successfully'),
         });
+        if (activeTab === 'segments' || activeTab === 'scripts') {
+          await loadSegScriptSettings();
+        }
       }
 
       onSuccess();
@@ -432,7 +435,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                   {expandedSeg && (() => {
                     const s = segDefs[expandedSeg] || {};
-                    const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT'].includes(expandedSeg);
+                    const isOpt = ['NSEOPT', 'MCXOPT', 'CRYPTOOPT', 'BSE-OPT', 'FOREXOPT'].includes(expandedSeg);
                     return (
                       <div className="bg-dark-700/50 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-4">
@@ -468,23 +471,17 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                         <div className="grid grid-cols-2 gap-3 mb-4">
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
-                            <input
-                              type="number"
-                              min="1"
-                              step="0.1"
-                              value={s.intradayLeverage || 1}
-                              onChange={(e) => handleSegDefChange(expandedSeg, 'intradayLeverage', parseFloat(e.target.value) || 1)}
+                            <SegmentNumberInput
+                              value={s.intradayLeverage}
+                              onChange={(v) => handleSegDefChange(expandedSeg, 'intradayLeverage', v)}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Carryforward Leverage (x)</label>
-                            <input
-                              type="number"
-                              min="1"
-                              step="0.1"
-                              value={s.carryForwardLeverage || 1}
-                              onChange={(e) => handleSegDefChange(expandedSeg, 'carryForwardLeverage', parseFloat(e.target.value) || 1)}
+                            <SegmentNumberInput
+                              value={s.carryForwardLeverage}
+                              onChange={(v) => handleSegDefChange(expandedSeg, 'carryForwardLeverage', v)}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -536,19 +533,19 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               </div>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Max Quantity</label>
-                                <input type="number" value={s.quantitySettings?.maxQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxQuantity', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantityModeSettings?.maxQuantity ?? s.quantitySettings?.maxQuantity)} onChange={e => handleSegDefChange(expandedSeg, 'quantityModeSettings.maxQuantity', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-                                <input type="number" value={s.quantitySettings?.breakupQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantityModeSettings?.breakupQuantity ?? s.quantitySettings?.breakupQuantity)} onChange={e => handleSegDefChange(expandedSeg, 'quantityModeSettings.breakupQuantity', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Max Lot Quantity</label>
-                                <input type="number" value={s.quantitySettings?.maxLotQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxLotQuantity', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantitySettings?.maxLotQuantity)} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxLotQuantity', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-                                <input type="number" value={s.quantitySettings?.maxBid || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantitySettings?.maxBid)} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                             </div>
                           </>
@@ -577,19 +574,19 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Max Quantity</label>
-                                <input type="number" value={s.quantitySettings?.maxQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxQuantity', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantityModeSettings?.maxQuantity ?? s.quantitySettings?.maxQuantity)} onChange={e => handleSegDefChange(expandedSeg, 'quantityModeSettings.maxQuantity', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-                                <input type="number" value={s.quantitySettings?.breakupQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantityModeSettings?.breakupQuantity ?? s.quantitySettings?.breakupQuantity)} onChange={e => handleSegDefChange(expandedSeg, 'quantityModeSettings.breakupQuantity', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Max Lot Quantity</label>
-                                <input type="number" value={s.quantitySettings?.maxLotQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxLotQuantity', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantitySettings?.maxLotQuantity)} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxLotQuantity', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-                                <input type="number" value={s.quantitySettings?.maxBid || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value, 10) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <input type="number" value={numInputValue(s.quantitySettings?.maxBid)} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseIntInput(e.target.value))} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                             </div>
                           </>
@@ -626,39 +623,17 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           />
                         )}
 
-                        {/* Brokerage */}
-                        <h4 className="text-xs font-semibold text-green-400 mb-2">Brokerage</h4>
-                        <div className="grid grid-cols-2 gap-3 mb-4">
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">
-                              {commissionAmountLabel(s.commissionType || 'PER_LOT')}
-                            </label>
-                            <input type="number" value={s.commissionLot || 0} onChange={e => handleSegDefChange(expandedSeg, 'commissionLot', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                            <p className="text-[10px] text-gray-600 mt-1">{commissionHelperText(s.commissionType || 'PER_LOT')}</p>
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-                            <select
-                              value={s.commissionType || 'PER_LOT'}
-                              onChange={(e) => {
-                                const ct = e.target.value;
-                                setSegDefs((prev) => ({
-                                  ...prev,
-                                  [expandedSeg]: {
-                                    ...prev[expandedSeg],
-                                    commissionType: ct,
-                                    commissionUnit: requiredUnitForCommissionType(ct),
-                                  },
-                                }));
-                              }}
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                            >
-                              <option value="PER_LOT">Per Lot</option>
-                              <option value="PER_TRADE">Per Trade</option>
-                              <option value="PER_CRORE">Per Crore</option>
-                            </select>
-                          </div>
-                        </div>
+                        <SegmentBrokerageFields
+                          slice={s}
+                          baseline={systemSegBaseline[expandedSeg]}
+                          compact
+                          onChange={(next) =>
+                            setSegDefs((prev) => ({
+                              ...prev,
+                              [expandedSeg]: { ...prev[expandedSeg], ...next },
+                            }))
+                          }
+                        />
 
                         {/* Super Admin Brokerage & Incentive - Only for MCX segments */}
                         {['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
@@ -692,12 +667,12 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                   type="number"
                                   min={0}
                                   step={0.01}
-                                  value={s.cryptoSpreadUsdPerSide ?? 0}
+                                  value={numInputValue(s.cryptoSpreadUsdPerSide)}
                                   onChange={(e) =>
                                     handleSegDefChange(
                                       expandedSeg,
                                       'cryptoSpreadUsdPerSide',
-                                      Math.max(0, parseFloat(e.target.value) || 0)
+                                      parseNonNegativeNumInput(e.target.value)
                                     )
                                   }
                                   className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
@@ -709,9 +684,9 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                   type="number"
                                   min={0}
                                   step={1}
-                                  value={s.cryptoSpreadInr ?? 0}
+                                  value={numInputValue(s.cryptoSpreadInr)}
                                   onChange={(e) =>
-                                    handleSegDefChange(expandedSeg, 'cryptoSpreadInr', Math.max(0, parseFloat(e.target.value) || 0))
+                                    handleSegDefChange(expandedSeg, 'cryptoSpreadInr', parseNonNegativeNumInput(e.target.value))
                                   }
                                   className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                                 />
@@ -725,68 +700,16 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           <>
                             <h4 className="text-xs font-semibold text-purple-400 mb-2">Option Buy / Sell</h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {['optionBuy', 'optionSell'].map(optType => {
-                                const opt = s[optType] || {};
-                                return (
-                                  <div key={optType} className="bg-dark-800 rounded-lg p-3">
-                                    <div className="flex items-center justify-between mb-2">
-                                      <h5 className="text-xs font-semibold">{optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}</h5>
-                                      <button type="button" onClick={() => handleSegDefChange(expandedSeg, optType, { ...opt, allowed: !opt.allowed })}
-                                        className={`px-2 py-0.5 rounded text-xs font-medium ${opt.allowed !== false ? 'bg-green-600' : 'bg-red-600'}`}>
-                                        {opt.allowed !== false ? 'Allowed' : 'Blocked'}
-                                      </button>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2">
-                                      <div>
-                                        <label className="block text-xs text-gray-400 mb-1">
-                                          {commissionAmountLabel(opt.commissionType || 'PER_LOT')}
-                                        </label>
-                                        <input type="number" value={opt.commission || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, commission: parseFloat(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-                                        <p className="text-[9px] text-gray-600 mt-0.5">{commissionHelperText(opt.commissionType || 'PER_LOT')}</p>
-                                      </div>
-                                      <div>
-                                        <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
-                                        <input type="number" value={opt.strikeSelection || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, strikeSelection: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-                                      </div>
-                                      <div>
-                                        <label className="block text-xs text-gray-400 mb-1">{isCryptoQtyOnlySegment(expandedSeg) ? 'Max Exch Qty' : 'Max Exch Lots'}</label>
-                                        <input type="number" value={opt.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, maxExchangeLots: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
-                                      </div>
-                                      <div>
-                                        <label className="block text-xs text-gray-400 mb-1">Comm. Type</label>
-                                        <select
-                                          value={opt.commissionType || 'PER_LOT'}
-                                          onChange={(e) => {
-                                            const ct = e.target.value;
-                                            handleSegDefChange(expandedSeg, optType, {
-                                              ...opt,
-                                              commissionType: ct,
-                                              commissionUnit: requiredUnitForCommissionType(ct),
-                                            });
-                                          }}
-                                          className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs"
-                                        >
-                                          <option value="PER_LOT">Per Lot</option>
-                                          <option value="PER_TRADE">Per Trade</option>
-                                          <option value="PER_CRORE">Per Crore</option>
-                                        </select>
-                                        <select
-                                          value={requiredUnitForCommissionType(opt.commissionType || 'PER_LOT')}
-                                          disabled
-                                          className="w-full mt-1 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-[10px] opacity-90 cursor-not-allowed"
-                                          title="Unit follows commission type"
-                                        >
-                                          {unitOptionsForCommissionType(opt.commissionType || 'PER_LOT').map((o) => (
-                                            <option key={o.value} value={o.value}>
-                                              {o.label}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                              {['optionBuy', 'optionSell'].map((optType) => (
+                                <OptionBuySellFields
+                                  key={optType}
+                                  segmentKey={expandedSeg}
+                                  optType={optType}
+                                  opt={s[optType] || {}}
+                                  compact
+                                  onChange={(next) => handleSegDefChange(expandedSeg, optType, next)}
+                                />
+                              ))}
                             </div>
                           </>
                         )}

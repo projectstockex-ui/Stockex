@@ -13,6 +13,23 @@ import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
 import { validateLimitPendingFromSegmentPerms } from '../lib/walletLimitOrderBand.js';
 import { fmtTransferInr, validateTransferAmount } from '../lib/walletTransferLimits.js';
+import {
+  resolveActiveLtpBracket,
+  isPriceInLtpBracket,
+  formatLtpBracketRange,
+} from '../utils/ltpBracket.js';
+
+/** All watchlist buckets that should receive Zerodha tick-subscribe (keys must match watchlistBySegment). */
+const WATCHLIST_TICK_SUBSCRIBE_SEGMENTS = [
+  'FAVORITES',
+  'NSEFUT',
+  'NSEOPT',
+  'NSE-EQ',
+  'BSE-FUT',
+  'BSE-OPT',
+  'MCXFUT',
+  'MCXOPT',
+];
 
 // Demo instruments with mock data for testing trading features
 const demoInstrumentsData = {
@@ -158,18 +175,17 @@ function marketDataRowForInstrumentToken(marketData, token, instrument = null) {
   if (token != null && token !== '') {
     const s = String(token);
     const byToken = marketData[s] ?? marketData[Number.parseInt(s, 10)] ?? null;
-    console.log('[marketDataRowForInstrumentToken] token:', s, 'found:', !!byToken, 'marketData keys:', Object.keys(marketData).slice(0, 10));
     if (byToken) return byToken;
   }
-  // MCX safety net: when local token is stale, match live tick by symbol/tradingSymbol.
+  // When token id is stale/missing, match live tick by tradingSymbol or symbol (NSE / BSE / MCX).
   const sym = String(instrument?.symbol || '').trim().toUpperCase();
   const tsym = String(instrument?.tradingSymbol || '').trim().toUpperCase();
   const mcxBase = deriveMcxBaseSymbol(tsym || sym);
   if (!sym && !tsym) return null;
   const rows = Object.values(marketData);
   return (
-    rows.find((r) => String(r?.tradingSymbol || '').trim().toUpperCase() === tsym && tsym) ||
-    rows.find((r) => String(r?.symbol || '').trim().toUpperCase() === sym && sym) ||
+    rows.find((r) => tsym && String(r?.tradingSymbol || '').trim().toUpperCase() === tsym) ||
+    rows.find((r) => sym && String(r?.symbol || '').trim().toUpperCase() === sym) ||
     (mcxBase
       ? rows.find((r) => {
           const rs = String(r?.symbol || '').trim().toUpperCase();
@@ -567,6 +583,36 @@ const DEFAULT_FOREX_INSTRUMENTS = [
   { symbol: 'USDINR', name: 'US Dollar / Indian Rupee', exchange: 'FOREX', pair: 'USDINR', token: 'USDINR', isForex: true, instrumentType: 'CURRENCY', segment: 'FOREXFUT', displaySegment: 'FOREXFUT' },
 ];
 
+/** NSE & BSE wallet display (same fields as crypto: balance, usedMargin, available). */
+function nseBseBalanceFromWalletData(walletData) {
+  const bal = walletData?.nseBseWallet?.balance;
+  if (bal != null && Number.isFinite(Number(bal))) return Number(bal);
+  return Number(walletData?.tradingBalance ?? walletData?.wallet?.tradingBalance ?? 0) || 0;
+}
+
+function nseBseUsedMarginFromWalletData(walletData) {
+  return Number(
+    walletData?.nseBseWallet?.usedMargin ?? walletData?.usedMargin ?? walletData?.wallet?.usedMargin ?? 0
+  ) || 0;
+}
+
+function nseBseAvailableFromWalletData(walletData) {
+  const bal = nseBseBalanceFromWalletData(walletData);
+  const um = nseBseUsedMarginFromWalletData(walletData);
+  const fromApi = walletData?.nseBseWallet?.availableBalance ?? walletData?.marginAvailable;
+  if (fromApi != null && Number.isFinite(Number(fromApi))) return Number(fromApi);
+  return Math.max(0, bal - um);
+}
+
+/** Cash + MTM — used for ledger autosquare (e.g. 90% loss on reference balance). */
+function nseBseRealBalanceFromWalletData(walletData) {
+  const eq = walletData?.nseBseWallet?.realBalance ?? walletData?.nseBseWallet?.equity;
+  if (eq != null && Number.isFinite(Number(eq))) return Number(eq);
+  const bal = nseBseBalanceFromWalletData(walletData);
+  const mtm = Number(walletData?.nseBseWallet?.totalMtm ?? walletData?.nseBseWallet?.unrealizedPnL ?? 0) || 0;
+  return bal + mtm;
+}
+
 const UserDashboard = () => {
   const { user, logoutUser } = useAuth();
   const navigate = useNavigate();
@@ -618,6 +664,15 @@ const UserDashboard = () => {
     forex: 0,
   });
   const [watchlistRefreshKey, setWatchlistRefreshKey] = useState(0); // Key to trigger watchlist refresh
+  const [instrumentsPanelWidth, setInstrumentsPanelWidth] = useState(() => {
+    try {
+      const w = parseInt(localStorage.getItem('stockex_instruments_panel_w'), 10);
+      if (Number.isFinite(w) && w >= 200 && w <= 520) return w;
+    } catch {
+      /* ignore */
+    }
+    return 256;
+  });
   /** Bumps on each Socket.IO connect so MCX can re-post /tick-subscribe after server is ready */
   const [socketConnectEpoch, setSocketConnectEpoch] = useState(0);
   const contractPriceEndpointMissingRef = useRef(false);
@@ -792,15 +847,21 @@ const UserDashboard = () => {
       queueTicks(ticks);
     });
 
-    // Listen for real-time crypto ticks from Binance WebSocket
+    // Crypto ticks only on crypto/forex dashboards — do not overwrite NSE/BSE marketData keys
     socket.on('crypto_tick', (ticks) => {
-      queueTicks(ticks);
+      const mode = new URLSearchParams(window.location.search).get('mode');
+      if (mode === 'crypto' || mode === 'forex') queueTicks(ticks);
     });
 
     socket.on('trade_update', (data) => {
       if (['PENDING_FILLED', 'NEW_TRADE', 'TRADE_CLOSED'].includes(data?.type)) {
         setPositionsRefreshKey((k) => k + 1);
       }
+    });
+
+    socket.on('ledger_autosquare', () => {
+      setPositionsRefreshKey((k) => k + 1);
+      window.dispatchEvent(new CustomEvent('stockex:ledger-autosquare'));
     });
 
     return () => {
@@ -812,9 +873,37 @@ const UserDashboard = () => {
   const fetchWallet = useCallback(async () => {
     if (!user?.token) return;
     try {
-      const { data } = await axios.get('/api/user/wallet', {
-        headers: { Authorization: `Bearer ${user.token}` }
-      });
+      const headers = { Authorization: `Bearer ${user.token}` };
+      const [walletRes, nseRes, ledgerRes] = await Promise.all([
+        axios.get('/api/user/wallet', { headers }),
+        axios.get('/api/user/funds/nse-bse-wallet', { headers }).catch(() => ({ data: null })),
+        axios.get('/api/user/nse-bse-ledger-status', { headers }).catch(() => ({ data: null })),
+      ]);
+      const data = { ...walletRes.data };
+      const nse = nseRes?.data;
+      const ledger = ledgerRes?.data;
+      if (nse && nse.balance != null) {
+        const um = nse.usedMargin ?? data.nseBseWallet?.usedMargin ?? 0;
+        const avail = nse.availableBalance ?? Math.max(0, nse.balance - um);
+        data.nseBseWallet = { ...(data.nseBseWallet || {}), ...nse, usedMargin: um, availableBalance: avail };
+        data.tradingBalance = nse.balance;
+        data.usedMargin = um;
+        data.marginAvailable = avail;
+        data.availableMargin = avail;
+      }
+      if (ledger && typeof ledger === 'object') {
+        data.nseBseWallet = {
+          ...(data.nseBseWallet || {}),
+          realBalance: ledger.realBalance,
+          equity: ledger.realBalance,
+          totalMtm: ledger.totalMtm,
+          ledgerReferenceBalance: ledger.referenceBalance,
+          ledgerClosePercent: ledger.ledgerClosePercent,
+          ledgerMinEquityFloor: ledger.minEquityFloor,
+          ledgerLossPercent: ledger.lossPercent,
+          ledgerAutosquareActive: ledger.ledgerAutosquareActive,
+        };
+      }
       setWalletData(data);
     } catch (error) {
       console.error('Error fetching wallet:', error);
@@ -858,6 +947,12 @@ const UserDashboard = () => {
   }, [user]);
 
   useEffect(() => {
+    const onLedgerAs = () => fetchWallet();
+    window.addEventListener('stockex:ledger-autosquare', onLedgerAs);
+    return () => window.removeEventListener('stockex:ledger-autosquare', onLedgerAs);
+  }, [fetchWallet]);
+
+  useEffect(() => {
     fetchWallet();
     fetchUsdSpotClientSpreads();
     // REMOVED fetchMarketData completely - only use WebSocket live data
@@ -872,37 +967,44 @@ const UserDashboard = () => {
     };
   }, [fetchWallet, fetchUsdSpotClientSpreads]);
 
-  const fetchMarketData = async () => {
-    if (!user?.token) return;
+  const fetchMarketData = useCallback(async () => {
+    if (!user?.token || cryptoOnly || forexOnly) return;
     try {
       const { data } = await axios.get('/api/zerodha/market-data', {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-        console.log(`Received ${Object.keys(data).length} market data entries`);
-        // Only merge data for instruments that don't have live WebSocket data
-        setMarketData(prev => {
+        setMarketData((prev) => {
           const newData = { ...prev };
-          Object.keys(data).forEach(key => {
-            // Only add historical data if no live data exists for this instrument
-            if (!prev[key] || !prev[key].ltp) {
-              newData[key] = data[key];
+          Object.keys(data).forEach((key) => {
+            const incoming = data[key];
+            const existing = prev[key];
+            if (!existing?.ltp || (incoming?.lastUpdated && incoming.ltp)) {
+              newData[key] = incoming;
             }
           });
           return newData;
         });
       }
-    } catch (error) {
-      // Silent fail
+    } catch {
+      // Zerodha may be reconnecting
     }
-  };
+  }, [user?.token, cryptoOnly, forexOnly]);
+
+  // NSE/BSE/MCX: poll orchestrator cache when socket ticks are sparse or Zerodha is reconnecting
+  useEffect(() => {
+    if (!user?.token || cryptoOnly || forexOnly) return;
+    void fetchMarketData();
+    const id = setInterval(() => void fetchMarketData(), 2500);
+    return () => clearInterval(id);
+  }, [user?.token, cryptoOnly, forexOnly, fetchMarketData, socketConnectEpoch]);
 
   /**
    * MCX fallback snapshot: when live ticks are unavailable (closed segment / reconnect),
    * hydrate selected contract from instrument DB so UI doesn't stay at 0.00.
    */
   const hydrateSelectedInstrumentSnapshot = useCallback(async () => {
-    if (!mcxOnly || !user?.token || !selectedInstrument) return;
+    if (cryptoOnly || forexOnly || !user?.token || !selectedInstrument) return;
     if (hydratingInstrumentRef.current) return;
     hydratingInstrumentRef.current = true;
 
@@ -1009,13 +1111,7 @@ const UserDashboard = () => {
     } finally {
       hydratingInstrumentRef.current = false;
     }
-  }, [mcxOnly, user?.token, selectedInstrument]);
-
-  const hydrateSelectedInstrumentContractPrice = useCallback(async () => {
-    // Fallback API removed - use WebSocket data only
-    if (!user?.token || !selectedInstrument) return;
-    return;
-  }, [mcxOnly, user?.token, selectedInstrument]);
+  }, [cryptoOnly, forexOnly, user?.token, selectedInstrument]);
 
   /** Merge targeted quote rows (e.g. MCX /instruments-quote) into shared marketData */
   const mergeMarketDataPatch = useCallback((patch) => {
@@ -1024,17 +1120,15 @@ const UserDashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (!mcxOnly || !selectedInstrument) return;
+    if (cryptoOnly || forexOnly || !selectedInstrument) return;
     void hydrateSelectedInstrumentSnapshot();
-    void hydrateSelectedInstrumentContractPrice();
-    // Removed refresh interval to prevent prices from resetting to 00
   }, [
-    mcxOnly,
+    cryptoOnly,
+    forexOnly,
     selectedInstrument?.token,
     selectedInstrument?.symbol,
     selectedInstrument?.tradingSymbol,
     hydrateSelectedInstrumentSnapshot,
-    hydrateSelectedInstrumentContractPrice,
   ]);
 
   useEffect(() => {
@@ -1180,6 +1274,32 @@ const UserDashboard = () => {
     setTradeInstrument(instrument);
     setOrderType(type);
   };
+
+  const startInstrumentsPanelResize = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = instrumentsPanelWidth;
+    let latestW = startW;
+    const onMove = (ev) => {
+      latestW = Math.min(520, Math.max(200, startW + ev.clientX - startX));
+      setInstrumentsPanelWidth(latestW);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try {
+        localStorage.setItem('stockex_instruments_panel_w', String(latestW));
+      } catch {
+        /* ignore */
+      }
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [instrumentsPanelWidth]);
 
   return (
     <div className="h-screen bg-dark-900 flex flex-col overflow-hidden">
@@ -1361,9 +1481,16 @@ const UserDashboard = () => {
                 </span>
               </span>
             ) : mcxOnly ? (
-              <span className="text-yellow-400 font-medium">{((walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)).toLocaleString()}</span>
+              <span className="text-yellow-400 font-medium" title="MCX wallet balance (margin locked separately in Used Margin)">
+                {(walletData?.mcxWallet?.balance || 0).toLocaleString()}
+              </span>
             ) : (
-              <span className="text-green-400 font-medium">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
+              <span
+                className="text-green-400 font-medium"
+                title={`NSE & BSE wallet · Available margin: ${nseBseAvailableFromWalletData(walletData).toLocaleString()}`}
+              >
+                {nseBseBalanceFromWalletData(walletData).toLocaleString()}
+              </span>
             )}
             <button
               onClick={() => setShowWalletTransferModal(true)}
@@ -1409,9 +1536,14 @@ const UserDashboard = () => {
                 </span>
               </span>
             ) : mcxOnly ? (
-              <span className="text-yellow-400 font-medium text-sm">{((walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)).toLocaleString()}</span>
+              <span className="text-yellow-400 font-medium text-sm">{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
             ) : (
-              <span className="text-green-400 font-medium text-sm">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
+              <span
+                className="text-green-400 font-medium text-sm"
+                title={`Available: ${nseBseAvailableFromWalletData(walletData).toLocaleString()}`}
+              >
+                {nseBseBalanceFromWalletData(walletData).toLocaleString()}
+              </span>
             )}
             <button
               onClick={() => setShowWalletTransferModal(true)}
@@ -1442,7 +1574,7 @@ const UserDashboard = () => {
           </div>
           <div className="px-4 py-2 border-b border-dark-600">
             <p className="text-sm text-gray-400">Trading Balance</p>
-            <p className="font-medium text-green-400">{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</p>
+            <p className="font-medium text-green-400">{nseBseBalanceFromWalletData(walletData).toLocaleString()}</p>
           </div>
           <button 
             onClick={() => { setShowWalletModal(true); setShowMobileMenu(false); }}
@@ -1479,8 +1611,12 @@ const UserDashboard = () => {
 
       {/* Main Content - Desktop */}
       <div className="flex-1 hidden md:flex overflow-hidden">
-        {/* Left Sidebar - Instruments - Fixed width */}
-        <div className="flex-shrink-0 w-64">
+        {/* Left Sidebar - Instruments (scrollable list + drag right edge to resize) */}
+        <div
+          className="flex-shrink-0 h-full min-h-0 flex flex-col relative border-r border-dark-600"
+          style={{ width: instrumentsPanelWidth }}
+        >
+          <div className="flex-1 min-h-0 overflow-hidden">
           <InstrumentsPanel
             selectedInstrument={selectedInstrument}
             cryptoOnly={cryptoOnly}
@@ -1502,6 +1638,14 @@ const UserDashboard = () => {
             marketData={marketData}
             onSegmentChange={setActiveSegment}
             isCryptoTradingOpen={isCryptoTradingOpen()}
+          />
+          </div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            title="Drag to resize instrument list"
+            onMouseDown={startInstrumentsPanelResize}
+            className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-green-500/40 active:bg-green-500/60 z-30 shrink-0"
           />
         </div>
 
@@ -1869,7 +2013,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
           return;
         }
       };
-      ['FAVORITES', 'NSEFUT', 'NSEOPT', 'BSEFUT', 'BSEOPT', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
+      WATCHLIST_TICK_SUBSCRIBE_SEGMENTS.forEach((seg) => {
         (watchlistBySegment[seg] || []).forEach(pushTok);
       });
       if (selectedInstrument?.token != null) {
@@ -2313,9 +2457,9 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
   };
 
   return (
-    <aside className="w-full h-full bg-dark-800 border-r border-dark-600 flex flex-col">
+    <aside className="w-full h-full min-h-0 bg-dark-800 flex flex-col overflow-hidden">
       {/* Market Status Indicator */}
-      <div className="px-3 py-2 border-b border-dark-600 flex items-center justify-between text-xs">
+      <div className="px-3 py-2 border-b border-dark-600 flex items-center justify-between text-xs shrink-0">
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${marketStatus.connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
           <span className={marketStatus.connected ? 'text-green-400' : 'text-red-400'}>
@@ -2330,7 +2474,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       </div>
 
       {/* Segment Tabs - Like screenshot */}
-      <div className="flex flex-wrap gap-1 p-2 border-b border-dark-600">
+      <div className="flex flex-wrap gap-1 p-2 border-b border-dark-600 shrink-0">
         {segmentTabs.map(tab => (
           <button
             key={tab.id}
@@ -2347,7 +2491,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       </div>
 
       {/* Search */}
-      <div className="p-2 border-b border-dark-600">
+      <div className="p-2 border-b border-dark-600 shrink-0">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input
@@ -2369,8 +2513,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
         </div>
       </div>
 
-      {/* Search Results or Watchlist */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Search Results or Watchlist — scroll when many rows (Add buttons) */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain">
         {/* Search Results - Show when searching */}
         {showSearchResults &&
         searchTerm.length >=
@@ -2904,11 +3048,92 @@ const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFutu
   );
 };
 
+function getChartIntervalSeconds(interval) {
+  const map = {
+    ONE_MINUTE: 60,
+    FIVE_MINUTE: 300,
+    FIFTEEN_MINUTE: 900,
+    THIRTY_MINUTE: 1800,
+    ONE_HOUR: 3600,
+    ONE_DAY: 86400,
+  };
+  return map[interval] || 900;
+}
+
+function getKiteChartInterval(interval) {
+  const map = {
+    ONE_MINUTE: 'minute',
+    FIVE_MINUTE: '5minute',
+    FIFTEEN_MINUTE: '15minute',
+    THIRTY_MINUTE: '30minute',
+    ONE_HOUR: '60minute',
+    ONE_DAY: 'day',
+  };
+  return map[interval] || '15minute';
+}
+
+function getBinanceChartInterval(interval) {
+  const map = {
+    ONE_MINUTE: '1m',
+    FIVE_MINUTE: '5m',
+    FIFTEEN_MINUTE: '15m',
+    THIRTY_MINUTE: '30m',
+    ONE_HOUR: '1h',
+    ONE_DAY: '1d',
+  };
+  return map[interval] || '15m';
+}
+
+/** Deterministic pseudo-random (stable bars across reloads — no flicker) */
+function chartSeedRand(seed, index) {
+  const x = Math.sin(seed * 12.9898 + index * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** Fallback OHLC when Kite/Binance history is empty — keeps chart visible */
+function buildSyntheticChartCandles(basePrice, interval, count = 150, seedKey = '') {
+  const bp = Number(basePrice);
+  if (!Number.isFinite(bp) || bp <= 0) return [];
+  let seed = 1;
+  const sk = String(seedKey || bp);
+  for (let i = 0; i < sk.length; i++) seed = (seed * 31 + sk.charCodeAt(i)) >>> 0;
+  const step = getChartIntervalSeconds(interval);
+  const now = Math.floor(Date.now() / 1000);
+  const vol = Math.max(bp * 0.0015, 0.01);
+  const candles = [];
+  for (let i = count; i >= 0; i--) {
+    const time = Math.floor((now - i * step) / step) * step;
+    const r1 = chartSeedRand(seed, i * 3);
+    const r2 = chartSeedRand(seed, i * 3 + 1);
+    const r3 = chartSeedRand(seed, i * 3 + 2);
+    const drift = (r1 - 0.5) * vol;
+    const open = bp + drift * (i / Math.max(count, 1));
+    const close = open + (r2 - 0.5) * vol;
+    candles.push({
+      time,
+      open,
+      high: Math.max(open, close) + r3 * vol * 0.25,
+      low: Math.min(open, close) - chartSeedRand(seed, i * 3 + 3) * vol * 0.25,
+      close,
+      volume: Math.floor(chartSeedRand(seed, i * 5) * 5000) + 100,
+    });
+  }
+  const seen = new Set();
+  return candles
+    .filter((c) => {
+      if (seen.has(c.time)) return false;
+      seen.add(c.time);
+      return true;
+    })
+    .sort((a, b) => a.time - b.time);
+}
+
 const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.5, onChartLtp }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
   const volumeSeriesRef = useRef(null);
+  const chartResizeHandlerRef = useRef(null);
   const [chartInterval, setChartInterval] = useState('FIFTEEN_MINUTE');
   const [loading, setLoading] = useState(false);
   const [livePrice, setLivePrice] = useState(null);
@@ -2922,6 +3147,26 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         ? String(selectedInstrument.pair || selectedInstrument.symbol || '')
         : String(selectedInstrument.token || selectedInstrument.symbol || '')
     : '';
+
+  // Seed quote from watchlist so chart container mounts immediately (not only after first socket tick)
+  useEffect(() => {
+    if (!selectedInstrument) {
+      setFallbackPrice(null);
+      return;
+    }
+    const ltp = Number(selectedInstrument.ltp ?? selectedInstrument.lastPrice ?? 0);
+    if (Number.isFinite(ltp) && ltp > 0) {
+      setFallbackPrice({
+        ltp,
+        open: Number(selectedInstrument.open) || ltp,
+        high: Number(selectedInstrument.high) || ltp,
+        low: Number(selectedInstrument.low) || ltp,
+        close: Number(selectedInstrument.close) || ltp,
+        change: Number(selectedInstrument.change) || 0,
+        changePercent: Number(selectedInstrument.changePercent) || 0,
+      });
+    }
+  }, [chartInstrumentKey]);
 
   // Changing instrument or timeframe leaves old last-bar times on the series until new history loads.
   // Live tick updates must not run with a new bucket size against old bars (lightweight-charts: "Cannot update oldest data").
@@ -2969,14 +3214,25 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
     }
 
     if (data) {
-      setLivePrice({
-        ltp: data.ltp,
-        open: data.open,
-        high: data.high,
-        low: data.low,
-        close: data.close,
-        change: data.change,
-        changePercent: data.changePercent
+      setLivePrice((prev) => {
+        const next = {
+          ltp: data.ltp,
+          open: data.open,
+          high: data.high,
+          low: data.low,
+          close: data.close,
+          change: data.change,
+          changePercent: data.changePercent,
+        };
+        if (
+          prev &&
+          prev.ltp === next.ltp &&
+          prev.close === next.close &&
+          prev.change === next.change
+        ) {
+          return prev;
+        }
+        return next;
       });
     } else if (selectedInstrument && !data) {
       // Fallback to instrument's last price when no live data is available
@@ -3006,7 +3262,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
             ? spotPxToDisplayedInr(selectedInstrument, rawLtp, usdRate)
             : rawLtp;
       const now = Math.floor(Date.now() / 1000);
-      const intervalSeconds = getIntervalSeconds(chartInterval);
+      const intervalSeconds = getChartIntervalSeconds(chartInterval);
       const candleTime = Math.floor(now / intervalSeconds) * intervalSeconds;
 
       const lastTimeRaw = lastCandleRef.current.time;
@@ -3047,142 +3303,152 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         console.warn('[ChartPanel] candle update skipped:', e?.message || e);
       }
     }
-  }, [selectedInstrument, chartInterval, usdRate, onChartLtp, tokenKeyForTick, tickForChart, usdChartQuote]);
+  }, [
+    selectedInstrument,
+    chartInterval,
+    usdRate,
+    onChartLtp,
+    tokenKeyForTick,
+    tickForChart?.ltp,
+    tickForChart?.open,
+    tickForChart?.high,
+    tickForChart?.low,
+    tickForChart?.close,
+    usdChartQuote?.ltp,
+    usdChartQuote?.close,
+  ]);
 
-  const getIntervalSeconds = (interval) => {
-    const map = {
-      'ONE_MINUTE': 60,
-      'FIVE_MINUTE': 300,
-      'FIFTEEN_MINUTE': 900,
-      'THIRTY_MINUTE': 1800,
-      'ONE_HOUR': 3600,
-      'ONE_DAY': 86400
-    };
-    return map[interval] || 900;
+  const resolveBasePrice = (instrument) => {
+    const tokenKey = String(instrument?.token || '');
+    const tick = tokenKey ? (marketData[tokenKey] ?? marketData[Number.parseInt(tokenKey, 10)]) : null;
+    const fromTick = Number(tick?.ltp ?? tick?.close);
+    if (Number.isFinite(fromTick) && fromTick > 0) return fromTick;
+    const fromInst = Number(instrument?.ltp ?? instrument?.lastPrice ?? instrument?.close);
+    if (Number.isFinite(fromInst) && fromInst > 0) return fromInst;
+    return null;
   };
 
-  const getBinanceInterval = (interval) => {
-    const map = {
-      'ONE_MINUTE': '1m',
-      'FIVE_MINUTE': '5m',
-      'FIFTEEN_MINUTE': '15m',
-      'THIRTY_MINUTE': '30m',
-      'ONE_HOUR': '1h',
-      'ONE_DAY': '1d'
-    };
-    return map[interval] || '15m';
-  };
-
-  // Use live WebSocket data directly instead of historical data
   const fetchCandleData = async (instrument, interval) => {
     if (!instrument) return null;
+    const seedKey = `${instrument.symbol || ''}-${instrument.token || ''}-${interval}`;
 
-    console.log('[Chart] fetchCandleData called for:', instrument.symbol, 'isCrypto:', instrument.isCrypto, 'exchange:', instrument.exchange);
-
-    setLoading(true);
     try {
-      // For Zerodha instruments, fetch historical data from Kite API
-      if (!instrument.isCrypto && instrument.exchange !== 'BINANCE' && !isForexInstrument(instrument)) {
-        const binanceInterval = getBinanceInterval(interval);
-        const tokenKey = String(instrument.token || '');
-        
-        if (!tokenKey) {
-          console.warn('No instrument token for historical data:', instrument.symbol);
-          return null;
-        }
+      const basePrice = resolveBasePrice(instrument);
 
-        // Fetch historical data from backend
-        const { data } = await axios.get('/api/market/zerodha-history', {
-          params: { 
-            token: tokenKey, 
-            interval: binanceInterval,
-            daysBack: 15,
-            maxCandles: 500
-          },
-        });
-
-        console.log('[Chart] Zerodha history response:', data);
-
-        if (data?.success && Array.isArray(data?.data) && data.data.length > 0) {
-          console.log(`📊 Historical chart data loaded for ${instrument.symbol}:`, data.data.length, 'candles');
-          return { candles: data.data, nativeInr: true };
-        } else {
-          console.warn('[Chart] Zerodha history failed:', data?.message || 'No data returned');
-        }
-
-        // Fallback: Create a single current candle with live WebSocket data if historical fails
-        const liveData = tokenKey ? marketData[tokenKey] : null;
-        if (!liveData || !liveData.ltp) {
-          console.warn('No live WebSocket data available for', instrument.symbol);
-          return null;
-        }
-        
-        const currentPrice = Number(liveData.ltp);
-        const now = Math.floor(Date.now() / 1000);
-        const intervalSeconds = getIntervalSeconds(interval);
-        
-        // Create a single current candle with live data
-        const currentCandle = {
-          time: Math.floor(now / intervalSeconds) * intervalSeconds,
-          open: Number(liveData.open) || currentPrice,
-          high: Number(liveData.high) || currentPrice,
-          low: Number(liveData.low) || currentPrice,
-          close: currentPrice,
-          volume: Number(liveData.volume) || 0
-        };
-        
-        console.log('📡 LIVE CHART DATA (fallback):', {
-          symbol: instrument.symbol,
-          price: currentPrice,
-          open: currentCandle.open,
-          high: currentCandle.high,
-          low: currentCandle.low,
-          volume: currentCandle.volume
-        });
-        
-        return { candles: [currentCandle], nativeInr: true };
-      }
-
-      // Keep existing logic for crypto and forex
       if (instrument.isCrypto || instrument.exchange === 'BINANCE') {
-        const binanceInterval = getBinanceInterval(interval);
+        const binanceInterval = getBinanceChartInterval(interval);
         const sym = binanceCandleSymbol(instrument);
-        console.log('[Chart] Crypto candle fetch - symbol:', sym, 'interval:', binanceInterval);
-        if (!sym) {
-          console.warn('[Chart] No symbol for crypto instrument:', instrument);
-          return null;
-        }
+        if (!sym) return null;
         const { data } = await axios.get(`/api/binance/candles/${encodeURIComponent(sym)}`, {
           params: { interval: binanceInterval, limit: 500 },
         });
-        console.log('[Chart] Crypto candle response:', Array.isArray(data) ? data.length + ' candles' : 'invalid data');
-        return Array.isArray(data) && data.length > 0 ? { candles: data, nativeInr: false } : null;
+        if (Array.isArray(data) && data.length > 0) {
+          return { candles: data, nativeInr: false };
+        }
+        if (basePrice) {
+          return { candles: buildSyntheticChartCandles(basePrice, interval, 150, seedKey), nativeInr: false, synthetic: true };
+        }
+        return null;
       }
 
+      if (isForexInstrument(instrument)) {
+        const pair = String(instrument.pair || instrument.symbol || '').toUpperCase();
+        const binanceInterval = getBinanceChartInterval(interval);
+        if (!pair) return null;
+        const { data } = await axios.get(`/api/forex/candles/${encodeURIComponent(pair)}`, {
+          params: { interval: binanceInterval, limit: 500 },
+        });
+        if (Array.isArray(data) && data.length > 0) {
+          return { candles: data, nativeInr: false };
+        }
+        if (basePrice) {
+          return { candles: buildSyntheticChartCandles(basePrice, interval, 150, seedKey), nativeInr: false, synthetic: true };
+        }
+        return null;
+      }
+
+      // NSE / BSE / MCX — Zerodha historical by instrument token
+      const tokenKey = String(instrument.token || '');
+      if (!tokenKey) {
+        console.warn('[Chart] No instrument token:', instrument.symbol);
+        return basePrice
+          ? { candles: buildSyntheticChartCandles(basePrice, interval, 150, seedKey), nativeInr: true, synthetic: true }
+          : null;
+      }
+
+      const kiteInterval = getKiteChartInterval(interval);
+      const { data } = await axios.get('/api/market/zerodha-history', {
+        params: {
+          token: tokenKey,
+          interval: kiteInterval,
+          daysBack: 15,
+          maxCandles: 500,
+        },
+      });
+
+      if (data?.success && Array.isArray(data?.data) && data.data.length > 0) {
+        return { candles: data.data, nativeInr: true };
+      }
+
+      const liveData = marketData[tokenKey] ?? marketData[Number.parseInt(tokenKey, 10)];
+      const currentPrice = Number(liveData?.ltp) || basePrice;
+      if (currentPrice && Number.isFinite(currentPrice)) {
+        const step = getChartIntervalSeconds(interval);
+        const now = Math.floor(Date.now() / 1000);
+        const currentCandle = {
+          time: Math.floor(now / step) * step,
+          open: Number(liveData?.open) || currentPrice,
+          high: Number(liveData?.high) || currentPrice,
+          low: Number(liveData?.low) || currentPrice,
+          close: currentPrice,
+          volume: Number(liveData?.volume) || 0,
+        };
+        const synthetic = buildSyntheticChartCandles(currentPrice, interval, 120, seedKey);
+        const merged = synthetic.length > 0 ? [...synthetic] : [currentCandle];
+        if (merged.length > 0 && merged[merged.length - 1].time !== currentCandle.time) {
+          merged.push(currentCandle);
+        } else if (merged.length > 0) {
+          merged[merged.length - 1] = currentCandle;
+        }
+        return { candles: merged, nativeInr: true, synthetic: true };
+      }
+
+      if (basePrice) {
+        return { candles: buildSyntheticChartCandles(basePrice, interval, 150, seedKey), nativeInr: true, synthetic: true };
+      }
       return null;
     } catch (error) {
-      console.error('Failed to fetch candle data:', error);
+      console.error('[Chart] Failed to fetch candle data:', error);
+      const basePrice = resolveBasePrice(instrument);
+      if (basePrice) {
+        return { candles: buildSyntheticChartCandles(basePrice, interval, 150, seedKey), nativeInr: true, synthetic: true };
+      }
       return null;
-    } finally {
-      setLoading(false);
     }
   };
 
-  
-  // Initialize chart
+  const headerQuote = livePrice || fallbackPrice;
+
+  // Create / recreate chart when instrument changes (container always mounted when instrument selected)
   useEffect(() => {
-    if (!selectedInstrument || !chartContainerRef.current) return;
-    if (chartRef.current) return;
+    if (!selectedInstrument) return;
 
-    console.log('[Chart] Initializing chart for instrument:', selectedInstrument.symbol, 'isCrypto:', selectedInstrument.isCrypto);
-
+    let disposed = false;
     const initTimer = setTimeout(() => {
-      if (!chartContainerRef.current || chartRef.current) return;
-      
-      const containerWidth = chartContainerRef.current.clientWidth || 800;
-      const containerHeight = chartContainerRef.current.clientHeight || 400;
+      const el = chartContainerRef.current;
+      if (disposed || !el) return;
 
-      const chart = createChart(chartContainerRef.current, {
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+        candlestickSeriesRef.current = null;
+        volumeSeriesRef.current = null;
+      }
+
+      const containerWidth = el.clientWidth || 800;
+      const containerHeight = el.clientHeight || 400;
+
+      const chart = createChart(el, {
         width: containerWidth,
         height: containerHeight,
         layout: {
@@ -3203,7 +3469,6 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
       });
 
       chartRef.current = chart;
-
       candlestickSeriesRef.current = chart.addCandlestickSeries({
         upColor: '#22c55e',
         downColor: '#ef4444',
@@ -3212,13 +3477,11 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         wickDownColor: '#ef4444',
         wickUpColor: '#22c55e',
       });
-
       volumeSeriesRef.current = chart.addHistogramSeries({
         color: '#26a69a',
         priceFormat: { type: 'volume' },
         priceScaleId: '',
       });
-
       chart.priceScale('').applyOptions({
         scaleMargins: { top: 0.8, bottom: 0 },
       });
@@ -3231,90 +3494,94 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           });
         }
       };
-
+      chartResizeHandlerRef.current = handleResize;
       window.addEventListener('resize', handleResize);
       setTimeout(handleResize, 100);
-    }, 100);
+    }, 80);
 
-    return () => clearTimeout(initTimer);
-  }, [selectedInstrument]);
-  
-  // Cleanup chart on unmount
-  useEffect(() => {
     return () => {
+      disposed = true;
+      clearTimeout(initTimer);
+      if (chartResizeHandlerRef.current) {
+        window.removeEventListener('resize', chartResizeHandlerRef.current);
+        chartResizeHandlerRef.current = null;
+      }
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
+        candlestickSeriesRef.current = null;
+        volumeSeriesRef.current = null;
       }
     };
-  }, []);
+  }, [chartInstrumentKey]);
 
-  // Load data when instrument or interval changes (wait for chart init — series is created in a 100ms timeout)
+  // Load historical candles only when instrument or timeframe changes (not on every live tick)
   useEffect(() => {
     let cancelled = false;
 
     const loadData = async () => {
       if (!selectedInstrument) return;
 
-      for (let i = 0; i < 40; i++) {
+      setLoading(true);
+
+      for (let i = 0; i < 80; i++) {
         if (cancelled) return;
         if (candlestickSeriesRef.current && volumeSeriesRef.current) break;
         await new Promise((r) => setTimeout(r, 50));
       }
-      if (cancelled || !candlestickSeriesRef.current || !volumeSeriesRef.current) return;
+      if (cancelled || !candlestickSeriesRef.current || !volumeSeriesRef.current) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
 
-      const pack = await fetchCandleData(selectedInstrument, chartInterval);
-      console.log('[Chart] Data pack received:', pack);
-      const rawCandles = pack?.candles;
-      const nativeInr = pack?.nativeInr === true;
-      if (rawCandles && Array.isArray(rawCandles) && rawCandles.length > 0) {
-        console.log('[Chart] Processing candles:', rawCandles.length);
-        // Validate, deduplicate, and sort candles by time
-        const seenTimes = new Set();
-        const candles = rawCandles
-          .filter(c => {
-            // Ensure time is a valid number
-            const time = typeof c.time === 'number' ? c.time : Math.floor(new Date(c.time).getTime() / 1000);
-            if (isNaN(time) || seenTimes.has(time)) return false;
-            seenTimes.add(time);
-            return true;
-          })
-          .map(c => ({
-            time: typeof c.time === 'number' ? c.time : Math.floor(new Date(c.time).getTime() / 1000),
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume || 0
-          }))
-          .sort((a, b) => a.time - b.time);
-        
-        if (candles.length > 0) {
-          const pairU = String(selectedInstrument.pair || selectedInstrument.symbol || '').toUpperCase();
-          const displayCandles = isForexInstrument(selectedInstrument)
-            ? candles.map((c) => scaleForexChartCandle(c, usdRate, pairU))
-            : isUsdSpotInstrument(selectedInstrument) && !nativeInr
-              ? candles.map((c) => scaleUsdSpotChartCandle(c, selectedInstrument, usdRate))
-              : candles;
-          candlestickSeriesRef.current.setData(displayCandles);
-          
-          // Set last candle for real-time updates
-          lastCandleRef.current = displayCandles[displayCandles.length - 1];
-          const lastClose = displayCandles[displayCandles.length - 1]?.close;
-          if (Number.isFinite(Number(lastClose)) && Number(lastClose) > 0) {
-            onChartLtp?.(selectedInstrument?.token, Number(lastClose));
+      try {
+        const pack = await fetchCandleData(selectedInstrument, chartInterval);
+        if (cancelled) return;
+        const rawCandles = pack?.candles;
+        const nativeInr = pack?.nativeInr === true;
+        if (rawCandles && Array.isArray(rawCandles) && rawCandles.length > 0) {
+          const seenTimes = new Set();
+          const candles = rawCandles
+            .filter((c) => {
+              const time = typeof c.time === 'number' ? c.time : Math.floor(new Date(c.time).getTime() / 1000);
+              if (isNaN(time) || seenTimes.has(time)) return false;
+              seenTimes.add(time);
+              return true;
+            })
+            .map((c) => ({
+              time: typeof c.time === 'number' ? c.time : Math.floor(new Date(c.time).getTime() / 1000),
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+              volume: c.volume || 0,
+            }))
+            .sort((a, b) => a.time - b.time);
+
+          if (candles.length > 0 && !cancelled) {
+            const pairU = String(selectedInstrument.pair || selectedInstrument.symbol || '').toUpperCase();
+            const displayCandles = isForexInstrument(selectedInstrument)
+              ? candles.map((c) => scaleForexChartCandle(c, usdRate, pairU))
+              : isUsdSpotInstrument(selectedInstrument) && !nativeInr
+                ? candles.map((c) => scaleUsdSpotChartCandle(c, selectedInstrument, usdRate))
+                : candles;
+            candlestickSeriesRef.current.setData(displayCandles);
+            lastCandleRef.current = displayCandles[displayCandles.length - 1];
+            const lastClose = displayCandles[displayCandles.length - 1]?.close;
+            if (Number.isFinite(Number(lastClose)) && Number(lastClose) > 0) {
+              onChartLtp?.(selectedInstrument?.token, Number(lastClose));
+            }
+            const volumeData = displayCandles.map((c) => ({
+              time: c.time,
+              value: c.volume || 0,
+              color: c.close >= c.open ? '#22c55e80' : '#ef444480',
+            }));
+            volumeSeriesRef.current.setData(volumeData);
+            chartRef.current?.timeScale().fitContent();
           }
-          
-          // Generate volume data
-          const volumeData = displayCandles.map(c => ({
-            time: c.time,
-            value: c.volume || 0,
-            color: c.close >= c.open ? '#22c55e80' : '#ef444480'
-          }));
-          volumeSeriesRef.current.setData(volumeData);
-          
-          chartRef.current?.timeScale().fitContent();
         }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
 
@@ -3322,7 +3589,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
     return () => {
       cancelled = true;
     };
-  }, [chartInstrumentKey, chartInterval, usdRate, onChartLtp]);
+  }, [chartInstrumentKey, chartInterval]);
 
   const intervals = [
     { label: '1m', value: 'ONE_MINUTE' },
@@ -3354,19 +3621,19 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
                 {selectedInstrument.symbol}
               </span>
               <span className="text-gray-400 text-sm">{selectedInstrument.exchange}</span>
-              {livePrice && (
+              {headerQuote && (
                 <>
-                  <span className={`font-mono font-bold ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  <span className={`font-mono font-bold ${headerQuote.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {isUsdSpotInstrument(selectedInstrument)
-                      ? livePrice.ltp != null && !isNaN(livePrice.ltp)
-                        ? `${spotQuoteDisplayPrice(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      ? headerQuote.ltp != null && !isNaN(headerQuote.ltp)
+                        ? `${spotQuoteDisplayPrice(selectedInstrument, headerQuote.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         : '--'
-                      : livePrice.ltp != null && !isNaN(livePrice.ltp)
-                        ? livePrice.ltp.toLocaleString(undefined, {})
+                      : headerQuote.ltp != null && !isNaN(headerQuote.ltp)
+                        ? headerQuote.ltp.toLocaleString(undefined, {})
                         : '--'}
                   </span>
-                  <span className={`text-sm ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {livePrice.change >= 0 ? '+' : ''}{(parseFloat(livePrice.changePercent) || 0).toFixed(2)}%
+                  <span className={`text-sm ${headerQuote.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {headerQuote.change >= 0 ? '+' : ''}{(parseFloat(headerQuote.changePercent) || 0).toFixed(2)}%
                   </span>
                 </>
               )}
@@ -3374,67 +3641,64 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           )}
         </div>
         
-        {selectedInstrument && livePrice && (
+        {selectedInstrument && headerQuote && (
           <div className="flex items-center gap-4 text-xs text-gray-400">
             {isUsdSpotInstrument(selectedInstrument) ? (
               <>
                 <span>
                   O:{' '}
-                  {livePrice.open != null && !isNaN(livePrice.open)
-                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.open || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  {headerQuote.open != null && !isNaN(headerQuote.open)
+                    ? spotQuoteDisplayPrice(selectedInstrument, headerQuote.open || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
                 </span>
                 <span>
                   H:{' '}
-                  {livePrice.high != null && !isNaN(livePrice.high)
-                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.high || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  {headerQuote.high != null && !isNaN(headerQuote.high)
+                    ? spotQuoteDisplayPrice(selectedInstrument, headerQuote.high || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
                 </span>
                 <span>
                   L:{' '}
-                  {livePrice.low != null && !isNaN(livePrice.low)
-                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.low || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  {headerQuote.low != null && !isNaN(headerQuote.low)
+                    ? spotQuoteDisplayPrice(selectedInstrument, headerQuote.low || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
                 </span>
                 <span>
                   C:{' '}
-                  {livePrice.close != null && !isNaN(livePrice.close)
-                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.close || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  {headerQuote.close != null && !isNaN(headerQuote.close)
+                    ? spotQuoteDisplayPrice(selectedInstrument, headerQuote.close || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : '--'}
                 </span>
               </>
             ) : (
               <>
-                <span>O: {livePrice.open != null && !isNaN(livePrice.open) ? livePrice.open.toLocaleString() : '--'}</span>
-                <span>H: {livePrice.high != null && !isNaN(livePrice.high) ? livePrice.high.toLocaleString() : '--'}</span>
-                <span>L: {livePrice.low != null && !isNaN(livePrice.low) ? livePrice.low.toLocaleString() : '--'}</span>
-                <span>C: {livePrice.close != null && !isNaN(livePrice.close) ? livePrice.close.toLocaleString() : '--'}</span>
+                <span>O: {headerQuote.open != null && !isNaN(headerQuote.open) ? headerQuote.open.toLocaleString() : '--'}</span>
+                <span>H: {headerQuote.high != null && !isNaN(headerQuote.high) ? headerQuote.high.toLocaleString() : '--'}</span>
+                <span>L: {headerQuote.low != null && !isNaN(headerQuote.low) ? headerQuote.low.toLocaleString() : '--'}</span>
+                <span>C: {headerQuote.close != null && !isNaN(headerQuote.close) ? headerQuote.close.toLocaleString() : '--'}</span>
               </>
             )}
           </div>
         )}
       </div>
 
-      {/* Chart Area */}
+      {/* Chart Area — container always mounted so lightweight-charts can initialize */}
       <div className="flex-1 relative min-h-[300px]">
         {!selectedInstrument ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
             <BarChart2 size={48} className="mb-4 opacity-30" />
             <p>Select an instrument to view chart</p>
           </div>
-        ) : loading ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-            <RefreshCw size={48} className="mb-4 opacity-30 animate-spin" />
-            <p>Loading chart data...</p>
-          </div>
-        ) : !livePrice && !fallbackPrice ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-            <BarChart2 size={48} className="mb-4 opacity-30" />
-            <p>No live data available</p>
-            <p className="text-sm mt-2">Market may be closed or data not available</p>
-          </div>
         ) : (
-          <div ref={chartContainerRef} className="absolute inset-0" />
+          <>
+            <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
+            {loading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-dark-800/50 pointer-events-none z-10">
+                <RefreshCw size={40} className="mb-3 opacity-40 animate-spin" />
+                <p className="text-sm">Loading chart data...</p>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -4312,8 +4576,8 @@ const TradingPanel = ({
   totalPnL = 0,
   positionsRefreshKey = 0,
 }) => {
-  const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
-  const [cryptoQuantity, setCryptoQuantity] = useState('1'); // Default for crypto/forex
+  const [lots, setLots] = useState('0');
+  const [cryptoQuantity, setCryptoQuantity] = useState('0');
   const [price, setPrice] = useState('');
   const [limitPrice, setLimitPrice] = useState('');
   const [stopLoss, setStopLoss] = useState('');
@@ -4434,6 +4698,11 @@ const TradingPanel = ({
       ? spotQuoteDisplayPrice(instrument, Number(displayBidAsk.askUsd), usdRate)
       : liveAsk;
 
+  const ltpBracketBounds = useMemo(
+    () => resolveActiveLtpBracket(instrument, livePrice),
+    [instrument?.ltpBracket, instrument?.token, livePrice]
+  );
+
   const priceSymbol = '';
 
   // Market status (Indian book); USD spot is 24/7
@@ -4475,6 +4744,11 @@ const TradingPanel = ({
   }, [instrument?.token, instrument?.pair, instrument?.symbol, isUsdSpot, isCryptoOnly, livePrice]);
 
   useEffect(() => {
+    setLots('0');
+    setCryptoQuantity('0');
+  }, [instrument?.token, instrument?.pair, instrument?.symbol]);
+
+  useEffect(() => {
     if (!isUsdSpot || !livePrice || !instrument) return;
     setPrice(
       isCryptoOnly
@@ -4508,18 +4782,14 @@ const TradingPanel = ({
   // Determine which wallet to use based on instrument type
   const getActiveWallet = () => {
     if (isCryptoOnly) {
-      return {
-        balance: walletData?.cryptoWallet?.balance || 0,
-        usedMargin: 0,
-        available: walletData?.cryptoWallet?.balance || 0
-      };
+      const bal = walletData?.cryptoWallet?.balance || 0;
+      const um = walletData?.cryptoWallet?.usedMargin || 0;
+      return { balance: bal, usedMargin: um, available: Math.max(0, bal - um) };
     }
     if (isForex) {
-      return {
-        balance: walletData?.forexWallet?.balance || 0,
-        usedMargin: 0,
-        available: walletData?.forexWallet?.balance || 0
-      };
+      const bal = walletData?.forexWallet?.balance || 0;
+      const um = walletData?.forexWallet?.usedMargin || 0;
+      return { balance: bal, usedMargin: um, available: Math.max(0, bal - um) };
     }
     if (isMCX) {
       const mcxBalance = walletData?.mcxWallet?.balance || 0;
@@ -4530,11 +4800,13 @@ const TradingPanel = ({
         available: mcxBalance - mcxUsedMargin
       };
     }
-    // Default: regular trading wallet (NSE/BSE)
+    // NSE & BSE wallet only
+    const nb = walletData?.nseBseWallet?.balance ?? walletData?.tradingBalance ?? 0;
+    const um = walletData?.nseBseWallet?.usedMargin ?? walletData?.usedMargin ?? walletData?.wallet?.usedMargin ?? 0;
     return {
-      balance: walletData?.tradingBalance || 0,
-      usedMargin: walletData?.usedMargin || walletData?.wallet?.usedMargin || 0,
-      available: walletData?.marginAvailable || ((walletData?.tradingBalance || 0) - (walletData?.usedMargin || 0))
+      balance: nb,
+      usedMargin: um,
+      available: walletData?.marginAvailable ?? walletData?.nseBseWallet?.availableBalance ?? (nb - um),
     };
   };
   const activeWallet = getActiveWallet();
@@ -4583,6 +4855,10 @@ const TradingPanel = ({
     : Math.max(0, Number(activeWallet.balance) - Number(activeWallet.usedMargin));
 
   const liveAvailableMargin = baseAvailableMargin + liveUnrealizedPnL;
+  const previewBrokerage = Number(marginPreview?.brokerage) || 0;
+  const displayAvailableMargin = Math.max(0, liveAvailableMargin - previewBrokerage);
+  const marginRequiredWithBrokerage =
+    Number(marginPreview?.marginRequired || 0) + previewBrokerage;
 
   // Check if segment allows quantity mode
   const segment = instrument?.displaySegment || instrument?.segment || '';
@@ -4600,11 +4876,17 @@ const TradingPanel = ({
     setError(`Lot size missing for ${instrument?.symbol || 'instrument'}`);
     return null;
   }
-  // For USD spot: use direct quantity (no lots conversion)
-  // For all other segments: use direct quantity (quantity-based trading)
-  const totalQuantity = isUsdSpot
-    ? parseFloat(cryptoQuantity || 0)
-    : parseInt(lots || 0);  // All segments: direct quantity
+  // For USD spot: direct quantity.
+  // For Options (incl. MCXOPT): input is LOTS; quantity = lots * lotSize.
+  // For Futures/EQ/MCXFUT: input is quantity.
+  const inputLotsOrQty = Number(isUsdSpot ? cryptoQuantity : lots) || 0;
+  const inputLots = !isUsdSpot && isOptions ? inputLotsOrQty : 0;
+  const inputQty = isUsdSpot
+    ? Number(cryptoQuantity || 0)
+    : isOptions
+      ? inputLots * Number(lotSize || 1)
+      : Number(lots || 0);
+  const totalQuantity = inputQty;
 
   const buildMarginPreviewBody = (sideLower) => {
     const cryptoStep =
@@ -4624,14 +4906,14 @@ const TradingPanel = ({
       productType,
       side: String(sideLower || orderType).toUpperCase(),
       quantity: totalQuantity,
-      lotSize: isUsdSpot ? cryptoStep : 1,
+      lotSize: isUsdSpot ? cryptoStep : (isOptions ? Number(lotSize || 1) : 1),
       price: isUsdSpot ? Number(livePrice) : (parseFloat(price) || Number(livePrice) || 0),
       leverage: 1,
       isCrypto: isCryptoOnly,
       isForex: isForex
     };
     if (!isUsdSpot) {
-      body.lots = totalQuantity; // lots = quantity for qty-based trading
+      body.lots = isOptions ? inputLots : totalQuantity; // options use lots; futures use qty
     } else {
       body.lots = 1; // For crypto/forex, lots is not used
     }
@@ -4642,9 +4924,13 @@ const TradingPanel = ({
   useEffect(() => {
     const fetchMarginPreview = async () => {
       if (!instrument) return;
-      if (!isUsdSpot && !lots) return;
+      const qtyNum = isUsdSpot ? parseFloat(cryptoQuantity || 0) : parseInt(lots || 0, 10);
+      if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+        setMarginPreview(null);
+        return;
+      }
       if (isUsdSpot) {
-        if (!livePrice || !cryptoQuantity) return;
+        if (!livePrice) return;
       } else if (!price && !livePrice) {
         return;
       }
@@ -4707,6 +4993,11 @@ const TradingPanel = ({
       return;
     }
 
+    if (totalQuantity <= 0) {
+      setError('Enter quantity greater than 0');
+      return;
+    }
+
     let previewGate = marginPreview;
     if (
       (explicitSide === 'buy' || explicitSide === 'sell') &&
@@ -4730,12 +5021,22 @@ const TradingPanel = ({
     }
 
     if (previewGate && !previewGate.canPlace) {
-      // Simple: required margin - wallet balance
-      const shortfall = Number(previewGate.marginRequired || 0) - Number(previewGate.tradingBalance || 0);
-      if (shortfall > 0) {
-        setError(`Insufficient funds. Need ${shortfall.toLocaleString()} more`);
+      if (previewGate.lotsError) {
+        setError(previewGate.lotsError);
+        return;
+      }
+      const mShort = Number(previewGate.marginShortfall || 0);
+      const bShort = Number(previewGate.brokerageShortfall || 0);
+      if (mShort > 0 && bShort > 0) {
+        setError(
+          `Insufficient funds. Need ₹${mShort.toLocaleString('en-IN')} more margin and ₹${bShort.toLocaleString('en-IN')} more for brokerage.`
+        );
+      } else if (mShort > 0) {
+        setError(`Insufficient margin. Need ₹${mShort.toLocaleString('en-IN')} more available margin.`);
+      } else if (bShort > 0) {
+        setError(`Insufficient available margin for brokerage (₹${Number(previewGate.brokerage || 0).toLocaleString('en-IN')}). Need ₹${bShort.toLocaleString('en-IN')} more available margin.`);
       } else {
-        setError('Cannot place trade. Please check your balance.');
+        setError('Cannot place trade. Check quantity limits or refresh margin preview.');
       }
       return;
     }
@@ -4767,7 +5068,7 @@ const TradingPanel = ({
         orderType: orderMode,
         side: sideLower.toUpperCase(),
         quantity: isUsdSpot ? parseFloat(cryptoQuantity || 0) : totalQuantity,
-        lotSize: isUsdSpot ? (instrument?.lotSize > 0 ? Number(instrument.lotSize) : baseQtyPerCryptoLot) : 1,
+        lotSize: isUsdSpot ? (instrument?.lotSize > 0 ? Number(instrument.lotSize) : baseQtyPerCryptoLot) : (isOptions ? Number(lotSize || 1) : 1),
         price: isUsdSpot ? livePrice : parseFloat(price),
         bidPrice: liveBid,
         askPrice: liveAsk,
@@ -4787,6 +5088,10 @@ const TradingPanel = ({
             : parseFloat(target)
           : null,
       };
+      // For options, send lots separately (backend settings are lot-based)
+      if (!isUsdSpot) {
+        orderData.lots = isOptions ? inputLots : totalQuantity;
+      }
       if (!isUsdSpot) {
         orderData.lots = totalQuantity; // lots = quantity for qty-based trading
       }
@@ -4812,6 +5117,20 @@ const TradingPanel = ({
         setError(gateErr);
         setLoading(false);
         return;
+      }
+
+      if (ltpBracketBounds) {
+        const checkPx =
+          orderMode === 'LIMIT' || orderMode === 'SL' || orderMode === 'SL-M'
+            ? parseFloat(limitPrice)
+            : isUsdSpot
+              ? livePrice
+              : parseFloat(price) || livePrice;
+        if (!isPriceInLtpBracket(checkPx, ltpBracketBounds)) {
+          setError(`Price must be within ${formatLtpBracketRange(ltpBracketBounds)} (LTP bracket).`);
+          setLoading(false);
+          return;
+        }
       }
 
       const { data } = await axios.post('/api/trading/order', orderData, {
@@ -4997,22 +5316,45 @@ const TradingPanel = ({
           <div className="mb-3">
             <div className="text-xs text-gray-500 uppercase mb-2">Segment: {instrument?.displaySegment || instrument?.segment}</div>
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="bg-dark-800 p-2 rounded">
-                <span className="text-gray-400">Max Lots:</span>
-                <span className="float-right text-white">{marginPreview?.maxLots || '--'}</span>
-              </div>
-              <div className="bg-dark-800 p-2 rounded">
-                <span className="text-gray-400">Min Lots:</span>
-                <span className="float-right text-white">{marginPreview?.minLots || 1}</span>
-              </div>
-              <div className="bg-dark-800 p-2 rounded">
-                <span className="text-gray-400">Per Order:</span>
-                <span className="float-right text-white">{marginPreview?.perOrderLots || '--'}</span>
-              </div>
-              <div className="bg-dark-800 p-2 rounded">
-                <span className="text-gray-400">Lot Size:</span>
-                <span className="float-right text-white">{lotSize}</span>
-              </div>
+              {isOptions ? (
+                <>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Max Lots:</span>
+                    <span className="float-right text-white">{marginPreview?.maxLots || '--'}</span>
+                  </div>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Min Lots:</span>
+                    <span className="float-right text-white">{marginPreview?.minLots || 1}</span>
+                  </div>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Per Order:</span>
+                    <span className="float-right text-white">{marginPreview?.perOrderLots || '--'}</span>
+                  </div>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Lot Size:</span>
+                    <span className="float-right text-white">{lotSize}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Max Qty:</span>
+                    <span className="float-right text-white">{marginPreview?.maxLots || '--'}</span>
+                  </div>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Min Qty:</span>
+                    <span className="float-right text-white">{marginPreview?.minLots || 1}</span>
+                  </div>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Per Order Qty:</span>
+                    <span className="float-right text-white">{marginPreview?.breakupQuantity || marginPreview?.perOrderLots || '--'}</span>
+                  </div>
+                  <div className="bg-dark-800 p-2 rounded">
+                    <span className="text-gray-400">Qty Step:</span>
+                    <span className="float-right text-white">{marginPreview?.quantityStep || 1}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -5034,8 +5376,10 @@ const TradingPanel = ({
           {/* Trading Limits */}
           {(marginPreview?.maxLots || marginPreview?.minLots) && (
             <div className="bg-blue-900/20 border border-blue-500/30 rounded p-2 text-xs">
-              <span className="text-blue-400">ℹ️ Lot Range:</span>
-              <span className="text-white ml-2">{marginPreview?.minLots || 1} - {marginPreview?.maxLots || 'Unlimited'} lots per order</span>
+              <span className="text-blue-400">ℹ️ {isOptions ? 'Lot Range' : 'Qty Range'}:</span>
+              <span className="text-white ml-2">
+                {marginPreview?.minLots || 1} - {marginPreview?.maxLots || 'Unlimited'} {isOptions ? 'lots' : 'qty'} per order
+              </span>
             </div>
           )}
           {/* Breakup Quantity and Max Bid Limits */}
@@ -5127,6 +5471,16 @@ const TradingPanel = ({
           </div>
         )}
 
+        {ltpBracketBounds ? (
+          <div className="bg-amber-900/25 border border-amber-600/50 text-amber-100 px-3 py-2 rounded text-sm">
+            <span className="font-medium">LTP bracket</span> (you traded inside this range): place orders between{' '}
+            <span className="font-mono text-white">{formatLtpBracketRange(ltpBracketBounds)}</span>
+            <span className="text-amber-200/80 text-xs block mt-1">
+              LTP {Number(livePrice).toLocaleString()} · −{ltpBracketBounds.percentDown}% / +{ltpBracketBounds.percentUp}%
+            </span>
+          </div>
+        ) : null}
+
         {/* Order Type */}
         <div>
           <label className="block text-xs text-gray-400 mb-2">Order Type</label>
@@ -5175,12 +5529,23 @@ const TradingPanel = ({
             </div>
           </div>
         ) : (
-          /* Indian Trading: Quantity-based */
+          /* Indian: FUT = qty input; OPT = lots input (× lot size → qty) */
           <div>
-            <label className="block text-xs text-gray-400 mb-2">Quantity</label>
+            <label className="block text-xs text-gray-400 mb-2">
+              {isOptions ? 'Lots' : 'Quantity'}
+            </label>
+            {isOptions && lotSize > 1 ? (
+              <p className="text-xs text-gray-500 mb-2">
+                1 lot = {lotSize} qty · total qty = lots × {lotSize}
+              </p>
+            ) : isFutures && lotSize > 1 ? (
+              <p className="text-xs text-gray-500 mb-2">
+                Contract lot size: {lotSize} (enter qty in units, e.g. 15, 30, 45…)
+              </p>
+            ) : null}
             <div className="flex items-center gap-2">
               <button 
-                onClick={() => setLots(Math.max(1, parseInt(lots || 1) - 1).toString())}
+                onClick={() => setLots(Math.max(0, parseInt(lots || 0, 10) - (isOptions ? 1 : 1)).toString())}
                 className="w-10 h-10 bg-dark-600 hover:bg-dark-500 rounded text-xl font-bold"
               >-</button>
               <input
@@ -5188,16 +5553,16 @@ const TradingPanel = ({
                 value={lots}
                 onChange={(e) => setLots(e.target.value)}
                 className="w-16 bg-dark-700 border border-dark-600 rounded px-2 py-2 text-center text-lg font-bold focus:outline-none focus:border-green-500"
-                min="1"
+                min="0"
               />
               <button 
-                onClick={() => setLots((parseInt(lots || 1) + 1).toString())}
+                onClick={() => setLots((parseInt(lots || 0, 10) + 1).toString())}
                 className="w-10 h-10 bg-dark-600 hover:bg-dark-500 rounded text-xl font-bold"
               >+</button>
             </div>
             {/* Quick quantity buttons */}
             <div className="flex gap-1 mt-2">
-              {[1, 5, 10, 25, 50, 100].map(q => (
+              {[0, 1, 5, 10, 25, 50, 100].map(q => (
                 <button
                   key={q}
                   onClick={() => setLots(q.toString())}
@@ -5300,8 +5665,8 @@ const TradingPanel = ({
             <>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Available Margin</span>
-                <span className={`font-medium ${liveAvailableMargin < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                  {liveAvailableMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className={`font-medium ${displayAvailableMargin < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                  {displayAvailableMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
@@ -5314,21 +5679,24 @@ const TradingPanel = ({
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Required Margin</span>
-                <span className={Number(marginPreview?.marginRequired || 0) > liveAvailableMargin ? 'text-red-400' : 'text-green-400'}>
-                  {marginPreview?.marginRequired?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '--'}
+                <span className="text-gray-400">Required (margin + brokerage)</span>
+                <span className={marginRequiredWithBrokerage > liveAvailableMargin ? 'text-red-400' : 'text-green-400'}>
+                  {marginRequiredWithBrokerage.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </>
           ) : (
-            /* Indian/MCX Trading - Margin based system */
+            /* Indian/MCX/NSE/BSE — same as crypto: balance unchanged, margin in usedMargin */
             <>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">{isMCX ? 'Available Margin' : 'Available Margin'}</span>
-                <span className={`font-medium ${liveAvailableMargin < 0 ? 'text-red-400' : isMCX ? 'text-yellow-400' : 'text-green-400'}`}>
-                  {liveAvailableMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-gray-400">Available Margin</span>
+                <span className={`font-medium ${displayAvailableMargin < 0 ? 'text-red-400' : isMCX ? 'text-yellow-400' : 'text-green-400'}`}>
+                  {displayAvailableMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
+              <p className="text-xs text-gray-500 -mt-1">
+                After est. brokerage · Free wallet margin: {liveAvailableMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </p>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Used Margin</span>
                 <span className="text-yellow-400">
@@ -5336,9 +5704,9 @@ const TradingPanel = ({
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Required Margin</span>
-                <span className={Number(marginPreview?.marginRequired || 0) > liveAvailableMargin ? 'text-red-400' : 'text-green-400'}>
-                  {marginPreview?.marginRequired?.toLocaleString() || '--'}
+                <span className="text-gray-400">Required (margin + brokerage)</span>
+                <span className={marginRequiredWithBrokerage > liveAvailableMargin ? 'text-red-400' : 'text-green-400'}>
+                  {marginRequiredWithBrokerage.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </>
@@ -5353,7 +5721,7 @@ const TradingPanel = ({
             setOrderType('sell');
             handlePlaceOrder('sell');
           }}
-          disabled={loading}
+          disabled={loading || totalQuantity <= 0}
           className="flex-1 py-3 bg-red-600 hover:bg-red-700 disabled:bg-red-800 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           S
@@ -5364,7 +5732,7 @@ const TradingPanel = ({
             setOrderType('buy');
             handlePlaceOrder('buy');
           }}
-          disabled={loading || (isCryptoOnly && !isCryptoTradingOpen)}
+          disabled={loading || totalQuantity <= 0 || (isCryptoOnly && !isCryptoTradingOpen)}
           className={`flex-1 py-3 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed ${
             (loading || (isCryptoOnly && !isCryptoTradingOpen))
               ? 'bg-gray-600'
@@ -5595,20 +5963,11 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
 
   // Subscribe Zerodha tokens for live ticks (ALL segments: NSE, BSE, MCX, etc.)
   useEffect(() => {
-    console.log('[tick-subscribe] useEffect triggered', { 
-      hasUser: !!user?.token, 
-      watchlistLoaded,
-      watchlistBySegmentKeys: Object.keys(watchlistBySegment),
-      selectedInstrumentToken: selectedInstrument?.token
-    });
     if (!user?.token) return;
     if (!watchlistLoaded) return;
-    
-    console.log('[tick-subscribe] Setting up timeout, clearing previous:', !!mcxTickSubscribeTimerRef.current);
     if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
     mcxTickSubscribeTimerRef.current = setTimeout(async () => {
       mcxTickSubscribeTimerRef.current = null;
-      console.log('[tick-subscribe] setTimeout executing, preparing to call API');
       const ids = new Set();
       const symbols = new Set();
       const pushTok = (inst) => {
@@ -5628,7 +5987,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
           return;
         }
       };
-      ['FAVORITES', 'NSEFUT', 'NSEOPT', 'BSEFUT', 'BSEOPT', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
+      WATCHLIST_TICK_SUBSCRIBE_SEGMENTS.forEach((seg) => {
         (watchlistBySegment[seg] || []).forEach(pushTok);
       });
       if (selectedInstrument?.token != null) {
@@ -5637,18 +5996,12 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
       }
       const tokens = [...ids];
       const symbolList = [...symbols];
-      console.log('[tick-subscribe] Calling API with tokens:', tokens.length, 'symbols:', symbolList.length);
-      if (tokens.length === 0 && symbolList.length === 0) {
-        console.log('[tick-subscribe] No tokens or symbols to subscribe');
-        return;
-      }
+      if (tokens.length === 0 && symbolList.length === 0) return;
       try {
         await axios.post('/api/zerodha/tick-subscribe', { tokens, symbols: symbolList }, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
-        console.log('[tick-subscribe] API call successful');
-      } catch (error) {
-        console.log('[tick-subscribe] API call failed (may queue tokens):', error.message);
+      } catch {
         /* tick-subscribe may fail until Kite is connected; server queues tokens */
       }
     }, 500);
@@ -6013,9 +6366,9 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
   }, []);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {/* Segment Tabs */}
-      <div className="flex gap-1 p-2 bg-dark-800 border-b border-dark-600 overflow-x-auto">
+      <div className="flex gap-1 p-2 bg-dark-800 border-b border-dark-600 overflow-x-auto shrink-0">
         {segmentTabs.map(tab => (
           <button
             key={tab.id}
@@ -6063,8 +6416,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
         activeSegment === 'FOREXOPT'
           ? 1
           : 2) ? (
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-3 py-2 text-xs text-gray-400 bg-dark-700 sticky top-0 flex justify-between">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain">
+          <div className="px-3 py-2 text-xs text-gray-400 bg-dark-700 sticky top-0 flex justify-between z-10">
             <span>Search Results ({searchResults.length})</span>
             <button onClick={() => { setSearchTerm(''); setShowSearchResults(false); }} className="text-green-400">
               Back
@@ -6151,8 +6504,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
         </div>
       ) : (
         /* Watchlist for current segment */
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-3 py-2 text-xs text-gray-400 bg-dark-700 sticky top-0">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain">
+          <div className="px-3 py-2 text-xs text-gray-400 bg-dark-700 sticky top-0 z-10">
             {activeSegment === 'CRYPTOFUT'
                 ? 'Crypto Futures'
                 : activeSegment === 'CRYPTOOPT'
@@ -7402,17 +7755,34 @@ const MobileProfilePanel = ({ user, walletData, onLogout }) => {
       {/* Wallet Info */}
       <div className="p-4 border-b border-dark-600">
         <div className="bg-dark-700 rounded-xl p-4">
-          <p className="text-gray-400 text-sm mb-1">Trading Balance</p>
+          <p className="text-gray-400 text-sm mb-1">Cash Balance (NSE/BSE)</p>
           <p className="text-2xl font-bold text-green-400">
-            {(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}
+            ₹{nseBseBalanceFromWalletData(walletData).toLocaleString('en-IN')}
           </p>
           <div className="flex justify-between mt-2 text-sm">
+            <span className="text-gray-400">Real Balance (MTM)</span>
+            <span className="text-cyan-400 font-medium">
+              ₹{nseBseRealBalanceFromWalletData(walletData).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          {walletData?.nseBseWallet?.ledgerReferenceBalance > 0 && (
+            <div className="flex justify-between text-xs mt-1 text-gray-500">
+              <span>Auto-square floor ({walletData.nseBseWallet.ledgerClosePercent ?? 90}% loss)</span>
+              <span>₹{(walletData.nseBseWallet.ledgerMinEquityFloor ?? 0).toLocaleString('en-IN')}</span>
+            </div>
+          )}
+          {walletData?.nseBseWallet?.ledgerAutosquareActive && (
+            <p className="text-xs text-orange-400 mt-2">Ledger auto-square active — positions were closed at loss limit.</p>
+          )}
+          <div className="flex justify-between mt-2 text-sm">
             <span className="text-gray-400">Available Margin</span>
-            <span className="text-green-400">{(walletData?.availableMargin || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</span>
+            <span className="text-green-400">
+              {nseBseAvailableFromWalletData(walletData).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Used Margin</span>
-            <span className="text-yellow-400">{walletData?.usedMargin?.toLocaleString() || '0.00'}</span>
+            <span className="text-yellow-400">{nseBseUsedMarginFromWalletData(walletData).toLocaleString()}</span>
           </div>
         </div>
       </div>
@@ -8049,6 +8419,11 @@ const SettingsModal = ({ onClose, user }) => {
                         <span className="text-gray-400">Ledger Balance Close %</span>
                         <span className="text-yellow-400">{marginData.settings?.ledgerBalanceClosePercent || 90}%</span>
                       </div>
+                      <p className="text-xs text-gray-500 pt-1">
+                        When real balance (cash + open P&amp;L) falls to{' '}
+                        {100 - (marginData.settings?.ledgerBalanceClosePercent || 90)}% of your reference balance, all NSE/BSE positions are auto-squared to zero.
+                        After market close, P&amp;L uses bid/ask; carry-forward uses the updated balance.
+                      </p>
                     </div>
                   </div>
 
@@ -8669,7 +9044,7 @@ const BuySellModal = ({
   chartAnchorLtp = null,
   segmentPermissionsGate = {},
 }) => {
-  const [quantity, setQuantity] = useState('0.01');
+  const [quantity, setQuantity] = useState('0');
   const [limitPrice, setLimitPrice] = useState('');
   const [productType, setProductType] = useState('MIS');
   const [orderPriceType, setOrderPriceType] = useState('MARKET');
@@ -8778,13 +9153,26 @@ const BuySellModal = ({
   }, [instrument?.token, instrument?.symbol, instrument?.exchange]);
 
   // Use fresh instrument data if available, otherwise use the prop
-  const effectiveInstrument = freshInstrument || instrument;
+  const effectiveInstrument = useMemo(() => {
+    const base = freshInstrument || instrument;
+    if (!base) return base;
+    if (instrument?.ltpBracket && !base.ltpBracket) {
+      return { ...base, ltpBracket: instrument.ltpBracket };
+    }
+    return base;
+  }, [freshInstrument, instrument]);
 
   const cryptoQuoteModal = isUsdSpot ? getCryptoMarketQuote(marketData, effectiveInstrument) : null;
   const liveData = isUsdSpot ? (cryptoQuoteModal || {}) : (marketDataRowForInstrumentToken(marketData, effectiveInstrument?.token, effectiveInstrument) || {});
   const ltp = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
     : (liveData.ltp || effectiveInstrument?.ltp || 0);
+
+  const ltpBracketBoundsModal = useMemo(
+    () => resolveActiveLtpBracket(effectiveInstrument, ltp),
+    [effectiveInstrument?.ltpBracket, effectiveInstrument?.token, ltp]
+  );
+
   const indianBookModal = !isUsdSpot
     ? alignIndianBookBidAskWithLtp(liveData, effectiveInstrument, { chartAnchorLtp })
     : null;
@@ -8823,18 +9211,14 @@ const BuySellModal = ({
   // Determine which wallet to use based on instrument type
   const getWalletData = () => {
     if (isCryptoOnly) {
-      return {
-        balance: walletData?.cryptoWallet?.balance || 0,
-        usedMargin: 0,
-        available: walletData?.cryptoWallet?.balance || 0
-      };
+      const bal = walletData?.cryptoWallet?.balance || 0;
+      const um = walletData?.cryptoWallet?.usedMargin || 0;
+      return { balance: bal, usedMargin: um, available: Math.max(0, bal - um) };
     }
     if (isForex) {
-      return {
-        balance: walletData?.forexWallet?.balance || 0,
-        usedMargin: 0,
-        available: walletData?.forexWallet?.balance || 0
-      };
+      const bal = walletData?.forexWallet?.balance || 0;
+      const um = walletData?.forexWallet?.usedMargin || 0;
+      return { balance: bal, usedMargin: um, available: Math.max(0, bal - um) };
     } else if (isMCX) {
       return {
         balance: walletData?.mcxWallet?.balance || 0,
@@ -8842,10 +9226,12 @@ const BuySellModal = ({
         available: (walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)
       };
     } else {
+      const nb = walletData?.nseBseWallet?.balance ?? walletData?.tradingBalance ?? walletData?.wallet?.tradingBalance ?? 0;
+      const um = walletData?.nseBseWallet?.usedMargin ?? walletData?.usedMargin ?? walletData?.wallet?.usedMargin ?? 0;
       return {
-        balance: walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0,
-        usedMargin: walletData?.usedMargin || walletData?.wallet?.usedMargin || 0,
-        available: walletData?.marginAvailable || 0
+        balance: nb,
+        usedMargin: um,
+        available: walletData?.marginAvailable ?? walletData?.nseBseWallet?.availableBalance ?? (nb - um),
       };
     }
   };
@@ -8857,8 +9243,8 @@ const BuySellModal = ({
   // All segments use quantity-based trading now
   // quantity is direct - no lot multiplication needed
   const totalQuantity = isUsdSpot
-    ? parseFloat(quantity || 0.001)
-    : parseFloat(quantity || 1);
+    ? parseFloat(quantity || 0)
+    : parseFloat(quantity || 0);
   const orderValue = ltp * totalQuantity;
   const marginRequired = orderValue;
 
@@ -8871,11 +9257,22 @@ const BuySellModal = ({
   const estMarginInr = Number.isFinite(Number(marginPreview?.marginRequired))
     ? Number(marginPreview.marginRequired)
     : 0;
+  const displayAvailableMargin = Math.max(0, Number(activeWallet.available || 0) - estBrokerageInr);
+  const marginRequiredWithBrokerage = estMarginInr + estBrokerageInr;
+
+  useEffect(() => {
+    setQuantity('0');
+  }, [instrument?.token, instrument?.pair, instrument?.symbol]);
 
   // Fetch margin preview when inputs change
   useEffect(() => {
     const fetchMarginPreview = async () => {
-      if (!instrument || !quantity || !ltp) return;
+      if (!instrument || !ltp) return;
+      const qtyNum = parseFloat(quantity || 0);
+      if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+        setMarginPreview(null);
+        return;
+      }
       
       try {
         const { data } = await axios.post('/api/trading/margin-preview', {
@@ -8984,6 +9381,11 @@ const BuySellModal = ({
       return;
     }
 
+    if (totalQuantity <= 0) {
+      setError('Enter quantity greater than 0');
+      return;
+    }
+
     setLoading(true);
     setError('');
     setSuccess('');
@@ -9048,6 +9450,18 @@ const BuySellModal = ({
         setError(gateErrModal);
         setLoading(false);
         return;
+      }
+
+      if (ltpBracketBoundsModal) {
+        const checkPx =
+          orderPriceType === 'LIMIT'
+            ? parseFloat(limitPrice)
+            : ltp;
+        if (!isPriceInLtpBracket(checkPx, ltpBracketBoundsModal)) {
+          setError(`Price must be within ${formatLtpBracketRange(ltpBracketBoundsModal)} (LTP bracket).`);
+          setLoading(false);
+          return;
+        }
       }
 
       const { data } = await axios.post('/api/trading/order', orderData, {
@@ -9237,7 +9651,7 @@ const BuySellModal = ({
             <div className="px-3 pb-3 space-y-2">
               <div className="flex gap-2 items-stretch">
                 <div className="flex-1 bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium text-center">
-                  Available: {activeWallet.available.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  Available: {displayAvailableMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                 </div>
               </div>
               <div className="flex gap-2 items-stretch">
@@ -9246,7 +9660,7 @@ const BuySellModal = ({
                 </div>
               </div>
               {(() => {
-                const requiredMargin = Number(marginPreview?.marginRequired || 0);
+                const requiredMargin = marginRequiredWithBrokerage;
                 const available = Number(activeWallet.available || 0);
                 const isSufficient = requiredMargin <= available;
                 return (
@@ -9436,6 +9850,16 @@ const BuySellModal = ({
           </div>
         </div>
 
+        {ltpBracketBoundsModal ? (
+          <div className="mx-4 mb-3 bg-amber-900/25 border border-amber-600/50 text-amber-100 px-3 py-2 rounded text-sm">
+            <span className="font-medium">LTP bracket</span>: trade between{' '}
+            <span className="font-mono text-white">{formatLtpBracketRange(ltpBracketBoundsModal)}</span>
+            <span className="text-amber-200/80 text-xs block mt-1">
+              LTP {Number(ltp).toLocaleString()} · −{ltpBracketBoundsModal.percentDown}% / +{ltpBracketBoundsModal.percentUp}%
+            </span>
+          </div>
+        ) : null}
+
         {/* Order Type Selection */}
         <div className="px-4 pb-3">
           <label className="block text-sm text-gray-400 mb-2">Order Type</label>
@@ -9472,7 +9896,7 @@ const BuySellModal = ({
             </div>
             <div className="flex gap-2">
               <button 
-                onClick={() => setQuantity(Math.max(1, parseInt(quantity) - 1).toString())}
+                onClick={() => setQuantity(Math.max(0, parseInt(quantity || 0, 10) - 1).toString())}
                 className="px-4 py-3 bg-dark-700 rounded-lg hover:bg-dark-600 font-bold"
               >
                 −
@@ -9482,10 +9906,10 @@ const BuySellModal = ({
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 text-center text-lg font-bold focus:outline-none focus:border-green-500"
-                min="1"
+                min="0"
               />
               <button 
-                onClick={() => setQuantity((parseInt(quantity) + 1).toString())}
+                onClick={() => setQuantity((parseInt(quantity || 0, 10) + 1).toString())}
                 className="px-4 py-3 bg-dark-700 rounded-lg hover:bg-dark-600 font-bold"
               >
                 +
@@ -9531,26 +9955,28 @@ const BuySellModal = ({
           <div className="bg-dark-700 rounded-lg p-3 space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
-              <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>{(activeWallet.balance - activeWallet.usedMargin).toLocaleString()}</span>
+              <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>
+                {activeWallet.balance.toLocaleString()}
+              </span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Used Margin</span>
               <span className="text-yellow-400">{activeWallet.usedMargin.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Available</span>
-              <span className="text-green-400 font-medium">{activeWallet.available.toLocaleString()}</span>
+              <span className="text-gray-400">Available Margin</span>
+              <span className="text-green-400 font-medium">{displayAvailableMargin.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">Required Margin</span>
-              <span className={`font-medium ${Number(marginPreview?.marginRequired || 0) > Number(activeWallet.balance || 0) ? 'text-red-400' : 'text-green-400'}`}>
+              <span className={`font-medium ${marginRequiredWithBrokerage > Number(activeWallet.available || 0) ? 'text-red-400' : 'text-green-400'}`}>
                 {marginPreview?.marginRequired?.toLocaleString() || '--'}
               </span>
             </div>
-            {Number(marginPreview?.marginRequired || 0) > Number(activeWallet.balance || 0) && (
+            {marginRequiredWithBrokerage > Number(activeWallet.available || 0) && (
               <div className="text-xs text-red-400 flex items-center gap-1">
                 <span>⚠</span>
-                <span>Insufficient funds. Need {(Number(marginPreview?.marginRequired || 0) - Number(activeWallet.balance || 0)).toLocaleString()} more</span>
+                <span>Insufficient free margin. Need {(marginRequiredWithBrokerage - Number(activeWallet.available || 0)).toLocaleString()} more</span>
               </div>
             )}
             <div className="flex justify-between text-sm border-t border-dark-600 pt-2">

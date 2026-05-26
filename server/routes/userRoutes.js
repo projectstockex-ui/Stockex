@@ -155,6 +155,7 @@ import {
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import SystemSettings from '../models/SystemSettings.js';
+import { buildDemoExpiresAt, getDemoAccountSettings } from '../utils/demoAccountUtils.js';
 import BankSettings from '../models/BankSettings.js';
 import BankAccount from '../models/BankAccount.js';
 import FundRequest from '../models/FundRequest.js';
@@ -173,6 +174,11 @@ import WalletLedger from '../models/WalletLedger.js';
 import Trade from '../models/Trade.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
+import {
+  migrateNseBseWalletIfNeeded,
+  readNseBseWalletFromDb,
+} from '../utils/nseBseWallet.js';
+import { buildUserWalletResponse } from '../utils/buildUserWalletResponse.js';
 import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 import {
@@ -549,7 +555,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Create Demo Account - No admin required, 7-day trial with 100,000 demo balance
+// Create Demo Account - No admin required; trial days from SystemSettings (default 7)
 // Optional referralCode: same as /register — if it matches a User, referredBy is set (persists through convert-to-real) so referral rewards work after real play.
 router.post('/demo-register', async (req, res) => {
   try {
@@ -596,9 +602,8 @@ router.post('/demo-register', async (req, res) => {
       codeTaken = await User.findOne({ referralCode: newUserReferralCode });
     }
     
-    // Calculate expiry date (7 days from now)
-    const demoExpiresAt = new Date();
-    demoExpiresAt.setDate(demoExpiresAt.getDate() + 7);
+    const { trialDays, demoBalance } = await getDemoAccountSettings();
+    const demoExpiresAt = await buildDemoExpiresAt(new Date());
     
     // Create demo user without admin (admin chosen at convert-to-real)
     const user = await User.create({
@@ -616,8 +621,8 @@ router.post('/demo-register', async (req, res) => {
       referralCode: newUserReferralCode,
       referredBy: referrerUser?._id || null,
       wallet: {
-        balance: 1000000,
-        cashBalance: 1000000,
+        balance: demoBalance,
+        cashBalance: demoBalance,
         tradingBalance: 0,
         usedMargin: 0,
         collateralValue: 0,
@@ -628,7 +633,7 @@ router.post('/demo-register', async (req, res) => {
         transactions: []
       },
       gamesWallet: {
-        balance: 1000000,
+        balance: demoBalance,
         usedMargin: 0,
         realizedPnL: 0,
         unrealizedPnL: 0,
@@ -662,7 +667,8 @@ router.post('/demo-register', async (req, res) => {
       demoExpiresAt: user.demoExpiresAt,
       wallet: user.wallet,
       token: generateToken(user._id),
-      message: 'Demo account created! Valid for 7 days with ₹10,00,000 demo balance.'
+      trialDays,
+      message: `Demo account created! Valid for ${trialDays} days with ₹${demoBalance.toLocaleString('en-IN')} virtual balance. No brokerage is paid to admins on demo trades.`
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -952,142 +958,6 @@ router.post('/withdraw-request', protectUser, async (req, res) => {
   }
 });
 
-// Get wallet info (enhanced with dual wallet system)
-router.get('/wallet', protectUser, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).select('wallet cryptoWallet forexWallet mcxWallet gamesWallet marginSettings rmsSettings');
-    let gamesTicketValue = 300;
-    try {
-      const gs = await GameSettings.getSettings();
-      gamesTicketValue = gs?.tokenValue || 300;
-    } catch {
-      /* default */
-    }
-    
-    // Dual wallet system - Main Wallet (cashBalance) and Trading Account (tradingBalance)
-    // Handle legacy: if cashBalance is 0 but balance has value, use balance as cashBalance
-    let mainWalletBalance = user.wallet.cashBalance || 0;
-    if (mainWalletBalance === 0 && user.wallet.balance > 0) {
-      mainWalletBalance = user.wallet.balance;
-      // Migrate to cashBalance
-      user.wallet.cashBalance = mainWalletBalance;
-      await user.save();
-    }
-    
-    const tradingBalance = user.wallet.tradingBalance || 0;
-    
-    // CRITICAL FIX: Recalculate usedMargin from actual open positions
-    // This ensures usedMargin is always accurate, not stale from database
-    const recalculatedMargin = await recalculateUsedMargin(req.user._id);
-    const usedMargin = recalculatedMargin.wallet;
-    
-    // Calculate available margin (for trading)
-    const availableMargin = tradingBalance 
-      + (user.wallet.collateralValue || 0)
-      + Math.max(0, user.wallet.unrealizedPnL || 0)
-      - Math.abs(Math.min(0, user.wallet.unrealizedPnL || 0))
-      - usedMargin;
-
-    res.json({
-      gamesTicketValue,
-      // Core wallet fields - Dual Wallet System
-      cashBalance: mainWalletBalance,           // Main Wallet (for deposit/withdraw with admin)
-      tradingBalance: tradingBalance,           // Trading Account (for trading)
-      usedMargin: usedMargin,
-      collateralValue: user.wallet.collateralValue || 0,
-      realizedPnL: user.wallet.realizedPnL || 0,
-      unrealizedPnL: user.wallet.unrealizedPnL || 0,
-      todayRealizedPnL: user.wallet.todayRealizedPnL || 0,
-      todayUnrealizedPnL: user.wallet.todayUnrealizedPnL || 0,
-      
-      // Calculated fields
-      availableMargin,
-      totalBalance: mainWalletBalance + tradingBalance,
-      
-      // Separate Crypto Wallet
-      cryptoWallet: {
-        balance: user.cryptoWallet?.balance || 0,
-        usedMargin: recalculatedMargin.cryptoWallet,
-        transferableBalance: Math.max(
-          0,
-          (user.cryptoWallet?.balance || 0) - recalculatedMargin.cryptoWallet
-        ),
-        realizedPnL: user.cryptoWallet?.realizedPnL || 0,
-        unrealizedPnL: user.cryptoWallet?.unrealizedPnL || 0,
-        todayRealizedPnL: user.cryptoWallet?.todayRealizedPnL || 0
-      },
-
-      forexWallet: {
-        balance: user.forexWallet?.balance || 0,
-        usedMargin: recalculatedMargin.forexWallet,
-        transferableBalance: Math.max(
-          0,
-          (user.forexWallet?.balance || 0) - recalculatedMargin.forexWallet
-        ),
-        realizedPnL: user.forexWallet?.realizedPnL || 0,
-        unrealizedPnL: user.forexWallet?.unrealizedPnL || 0,
-        todayRealizedPnL: user.forexWallet?.todayRealizedPnL || 0
-      },
-      
-      // Separate MCX Wallet - For MCX Futures and Options trading
-      tradingAccountTransferable: Math.max(
-        0,
-        tradingBalance - usedMargin
-      ),
-
-      mcxWallet: {
-        balance: user.mcxWallet?.balance || 0,
-        usedMargin: recalculatedMargin.mcxWallet,
-        transferableBalance: Math.max(
-          0,
-          (user.mcxWallet?.balance || 0) - recalculatedMargin.mcxWallet
-        ),
-        realizedPnL: user.mcxWallet?.realizedPnL || 0,
-        unrealizedPnL: user.mcxWallet?.unrealizedPnL || 0,
-        todayRealizedPnL: user.mcxWallet?.todayRealizedPnL || 0,
-        todayUnrealizedPnL: user.mcxWallet?.todayUnrealizedPnL || 0,
-        availableBalance: (user.mcxWallet?.balance || 0) - recalculatedMargin.mcxWallet
-      },
-      
-      // Separate Games Wallet - For fantasy/games trading
-      gamesWallet: {
-        balance: user.gamesWallet?.balance || 0,
-        usedMargin: recalculatedMargin.gamesWallet,
-        transferableBalance: Math.max(
-          0,
-          (user.gamesWallet?.balance || 0) - recalculatedMargin.gamesWallet
-        ),
-        realizedPnL: user.gamesWallet?.realizedPnL || 0,
-        unrealizedPnL: user.gamesWallet?.unrealizedPnL || 0,
-        todayRealizedPnL: user.gamesWallet?.todayRealizedPnL || 0,
-        todayUnrealizedPnL: user.gamesWallet?.todayUnrealizedPnL || 0,
-        availableBalance: (user.gamesWallet?.balance || 0) - recalculatedMargin.gamesWallet
-      },
-      
-      // Legacy fields for backward compatibility
-      wallet: {
-        balance: mainWalletBalance,
-        cashBalance: mainWalletBalance,
-        tradingBalance: tradingBalance,
-        usedMargin: usedMargin,
-        blocked: usedMargin,
-        totalDeposited: user.wallet.totalDeposited || 0,
-        totalWithdrawn: user.wallet.totalWithdrawn || 0,
-        totalPnL: user.wallet.realizedPnL || 0,
-        transactions: user.wallet.transactions
-      },
-      marginAvailable: availableMargin,
-      
-      // Settings
-      marginSettings: user.marginSettings,
-      rmsStatus: user.rmsSettings?.tradingBlocked ? 'BLOCKED' : 'ACTIVE',
-      rmsBlockReason: user.rmsSettings?.blockReason
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
 router.get('/platform-charge-status', protectUser, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select(
@@ -1095,6 +965,17 @@ router.get('/platform-charge-status', protectUser, async (req, res) => {
     );
     if (!user) return res.status(404).json({ message: 'User not found' });
     const status = await buildUserPlatformChargeStatus(user);
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// NSE/BSE ledger autosquare status (real balance = cash + MTM, 90% loss floor)
+router.get('/nse-bse-ledger-status', protectUser, async (req, res) => {
+  try {
+    const { getLedgerStatusForApi } = await import('../services/nseBseLedgerAutosquareService.js');
+    const status = await getLedgerStatusForApi(req.user._id);
     res.json(status);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -2510,13 +2391,16 @@ router.get('/demo/info', protectUser, async (req, res) => {
     const now = new Date();
     const expiresAt = new Date(user.demoExpiresAt);
     const daysRemaining = Math.max(0, Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24)));
+    const { trialDays } = await getDemoAccountSettings();
     
     res.json({
       isDemo: true,
       demoExpiresAt: user.demoExpiresAt,
       demoCreatedAt: user.demoCreatedAt,
+      trialDays,
       daysRemaining,
-      demoBalance: user.wallet.balance || user.wallet.cashBalance
+      demoBalance: user.wallet.balance || user.wallet.cashBalance,
+      noBrokerageDistribution: true,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

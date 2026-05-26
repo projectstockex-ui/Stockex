@@ -13,6 +13,7 @@ import {
 import UserHome from './UserHome';
 import UserAccounts from './UserAccounts';
 import UserTradingTransactions from './UserTradingTransactions';
+import { StockExLogo } from '../components/StockExLogo';
 
 // Orders Component
 const UserOrders = () => {
@@ -134,8 +135,6 @@ const UserWalletPage = () => {
   // Main wallet balance (where admin deposits funds)
   // API returns cashBalance at top level and also in wallet object
   const mainWalletBalance = walletData?.cashBalance || walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0;
-  // Trading balance (for trading)
-  const tradingBalance = walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0;
   const usedMargin = walletData?.usedMargin || walletData?.wallet?.usedMargin || walletData?.wallet?.blocked || 0;
   const availableMainWallet = mainWalletBalance; // Main wallet is fully available for withdraw
 
@@ -165,22 +164,10 @@ const UserWalletPage = () => {
 
       {/* Balance Card */}
       <div className={`bg-gradient-to-r ${user?.isDemo ? 'from-yellow-600 to-orange-600' : 'from-green-600 to-emerald-600'} rounded-xl p-6 mb-6`}>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-white/70 text-sm mb-1">
-              Main Wallet
-            </div>
-            <div className="text-2xl font-bold text-white">
-              ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </div>
-          </div>
-          <div>
-            <div className="text-white/70 text-sm mb-1">
-              Trading Wallet
-            </div>
-            <div className="text-2xl font-bold text-white">
-              ₹{tradingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </div>
+        <div>
+          <div className="text-white/70 text-sm mb-1">Main Wallet</div>
+          <div className="text-3xl font-bold text-white">
+            ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
           </div>
         </div>
         {!user?.isDemo && (
@@ -266,10 +253,24 @@ const UserWalletPage = () => {
                       <div className="text-xs text-gray-500">{new Date(tx.createdAt).toLocaleString()}</div>
                     </div>
                     <div className="text-right">
-                      <div className={tx.amount >= 0 ? 'text-green-400' : 'text-red-400'}>
-                        {tx.amount >= 0 ? '+' : ''}₹{Math.abs(tx.amount || 0).toLocaleString()}
-                      </div>
-                      <div className="text-xs text-gray-500">Bal: ₹{(tx.balanceAfter || 0).toLocaleString()}</div>
+                      {(() => {
+                        const isCredit = tx.type === 'CREDIT';
+                        const signed = isCredit ? Math.abs(tx.amount || 0) : -Math.abs(tx.amount || 0);
+                        const walletHint =
+                          tx.meta?.targetWallet === 'nseBse' || String(tx.description || '').includes('NSE & BSE Wallet')
+                            ? `NSE & BSE: ₹${Number(tx.meta?.nseBseBalanceAfter ?? tx.balanceAfter ?? 0).toLocaleString('en-IN')}`
+                            : tx.meta?.targetWallet === 'main' || String(tx.description || '').includes('Main Wallet')
+                              ? `Main: ₹${Number(tx.meta?.mainBalanceAfter ?? tx.balanceAfter ?? 0).toLocaleString('en-IN')}`
+                              : `Bal: ₹${Number(tx.balanceAfter || 0).toLocaleString('en-IN')}`;
+                        return (
+                          <>
+                            <div className={signed >= 0 ? 'text-green-400' : 'text-red-400'}>
+                              {signed >= 0 ? '+' : ''}₹{Math.abs(signed).toLocaleString('en-IN')}
+                            </div>
+                            <div className="text-xs text-gray-500">{walletHint}</div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -1838,13 +1839,8 @@ const UserDashboardNew = () => {
       <aside className={`hidden md:flex flex-col bg-dark-800 border-r border-dark-600 transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-64' : 'w-[70px]'}`}>
         {/* Logo & Collapse Button */}
         <div className="p-4 border-b border-dark-600 flex items-center justify-between">
-          <Link to="/user/home" className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center font-bold text-lg flex-shrink-0">
-              FX
-            </div>
-            <span className={`font-bold text-lg whitespace-nowrap overflow-hidden transition-all duration-300 ${sidebarOpen ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
-              stockex
-            </span>
+          <Link to="/user/home" className="flex items-center justify-center min-w-0 flex-1">
+            <StockExLogo className={`object-contain flex-shrink-0 transition-all duration-300 ${sidebarOpen ? 'h-14 w-auto max-w-[165px]' : 'h-11 w-auto max-w-[48px]'}`} alt="StockEx" />
           </Link>
           <button 
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -1980,12 +1976,9 @@ const UserDashboardNew = () => {
           <div className="md:hidden fixed inset-0 z-50 bg-black/50" onClick={() => setMobileMenuOpen(false)}>
             <div className="w-64 h-full bg-dark-800 p-4" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center font-bold">
-                    FX
-                  </div>
-                  <span className="font-bold text-lg">stockex</span>
-                </div>
+                <Link to="/user/home" onClick={() => setMobileMenuOpen(false)}>
+                  <StockExLogo className="h-9 w-auto" alt="StockEx" />
+                </Link>
                 <button onClick={() => setMobileMenuOpen(false)}>
                   <X size={24} />
                 </button>

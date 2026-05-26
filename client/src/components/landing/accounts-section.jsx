@@ -77,7 +77,7 @@ export function AccountsSection() {
         <div className="text-center mb-16">
           <p className="text-sm font-semibold text-primary uppercase tracking-wider mb-3">Accounts</p>
           <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-deep-blue mb-4 text-balance">
-            Choose Your Account Type
+            Join Stockex as a Broker
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Select the account that best fits your trading needs and goals.

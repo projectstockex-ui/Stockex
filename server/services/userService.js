@@ -75,7 +75,8 @@ export const createUser = async (userData) => {
     userObject.forexWallet = 100000;
     userObject.mcxWallet = 100000;
     userObject.gamesWallet = 100000;
-    userObject.demoExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const { buildDemoExpiresAt } = await import('../utils/demoAccountUtils.js');
+    userObject.demoExpiresAt = await buildDemoExpiresAt(new Date());
   }
 
   // Handle referral

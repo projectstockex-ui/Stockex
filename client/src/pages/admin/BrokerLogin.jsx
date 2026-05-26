@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
-import { Briefcase, Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Play, Timer, X, Building2 } from 'lucide-react';
+import { Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Play, Timer, X, Building2 } from 'lucide-react';
+import { StockExLogo } from '../../components/StockExLogo';
 
 const BrokerLogin = () => {
   const [formData, setFormData] = useState({ email: '', password: '' });
@@ -144,10 +145,8 @@ const BrokerLogin = () => {
         <div className="absolute bottom-20 right-20 w-96 h-96 bg-amber-500/20 rounded-full blur-3xl" />
         
         <div className="relative z-10 text-center">
-          <div className="flex items-center justify-center gap-3 mb-8">
-            <div className="p-4 bg-gradient-to-br from-orange-600 to-amber-500 rounded-2xl">
-              <Briefcase className="w-12 h-12 text-white" />
-            </div>
+          <div className="flex items-center justify-center mb-8">
+            <StockExLogo className="h-16 w-auto max-w-[200px] object-contain" alt="StockEx" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-4">Broker Portal</h1>
           <p className="text-xl text-gray-300 mb-12">Manage sub-brokers & client accounts</p>
@@ -181,10 +180,8 @@ const BrokerLogin = () => {
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           <div className="text-center mb-8 lg:hidden">
-            <div className="inline-flex items-center gap-3 mb-4">
-              <div className="p-3 bg-gradient-to-br from-orange-600 to-amber-500 rounded-xl">
-                <Briefcase className="w-8 h-8 text-white" />
-              </div>
+            <div className="flex flex-col items-center gap-3 mb-4">
+              <StockExLogo className="h-12 w-auto max-w-[160px] object-contain" alt="StockEx" />
               <span className="text-2xl font-bold text-white">Broker Panel</span>
             </div>
           </div>

@@ -162,11 +162,38 @@ router.get('/nifty-history', async (req, res) => {
   }
 });
 
+/** Map UI/Binance-style intervals to Kite historical API interval names */
+function normalizeKiteInterval(interval) {
+  const raw = String(interval || '15minute').trim().toLowerCase();
+  const map = {
+    '1m': 'minute',
+    minute: 'minute',
+    '5m': '5minute',
+    '5minute': '5minute',
+    '15m': '15minute',
+    '15minute': '15minute',
+    '30m': '30minute',
+    '30minute': '30minute',
+    '1h': '60minute',
+    '60minute': '60minute',
+    '1d': 'day',
+    day: 'day',
+    one_minute: 'minute',
+    five_minute: '5minute',
+    fifteen_minute: '15minute',
+    thirty_minute: '30minute',
+    one_hour: '60minute',
+    one_day: 'day',
+  };
+  return map[raw] || raw;
+}
+
 // Generic Zerodha instrument history by token — for MCX, NSE, BSE instruments
 // ?token=220822&interval=15minute&daysBack=15&maxCandles=120
 router.get('/zerodha-history', async (req, res) => {
   try {
     const { token, interval = '15minute', daysBack = 15, maxCandles = 120 } = req.query;
+    const kiteInterval = normalizeKiteInterval(interval);
     
     if (!token) {
       return res.status(400).json({ 
@@ -178,13 +205,13 @@ router.get('/zerodha-history', async (req, res) => {
 
     const fromKite = await fetchZerodhaHistoricalByToken(
       token,
-      interval,
+      kiteInterval,
       parseInt(daysBack, 10),
       parseInt(maxCandles, 10)
     );
     
     if (fromKite && fromKite.length > 0) {
-      return res.json({ success: true, source: 'zerodha', interval, data: fromKite });
+      return res.json({ success: true, source: 'zerodha', interval: kiteInterval, data: fromKite });
     }
 
     res.json({

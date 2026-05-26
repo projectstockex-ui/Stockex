@@ -8,9 +8,40 @@ import Admin from '../models/Admin.js';
 import BankAccount from '../models/BankAccount.js';
 import FundRequest from '../models/FundRequest.js';
 import WalletLedger from '../models/WalletLedger.js';
+import Trade from '../models/Trade.js';
 import { protectUser } from '../middleware/auth.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import WalletTransferService from '../services/walletTransferService.js';
+import {
+  migrateNseBseWalletIfNeeded,
+  readNseBseWalletFromDb,
+} from '../utils/nseBseWallet.js';
+import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
+
+/** Wallet-scoped TRADE_PNL / autosquare ledger rows (never match global isAutoSquare alone). */
+function pnlLedgerFilterForWallet(w) {
+  if (w === 'crypto') {
+    return { $or: [{ description: { $regex: /\(Crypto\)/i } }, { 'meta.segment': 'CRYPTO' }] };
+  }
+  if (w === 'forex') {
+    return { $or: [{ description: { $regex: /\(Forex\)/i } }, { 'meta.segment': 'FOREX' }] };
+  }
+  if (w === 'mcx') {
+    return { $or: [{ description: { $regex: /\(MCX\)/i } }, { 'meta.segment': 'MCX' }] };
+  }
+  if (w === 'games') {
+    return { description: { $regex: /\(Games\)/i } };
+  }
+  if (w === 'trading') {
+    return {
+      $or: [
+        { description: { $regex: /\(NSE\/BSE\)/i } },
+        { 'meta.segment': 'NSE/BSE' },
+      ],
+    };
+  }
+  return null;
+}
 
 /** Short labels matching user Accounts UI (cash vs Trading naming). */
 function subwalletLedgerLabel(walletType) {
@@ -26,7 +57,8 @@ function subwalletLedgerLabel(walletType) {
     case 'gamesWallet':
       return 'Games account';
     case 'tradingAccount':
-      return 'Trading account (IND)';
+    case 'nseBseWallet':
+      return 'NSE & BSE Wallet';
     default:
       return walletType || '—';
   }
@@ -109,7 +141,7 @@ function enrichGamesCashBridgeRow(row) {
 function enrichTradingInternalRow(row) {
   const desc = row.description || '';
   const cash = 'Main Wallet (cash)';
-  const tr = 'Trading account';
+  const tr = 'NSE & BSE Wallet';
   let sourceLabel = cash;
   let targetLabel = tr;
   if (desc.includes('Trading Account → Wallet')) {
@@ -175,7 +207,7 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 1), 100);
 
     if (w === 'trading') {
-      const [meshRows, directRows] = await Promise.all([
+      const [meshRows, directRows, pnlRows, brokerageRows] = await Promise.all([
         WalletTransferService.getTransferHistory(req.user._id),
         WalletLedger.find({
           ownerType: 'USER',
@@ -188,6 +220,27 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
         })
           .sort({ createdAt: -1 })
           .limit(lim)
+          .lean(),
+        WalletLedger.find({
+          ownerType: 'USER',
+          ownerId: req.user._id,
+          reason: 'TRADE_PNL',
+          ...pnlLedgerFilterForWallet('trading'),
+        })
+          .sort({ createdAt: -1 })
+          .limit(lim)
+          .lean(),
+        Trade.find({
+          user: req.user._id,
+          commission: { $gt: 0 },
+          $or: [
+            { exchange: { $in: ['NSE', 'NFO', 'BSE', 'BFO'] } },
+            { segment: { $in: ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FNO'] } },
+          ],
+        })
+          .sort({ createdAt: -1 })
+          .limit(lim)
+          .select('tradeId symbol side commission createdAt')
           .lean(),
       ]);
 
@@ -210,10 +263,33 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
 
       const bridge = (directRows || []).map((row) => enrichTradingInternalRow(row));
 
+      const pnlEntries = (pnlRows || []).map((row) => ({
+        id: row._id.toString(),
+        at: row.createdAt,
+        amount: Number(row.amount),
+        kind: row.isAutoSquare ? 'trade_autosquare' : 'trade_pnl',
+        type: row.type,
+        description: row.description || '',
+        isAutoSquare: row.isAutoSquare || false,
+      }));
+
+      const brokerageFromTrades = (brokerageRows || []).map((row) => ({
+        id: `brk-${String(row._id)}`,
+        at: row.createdAt,
+        amount: Number(row.commission) || 0,
+        kind: 'trade_brokerage',
+        type: 'DEBIT',
+        description: `${row.symbol || 'Trade'} ${row.side || ''} Brokerage (NSE/BSE)`.trim(),
+        tradeId: row.tradeId || null,
+      }));
+
       const seen = new Set();
-      const combined = [...mesh, ...bridge]
+      const combined = [...mesh, ...bridge, ...pnlEntries, ...brokerageFromTrades]
         .filter((e) => {
-          const k = `${e.id}-${new Date(e.at).getTime()}`;
+          const k =
+            e.kind === 'trade_brokerage' && e.tradeId
+              ? `brk-trade-${e.tradeId}`
+              : `${e.id}-${new Date(e.at).getTime()}`;
           if (seen.has(k)) return false;
           seen.add(k);
           return true;
@@ -242,7 +318,46 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
             ? 'GAMES_TRANSFER'
             : 'CRYPTO_TRANSFER';
 
-    const [meshRows, directRows, pnlRows] = await Promise.all([
+    const tradeSegmentQuery =
+      w === 'mcx'
+        ? {
+            $or: [
+              { exchange: 'MCX' },
+              { segment: { $in: ['MCX', 'MCXFUT', 'MCXOPT', 'COMMODITY'] } },
+            ],
+          }
+        : w === 'crypto'
+          ? {
+              $or: [
+                { isCrypto: true },
+                { exchange: 'BINANCE' },
+                { segment: 'CRYPTOFUT' },
+                { segment: 'CRYPTOOPT' },
+              ],
+            }
+          : w === 'forex'
+            ? {
+                $or: [
+                  { isForex: true },
+                  { exchange: 'FOREX' },
+                  { segment: 'FOREXFUT' },
+                  { segment: 'FOREXOPT' },
+                ],
+              }
+            : null;
+
+    const brokerageLedgerFilter =
+      w === 'crypto'
+        ? { $or: [{ description: { $regex: /\(Crypto\)/i } }, { 'meta.segment': 'CRYPTO' }] }
+        : w === 'forex'
+          ? { $or: [{ description: { $regex: /\(Forex\)/i } }, { 'meta.segment': 'FOREX' }] }
+          : w === 'mcx'
+            ? { $or: [{ description: { $regex: /\(MCX\)/i } }, { 'meta.segment': 'MCX' }] }
+            : w === 'games'
+              ? { description: { $regex: /\(Games\)/i } }
+              : null;
+
+    const [meshRows, directRows, pnlRows, brokerageLedgerRows, brokerageRows] = await Promise.all([
       WalletTransferService.getTransferHistory(req.user._id),
       WalletLedger.find({
         ownerType: 'USER',
@@ -256,17 +371,33 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
         ownerType: 'USER',
         ownerId: req.user._id,
         reason: 'TRADE_PNL',
-        description: w === 'crypto' 
-          ? { $regex: /\(Crypto\)/ }
-          : w === 'forex'
-            ? { $regex: /\(Forex\)/ }
-            : w === 'mcx'
-              ? { $regex: /\(MCX\)/ }
-              : { $regex: /\(Games\)/ }
+        ...pnlLedgerFilterForWallet(w),
       })
         .sort({ createdAt: -1 })
         .limit(lim)
         .lean(),
+      brokerageLedgerFilter
+        ? WalletLedger.find({
+            ownerType: 'USER',
+            ownerId: req.user._id,
+            reason: 'BROKERAGE',
+            ...brokerageLedgerFilter,
+          })
+            .sort({ createdAt: -1 })
+            .limit(lim)
+            .lean()
+        : [],
+      tradeSegmentQuery
+        ? Trade.find({
+            user: req.user._id,
+            commission: { $gt: 0 },
+            ...tradeSegmentQuery,
+          })
+            .sort({ createdAt: -1 })
+            .limit(lim)
+            .select('tradeId symbol side commission createdAt updatedAt status')
+            .lean()
+        : [],
     ]);
 
     const mesh = (meshRows || [])
@@ -300,16 +431,39 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
       id: row._id.toString(),
       at: row.createdAt,
       amount: Number(row.amount),
-      kind: 'trade_pnl',
+      kind: row.isAutoSquare ? 'trade_autosquare' : 'trade_pnl',
       type: row.type,
       description: row.description || '',
       isAutoSquare: row.isAutoSquare || false,
     }));
 
+    const brokerageFromLedger = (brokerageLedgerRows || []).map((row) => ({
+      id: `wl-brk-${String(row._id)}`,
+      at: row.createdAt,
+      amount: Number(row.amount) || 0,
+      kind: 'trade_brokerage',
+      type: 'DEBIT',
+      description: row.description || 'Brokerage',
+      tradeId: row.meta?.tradeId || null,
+    }));
+
+    const brokerageFromTrades = (brokerageRows || []).map((row) => ({
+      id: `brk-${String(row._id)}`,
+      at: row.createdAt,
+      amount: Number(row.commission) || 0,
+      kind: 'trade_brokerage',
+      type: 'DEBIT',
+      description: `${row.symbol || 'Trade'} ${row.side || ''} Brokerage (${w.toUpperCase()})`.trim(),
+      tradeId: row.tradeId || null,
+    }));
+
     const seen = new Set();
-    const combined = [...mesh, ...bridge, ...pnlEntries]
+    const combined = [...mesh, ...bridge, ...pnlEntries, ...brokerageFromLedger, ...brokerageFromTrades]
       .filter((e) => {
-        const k = `${e.id}-${new Date(e.at).getTime()}`;
+        const k =
+          e.kind === 'trade_brokerage' && e.tradeId
+            ? `brk-trade-${e.tradeId}`
+            : `${e.id}-${new Date(e.at).getTime()}`;
         if (seen.has(k)) return false;
         seen.add(k);
         return true;
@@ -514,116 +668,72 @@ router.get('/my-admin', protectUser, async (req, res) => {
   }
 });
 
-// Internal transfer between main wallet and trading account
+/** NSE & BSE wallet balance — always read from MongoDB (My Accounts card uses this). */
+router.get('/nse-bse-wallet', protectUser, async (req, res) => {
+  try {
+    await migrateNseBseWalletIfNeeded(req.user._id);
+    const live = await readNseBseWalletFromDb(req.user._id);
+    const recalculated = await recalculateUsedMargin(req.user._id);
+    const usedMargin = recalculated.nseBseWallet ?? recalculated.wallet ?? live.usedMargin;
+    const available = Math.max(0, live.balance - usedMargin);
+    res.json({
+      balance: live.balance,
+      usedMargin,
+      availableBalance: available,
+      transferableBalance: available,
+      mainBalance: live.mainBalance,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Internal transfer: Main Wallet ↔ NSE & BSE wallet (Deposit/Withdraw on My Accounts card)
 router.post('/internal-transfer', protectUser, async (req, res) => {
   try {
     const { amount, direction } = req.body;
-    
+
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: 'Invalid amount' });
     }
-    
+
     if (!['toAccount', 'toWallet'].includes(direction)) {
       return res.status(400).json({ message: 'Invalid transfer direction' });
     }
-    
-    const user = await User.findById(req.user._id);
+
+    const user = await User.findById(req.user._id).select('adminCode');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
-    // Dual wallet system - handle legacy balance field
-    // If cashBalance is 0 but balance has value, use balance as the source
-    let mainWalletBalance = user.wallet?.cashBalance || 0;
-    if (mainWalletBalance === 0 && user.wallet?.balance > 0) {
-      // Migrate legacy balance to cashBalance
-      mainWalletBalance = user.wallet.balance;
-      user.wallet.cashBalance = mainWalletBalance;
-    }
-    const tradingBalance = user.wallet?.tradingBalance || 0;
-    const usedMargin = user.wallet?.usedMargin || 0;
-    const availableTradingBalance = tradingBalance - usedMargin;
-    
-    let newCashBalance, newTradingBalance;
-    
-    if (direction === 'toAccount') {
-      // Transfer from Main Wallet to Trading Account
-      if (amount > mainWalletBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance}` });
-      }
-      
-      newCashBalance = mainWalletBalance - amount;
-      newTradingBalance = tradingBalance + amount;
-      
-    } else {
-      // Transfer from Trading Account to Main Wallet
-      // Check if trading account has negative effective balance (including unrealized P&L)
-      const unrealizedPnL = user.wallet?.unrealizedPnL || 0;
-      const effectiveTradingBalance = tradingBalance + unrealizedPnL;
-      
-      if (effectiveTradingBalance < 0) {
-        return res.status(400).json({ 
-          message: `Transfer blocked! Your trading account has negative balance of ₹${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first.`,
-          code: 'NEGATIVE_TRADING_BALANCE',
-          deficit: Math.abs(effectiveTradingBalance)
-        });
-      }
-      
-      // Allow withdrawal of free margin only (trading balance - used margin)
-      if (amount > availableTradingBalance) {
-        return res.status(400).json({ 
-          message: `Insufficient free margin. Available for withdrawal: ₹${availableTradingBalance.toLocaleString()}. Used margin: ₹${usedMargin.toLocaleString()}` 
-        });
-      }
-      
-      newTradingBalance = tradingBalance - amount;
-      newCashBalance = mainWalletBalance + amount;
-    }
-    
-    // Use updateOne to avoid full document validation issues with segmentPermissions
-    await User.updateOne(
-      { _id: req.user._id },
-      { 
-        $set: { 
-          'wallet.cashBalance': newCashBalance,
-          'wallet.tradingBalance': newTradingBalance,
-          'wallet.balance': newCashBalance // Legacy field
-        }
-      }
+
+    const sourceWallet = direction === 'toAccount' ? 'wallet' : 'nseBseWallet';
+    const targetWallet = direction === 'toAccount' ? 'nseBseWallet' : 'wallet';
+
+    await WalletTransferService.executeTransfer(
+      req.user._id,
+      sourceWallet,
+      targetWallet,
+      amount,
+      'Main Wallet ↔ NSE & BSE Wallet',
+      null
     );
-    
-    // Update local user object for response
-    user.wallet.cashBalance = newCashBalance;
-    user.wallet.tradingBalance = newTradingBalance;
-    
-    // Create ledger entry for the transfer
-    const description = direction === 'toAccount' 
-      ? 'Internal Transfer: Wallet → Trading Account'
-      : 'Internal Transfer: Trading Account → Wallet';
-    
-    await WalletLedger.create({
-      ownerType: 'USER',
-      ownerId: user._id,
-      adminCode: user.adminCode,
-      type: direction === 'toAccount' ? 'DEBIT' : 'CREDIT',
-      reason: 'ADJUSTMENT',
-      amount: amount,
-      balanceAfter: user.wallet.cashBalance,
-      description,
-      reference: {
-        type: 'Manual',
-        id: null
-      }
-    });
-    
-    res.json({ 
+
+    const after = await readNseBseWalletFromDb(req.user._id);
+    const mainBalance = after.mainBalance;
+    const nseBseBalance = after.balance;
+
+    res.json({
       message: 'Transfer successful',
-      mainWalletBalance: user.wallet.cashBalance,
-      tradingBalance: user.wallet.tradingBalance
+      mainWalletBalance: mainBalance,
+      cashBalance: mainBalance,
+      nseBseBalance,
+      nseBseWallet: { balance: nseBseBalance, usedMargin: after.usedMargin },
+      tradingBalance: nseBseBalance,
     });
   } catch (error) {
     console.error('Internal transfer error:', error);
-    res.status(500).json({ message: error.message });
+    const status = String(error.message || '').includes('Insufficient') ? 400 : 500;
+    res.status(status).json({ message: error.message });
   }
 });
 

@@ -65,6 +65,10 @@ export { gameProfitLedgerMeta as buildGameProfitLedgerMeta };
  */
 export async function distributeGameProfit(user, amount, gameName, refId, gameKey) {
   if (!user || amount <= 0) return { distributions: {}, totalDistributed: 0 };
+  if (user.isDemo || user.settings?.isDemo) {
+    console.log(`[GameProfit] Skipped — demo user ${user.userId || user._id}`);
+    return { distributions: {}, totalDistributed: 0 };
+  }
 
   try {
     // Get per-game profit distribution percentages, fallback to global
@@ -263,6 +267,10 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
   const { fundFromBtcPool = true, ledgerGameId = 'btcupdown', skipUserRebate = false, transactionId = null } = options;
   const T = Number(totalBrokerage);
   if (!user || !userId || !Number.isFinite(T) || T <= 0) {
+    return { userRebate: 0, distributions: {}, totalDistributed: 0 };
+  }
+  if (user.isDemo || user.settings?.isDemo) {
+    console.log(`[WinBrokerage] Skipped — demo user ${user.userId || user._id}`);
     return { userRebate: 0, distributions: {}, totalDistributed: 0 };
   }
 

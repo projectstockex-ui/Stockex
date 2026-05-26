@@ -28,6 +28,7 @@ import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import WalletLedger from '../models/WalletLedger.js';
+import { buildUserWalletResponse } from '../utils/buildUserWalletResponse.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
 import {
@@ -341,33 +342,11 @@ export const changeUserPassword = async (req, res) => {
  */
 export const getUserWallet = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('wallet cryptoWallet forexWallet mcxWallet gamesWallet marginSettings rmsSettings');
-    let gamesTicketValue = 300;
-    
-    // Get games ticket value from settings
-    try {
-      const settings = await GameSettings.getSettings();
-      if (settings?.games?.ticketValue) {
-        gamesTicketValue = settings.games.ticketValue;
-      }
-    } catch (settingsError) {
-      console.warn('[UserController] Could not fetch game settings for ticket value:', settingsError);
+    const payload = await buildUserWalletResponse(req.user._id);
+    if (!payload) {
+      return res.status(404).json({ message: 'User not found' });
     }
-
-    // Calculate games wallet ticket count
-    const gamesTicketCount = user.gamesWallet ? Math.floor(user.gamesWallet / gamesTicketValue) : 0;
-
-    res.json({
-      wallet: user.wallet || 0,
-      cryptoWallet: user.cryptoWallet || 0,
-      forexWallet: user.forexWallet || 0,
-      mcxWallet: user.mcxWallet || 0,
-      gamesWallet: user.gamesWallet || 0,
-      gamesTicketValue,
-      gamesTicketCount,
-      marginSettings: user.marginSettings || {},
-      rmsSettings: user.rmsSettings || {}
-    });
+    res.json(payload);
   } catch (error) {
     console.error('[UserController] Error getting user wallet:', error);
     res.status(500).json({ message: 'Failed to get wallet information' });

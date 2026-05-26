@@ -10,7 +10,18 @@ export function requiredUnitForCommissionType(commissionType) {
 
 /** Label for the numeric commission field. */
 export function commissionAmountLabel(commissionType) {
-  return 'Amount (₹)';
+  switch (commissionType) {
+    case 'PER_LOT':
+      return 'Brokerage (₹ / lot)';
+    case 'PER_CRORE':
+      return 'Brokerage (₹ / crore)';
+    case 'PER_TRADE':
+      return 'Brokerage (₹ / trade)';
+    case 'PER_QUANTITY':
+      return 'Brokerage (₹ / qty)';
+    default:
+      return 'Amount (₹)';
+  }
 }
 
 export function commissionHelperText(commissionType) {

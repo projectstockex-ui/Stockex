@@ -9,16 +9,23 @@ import {
   getStampedSegmentBalance,
 } from '../utils/segmentWalletDebit.js';
 import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
+import {
+  getNseBseBalance,
+  getNseBseUsedMargin,
+  migrateNseBseWalletIfNeeded,
+  prepareNseBseWalletForTransfer,
+  readNseBseWalletFromDb,
+} from '../utils/nseBseWallet.js';
 
 /** Source wallets that debit full stamped balance and clamp usedMargin on transfer out. */
-const MARGIN_SEGMENT_SOURCES = ['mcxWallet', 'cryptoWallet', 'forexWallet'];
+const MARGIN_SEGMENT_SOURCES = ['nseBseWallet', 'mcxWallet', 'cryptoWallet', 'forexWallet'];
 
 const roundTransferAmount = (n) => Math.round(Number(n) * 100) / 100;
 
 /**
  * Wallet Transfer Service
  * Handles interconnected wallet-to-wallet transfers for users
- * Supported wallets: wallet (main cash), tradingAccount (wallet.tradingBalance — IND card),
+ * Supported wallets: wallet (main cash), nseBseWallet / tradingAccount alias (NSE & BSE card),
  * cryptoWallet, forexWallet, mcxWallet, gamesWallet
  */
 class WalletTransferService {
@@ -33,11 +40,9 @@ class WalletTransferService {
     switch(walletType) {
       case 'wallet':
         return user.wallet?.cashBalance || 0;
-      case 'tradingAccount': {
-        const tb = user.wallet?.tradingBalance || 0;
-        const um = user.wallet?.usedMargin || 0;
-        return Math.max(0, tb - um);
-      }
+      case 'tradingAccount':
+      case 'nseBseWallet':
+        return getNseBseAvailable(user);
       case 'cryptoWallet':
         return (user.cryptoWallet?.balance || 0) - (user.cryptoWallet?.usedMargin || 0);
       case 'forexWallet':
@@ -76,12 +81,13 @@ class WalletTransferService {
           transferable: roundTransferAmount(totalBalance),
         };
       }
-      case 'tradingAccount': {
-        const totalBalance = Number(user?.wallet?.tradingBalance) || 0;
-        const usedMargin = Number(user?.wallet?.usedMargin) || 0;
+      case 'tradingAccount':
+      case 'nseBseWallet': {
+        const totalBalance = getNseBseBalance(user);
+        const usedMargin = getNseBseUsedMargin(user);
         return {
-          walletType,
-          displayName,
+          walletType: 'nseBseWallet',
+          displayName: 'NSE & BSE Wallet',
           totalBalance,
           usedMargin,
           transferable: roundTransferAmount(Math.max(0, totalBalance - usedMargin)),
@@ -119,7 +125,7 @@ class WalletTransferService {
   static getAllTransferableBalanceDetails(user) {
     const walletTypes = [
       'wallet',
-      'tradingAccount',
+      'nseBseWallet',
       'cryptoWallet',
       'forexWallet',
       'mcxWallet',
@@ -160,7 +166,8 @@ class WalletTransferService {
       case 'wallet':
         return 'wallet.cashBalance';
       case 'tradingAccount':
-        return 'wallet.tradingBalance';
+      case 'nseBseWallet':
+        return 'nseBseWallet.balance';
       case 'cryptoWallet':
         return 'cryptoWallet.balance';
       case 'forexWallet':
@@ -189,7 +196,7 @@ class WalletTransferService {
     }
 
     // Check if wallet types are valid
-    const validWallets = ['wallet', 'tradingAccount', 'cryptoWallet', 'forexWallet', 'mcxWallet', 'gamesWallet'];
+    const validWallets = ['wallet', 'nseBseWallet', 'tradingAccount', 'cryptoWallet', 'forexWallet', 'mcxWallet', 'gamesWallet'];
     if (!validWallets.includes(sourceWallet)) {
       return { valid: false, error: 'Invalid source wallet type' };
     }
@@ -223,7 +230,8 @@ class WalletTransferService {
   static getWalletDisplayName(walletType) {
     switch(walletType) {
       case 'wallet': return 'Main Wallet (cash)';
-      case 'tradingAccount': return 'Trading Account';
+      case 'tradingAccount':
+      case 'nseBseWallet': return 'NSE & BSE Wallet';
       case 'cryptoWallet': return 'Crypto Wallet';
       case 'forexWallet': return 'Forex Wallet';
       case 'mcxWallet': return 'MCX Wallet';
@@ -238,7 +246,8 @@ class WalletTransferService {
     const map = {
       'Trading Wallet': 'wallet',
       'Main Wallet (cash)': 'wallet',
-      'Trading Account': 'tradingAccount',
+      'Trading Account': 'nseBseWallet',
+      'NSE & BSE Wallet': 'nseBseWallet',
       'Crypto Wallet': 'cryptoWallet',
       'Forex Wallet': 'forexWallet',
       'MCX Wallet': 'mcxWallet',
@@ -249,18 +258,18 @@ class WalletTransferService {
 
   static _balanceAfterSourceDebit(finalUser, sourceWallet) {
     if (sourceWallet === 'wallet') return finalUser?.wallet?.cashBalance ?? 0;
-    if (sourceWallet === 'tradingAccount') return finalUser?.wallet?.tradingBalance ?? 0;
+    if (sourceWallet === 'tradingAccount' || sourceWallet === 'nseBseWallet') return getNseBseBalance(finalUser);
     return finalUser?.[sourceWallet]?.balance ?? 0;
   }
 
   static _balanceAfterTargetCredit(finalUser, targetWallet) {
     if (targetWallet === 'wallet') return finalUser?.wallet?.cashBalance ?? 0;
-    if (targetWallet === 'tradingAccount') return finalUser?.wallet?.tradingBalance ?? 0;
+    if (targetWallet === 'tradingAccount' || targetWallet === 'nseBseWallet') return getNseBseBalance(finalUser);
     return finalUser?.[targetWallet]?.balance ?? 0;
   }
 
   static _shouldIncDepositTotal(targetWallet) {
-    return targetWallet !== 'wallet' && targetWallet !== 'tradingAccount';
+    return targetWallet !== 'wallet' && targetWallet !== 'tradingAccount' && targetWallet !== 'nseBseWallet';
   }
 
   /**
@@ -279,8 +288,12 @@ class WalletTransferService {
     if (!user) return null;
 
     const recalculated = await recalculateUsedMargin(userId);
+    const liveNse = await readNseBseWalletFromDb(userId);
     if (!user.wallet) user.wallet = {};
-    user.wallet.usedMargin = recalculated.wallet;
+    if (!user.nseBseWallet) user.nseBseWallet = {};
+    user.nseBseWallet.balance = liveNse.balance;
+    user.nseBseWallet.usedMargin = recalculated.nseBseWallet ?? recalculated.wallet ?? 0;
+    user.wallet.usedMargin = 0;
     if (!user.cryptoWallet) user.cryptoWallet = {};
     user.cryptoWallet.usedMargin = recalculated.cryptoWallet;
     if (!user.forexWallet) user.forexWallet = {};
@@ -294,13 +307,18 @@ class WalletTransferService {
   }
 
   static async executeTransfer(userId, sourceWallet, targetWallet, amount, remarks = '', performedBy = null) {
+    const transferAmount = roundTransferAmount(amount);
+    if (!Number.isFinite(transferAmount) || transferAmount <= 0) {
+      throw new Error('Transfer amount must be greater than 0');
+    }
+
     const user = await this.loadUserWithFreshMargins(userId);
     if (!user) {
       throw new Error('User not found');
     }
 
     // Validate transfer
-    const validation = this.validateTransfer(user, sourceWallet, targetWallet, amount);
+    const validation = this.validateTransfer(user, sourceWallet, targetWallet, transferAmount);
     if (!validation.valid) {
       throw new Error(validation.error);
     }
@@ -309,24 +327,44 @@ class WalletTransferService {
 
     // Execute transfer based on wallet types
     if (sourceWallet === 'gamesWallet' || targetWallet === 'gamesWallet') {
-      return await this.executeGamesWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy);
+      return await this.executeGamesWalletTransfer(user, sourceWallet, targetWallet, transferAmount, transferId, remarks, performedBy);
     } else {
-      return await this.executeStandardWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy);
+      return await this.executeStandardWalletTransfer(user, sourceWallet, targetWallet, transferAmount, transferId, remarks, performedBy);
     }
   }
 
   /**
    * Execute standard wallet transfer (wallet, cryptoWallet, forexWallet, mcxWallet)
    */
+  static async _syncNseBseOnUser(user) {
+    if (!user?._id) return user;
+    await migrateNseBseWalletIfNeeded(user._id);
+    const liveNse = await readNseBseWalletFromDb(user._id);
+    if (!user.nseBseWallet) user.nseBseWallet = {};
+    user.nseBseWallet.balance = liveNse.balance;
+    user.nseBseWallet.usedMargin = liveNse.usedMargin;
+    user.wallet = user.wallet || {};
+    user.wallet.usedMargin = 0;
+    return user;
+  }
+
   static async executeStandardWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy) {
     try {
-      const freshUser = await User.findById(user._id);
+      const nseInvolved =
+        sourceWallet === 'nseBseWallet' ||
+        sourceWallet === 'tradingAccount' ||
+        targetWallet === 'nseBseWallet' ||
+        targetWallet === 'tradingAccount';
+      if (nseInvolved) {
+        await this._syncNseBseOnUser(user);
+      }
+
       const sourceBalanceField = this.getBalanceFieldName(sourceWallet);
       const targetBalanceField = this.getBalanceFieldName(targetWallet);
 
-      const currentSourceBalance = this.getTransferSourceBalance(freshUser, sourceWallet);
+      const currentSourceBalance = this.getTransferSourceBalance(user, sourceWallet);
       if (currentSourceBalance < amount) {
-        throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
+        throw new Error(this.buildTransferInsufficientError(user, sourceWallet, amount));
       }
 
       let finalUser;
@@ -334,7 +372,15 @@ class WalletTransferService {
       if (MARGIN_SEGMENT_SOURCES.includes(sourceWallet)) {
         const debitUser = await atomicMarginSegmentDebitForTransfer(User, user._id, sourceWallet, amount);
         if (!debitUser) {
-          throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
+          if (sourceWallet === 'nseBseWallet' || sourceWallet === 'tradingAccount') {
+            await this._syncNseBseOnUser(user);
+          }
+          const details = this.getTransferableBalanceDetails(user, sourceWallet);
+          throw new Error(
+            details.transferable >= roundTransferAmount(amount)
+              ? 'Transfer could not be completed. Please refresh the page and try again.'
+              : this.buildTransferInsufficientError(user, sourceWallet, amount)
+          );
         }
 
         const targetInc = {};
@@ -375,8 +421,9 @@ class WalletTransferService {
           await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
         };
 
-        if (sourceWallet === 'tradingAccount') {
-          if (afterSource < usedMargin) {
+        if (sourceWallet === 'tradingAccount' || sourceWallet === 'nseBseWallet') {
+          const nseUm = finalUser.nseBseWallet?.usedMargin ?? finalUser.wallet?.usedMargin ?? 0;
+          if (afterSource < nseUm) {
             await rollbackMirror();
             throw new Error(this.buildTransferInsufficientError(finalUser, sourceWallet, amount));
           }
@@ -452,8 +499,8 @@ class WalletTransferService {
         }
 
         const targetUpdate = {};
-        if (targetWallet === 'tradingAccount') {
-          targetUpdate['wallet.tradingBalance'] = amount;
+        if (targetWallet === 'tradingAccount' || targetWallet === 'nseBseWallet') {
+          targetUpdate['nseBseWallet.balance'] = amount;
         } else {
           const targetBalanceField = this.getBalanceFieldName(targetWallet);
           targetUpdate[targetBalanceField] = amount;
@@ -521,13 +568,21 @@ class WalletTransferService {
           targetBalance: ledgerTargetAfter
         };
       } else {
-        const freshUser = await User.findById(user._id);
+        const nseInvolved =
+          sourceWallet === 'nseBseWallet' ||
+          sourceWallet === 'tradingAccount' ||
+          targetWallet === 'nseBseWallet' ||
+          targetWallet === 'tradingAccount';
+        if (nseInvolved) {
+          await this._syncNseBseOnUser(user);
+        }
+
         const sourceBalanceField = this.getBalanceFieldName(sourceWallet);
 
-        const currentSourceBalance = this.getTransferSourceBalance(freshUser, sourceWallet);
+        const currentSourceBalance = this.getTransferSourceBalance(user, sourceWallet);
 
         if (currentSourceBalance < amount) {
-          throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
+          throw new Error(this.buildTransferInsufficientError(user, sourceWallet, amount));
         }
 
         let updatedUser;
@@ -535,7 +590,7 @@ class WalletTransferService {
         if (MARGIN_SEGMENT_SOURCES.includes(sourceWallet)) {
           const debited = await atomicMarginSegmentDebitForTransfer(User, user._id, sourceWallet, amount);
           if (!debited) {
-            throw new Error(this.buildTransferInsufficientError(freshUser, sourceWallet, amount));
+            throw new Error(this.buildTransferInsufficientError(user, sourceWallet, amount));
           }
           updatedUser = await User.findById(user._id);
         } else {
@@ -555,8 +610,9 @@ class WalletTransferService {
           const afterSource = this._balanceAfterSourceDebit(updatedUser, sourceWallet);
           const um = updatedUser.wallet?.usedMargin || 0;
 
-          if (sourceWallet === 'tradingAccount') {
-            if (afterSource < um) {
+          if (sourceWallet === 'tradingAccount' || sourceWallet === 'nseBseWallet') {
+            const nseUm = updatedUser.nseBseWallet?.usedMargin ?? um;
+            if (afterSource < nseUm) {
               await User.findByIdAndUpdate(user._id, { $inc: { [sourceBalanceField]: amount } });
               throw new Error(this.buildTransferInsufficientError(updatedUser, sourceWallet, amount));
             }

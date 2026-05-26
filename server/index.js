@@ -341,39 +341,18 @@ setInterval(() => {
   );
 }, 60 * 1000);
 
-// Cleanup expired demo accounts - runs every hour
+// Cleanup expired demo accounts — full delete if not converted to real (hourly + on boot)
 const cleanupExpiredDemoAccounts = async () => {
   try {
-    const now = new Date();
-    const expiredUsers = await User.find({
-      isDemo: true,
-      demoExpiresAt: { $lt: now }
-    });
-    
-    if (expiredUsers.length > 0) {
-      // Import models for cleanup
-      const Position = (await import('./models/Position.js')).default;
-      const Trade = (await import('./models/Trade.js')).default;
-      
-      for (const user of expiredUsers) {
-        // Delete user's trading data
-        await Position.deleteMany({ user: user._id });
-        await Trade.deleteMany({ user: user._id });
-        
-        // Delete the user
-        await User.deleteOne({ _id: user._id });
-        console.log(`Deleted expired demo account: ${user.username} (${user.email})`);
-      }
-      
-      console.log(`Cleaned up ${expiredUsers.length} expired demo accounts`);
-    }
+    const { cleanupExpiredDemoAccounts: runDemoCleanup } = await import('./utils/demoAccountUtils.js');
+    await runDemoCleanup();
   } catch (error) {
     console.error('Error cleaning up expired demo accounts:', error);
   }
 };
 
 // First run is inside httpServer.listen after Mongo connects; then hourly
-setInterval(cleanupExpiredDemoAccounts, 60 * 60 * 1000); // Every hour
+setInterval(cleanupExpiredDemoAccounts, 30 * 60 * 1000); // Every 30 minutes
 
 // Initialize EOD Settlement cron jobs (dynamic auto-square based on backend settings)
 EODSettlement.init();

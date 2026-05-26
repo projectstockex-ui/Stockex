@@ -3,6 +3,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2, CheckCircle, Star, MapPin, Briefcase } from 'lucide-react';
 import axios from 'axios';
+import { StockExLogo } from '../components/StockExLogo';
 
 const UserLogin = () => {
   const [searchParams] = useSearchParams();
@@ -344,8 +345,10 @@ const UserLogin = () => {
         
         <div className="w-full max-w-md relative z-10">
           <div className="text-center mb-8">
-            {branding.logoUrl && (
+            {branding.logoUrl ? (
               <img src={branding.logoUrl} alt="Logo" className="h-20 mx-auto mb-4 object-contain" />
+            ) : (
+              <StockExLogo className="h-16 w-auto max-w-[200px] mx-auto mb-4 object-contain" alt="StockEx" />
             )}
             {branding.welcomeTitle ? (
               <h1 className="text-2xl font-bold text-white mb-2">{branding.welcomeTitle}</h1>

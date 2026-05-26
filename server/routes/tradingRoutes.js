@@ -204,15 +204,33 @@ router.post('/margin-preview', protect, async (req, res) => {
     const isOptionBuy = isOption && side === 'BUY';
     const isOptionSell = isOption && side === 'SELL';
 
-    leverage = TradeService.capLeverageFromInstrument(instrumentDoc, leverage, isIntraday, isOptionBuy);
+    const hierarchySegKeyPreview = TradeService.resolveMarketWatchSegmentKey(effectiveSegment, instrumentType);
+    const allowOptionBuyLeverage =
+      isOptionBuy &&
+      TradeService.segmentHasOptionSideLeverage(hierarchySegKeyPreview);
+    leverage = TradeService.capLeverageFromInstrument(instrumentDoc, leverage, isIntraday, isOptionBuy, {
+      allowOptionBuyLeverage,
+    });
     
     const price = req.body.price || 0;
     const bnCryptoPreview = isBinanceCryptoOrder({ ...req.body, segment: effectiveSegment });
-    let lotSize = req.body.lotSize || TradingService.getLotSize(symbol, category, req.body.exchange);
+    let contractLotSize =
+      instrumentDoc?.lotSize > 0 ? Number(instrumentDoc.lotSize) : Number(req.body.lotSize) || 1;
+    let lotSize = contractLotSize || TradingService.getLotSize(symbol, category, req.body.exchange);
     const segPrev = String(effectiveSegment || '').toUpperCase();
-    // CRYPTOFUT and CRYPTOOPT: No lot system - use quantity directly
+    const isIndianQtySegment =
+      !bnCryptoPreview &&
+      (['NSEFUT', 'NSEOPT', 'NSE-EQ', 'NSE', 'BSE', 'BSE-FUT', 'BSE-OPT', 'NFO', 'BFO', 'FNO', 'EQUITY'].includes(
+        segPrev
+      ) ||
+        ['NSE', 'NFO', 'BSE', 'BFO'].includes(String(exchange || '').toUpperCase()));
+    if (instrumentDoc?.lotSize > 0) {
+      contractLotSize = Number(instrumentDoc.lotSize);
+      lotSize = contractLotSize;
+    }
     if (segPrev === 'CRYPTOFUT' || segPrev === 'CRYPTOOPT') {
-      lotSize = 1; // Force lotSize to 1 for crypto futures/options
+      contractLotSize = 1;
+      lotSize = 1;
     }
     if (bnCryptoPreview && instrumentDoc?.lotSize > 0) {
       lotSize = instrumentDoc.lotSize;
@@ -247,9 +265,9 @@ router.post('/margin-preview', protect, async (req, res) => {
       }
       
       if (fixedMarginPerLot > 0) {
-        // Use quantity-based calculation: margin per unit * quantity
-        // For fixed margin per lot, calculate proportionally based on quantity
-        marginRequired = (fixedMarginPerLot / lotSize) * quantity;
+        const lotDivisor =
+          isIndianQtySegment && !isOption && contractLotSize > 0 ? contractLotSize : lotSize;
+        marginRequired = (fixedMarginPerLot / lotDivisor) * quantity;
         usedFixedMargin = true;
         marginSource = 'script_fixed';
       }
@@ -266,50 +284,24 @@ router.post('/margin-preview', protect, async (req, res) => {
     // For all segments: dynamically resolve leverage from segment settings (no hardcoding)
     const ss = segmentSettingsForMargin || segmentSettings || {};
     if (!usedFixedMargin) {
-      const candidates = isIntraday
-        ? [
-            ss.quantityModeSettings?.intradayLeverage,
-            ss.lotSettings?.intradayLeverage,
-            ss.exposureIntraday,
-            ss.intradayLeverage
-          ]
-        : [
-            ss.quantityModeSettings?.carryForwardLeverage,
-            ss.lotSettings?.carryForwardLeverage,
-            ss.exposureCarryForward,
-            ss.carryForwardLeverage
-          ];
-      let exposure = 1;
-      for (const v of candidates) {
-        const n = Number(v);
-        if (Number.isFinite(n) && n > 1) { exposure = n; break; }
-      }
+      const exposure = TradeService.resolveSegmentExposureMultiplier(segmentSettingsForMargin || ss, {
+        isIntraday,
+        isOptionBuy,
+        effectiveSegment,
+        instrumentType,
+      });
 
       console.log('[MarginPreview] Margin calculation debug:', {
         tradeValue,
         exposure,
         leverage,
-        candidates,
-        quantityModeSettings: ss?.quantityModeSettings,
-        lotSettings: ss?.lotSettings,
-        segmentKey: effectiveSegment
+        lotSize,
+        segmentKey: effectiveSegment,
       });
-
-      // Force apply quantityModeSettings leverage if set and > 1
-      if (exposure === 1 && ss?.quantityModeSettings) {
-        const qtyLeverage = isIntraday 
-          ? ss.quantityModeSettings.intradayLeverage
-          : ss.quantityModeSettings.carryForwardLeverage;
-        if (qtyLeverage && Number(qtyLeverage) > 1) {
-          exposure = Number(qtyLeverage);
-          console.log('[MarginPreview] Forcing quantityModeSettings leverage:', exposure);
-        }
-      }
 
       if (exposure > 1) {
         marginRequired = tradeValue / exposure / leverage;
         marginSource = 'segment_exposure';
-        // Sync back to segmentSettingsForMargin for response
         if (segmentSettingsForMargin) {
           if (isIntraday) segmentSettingsForMargin.exposureIntraday = exposure;
           else segmentSettingsForMargin.exposureCarryForward = exposure;
@@ -333,7 +325,14 @@ router.post('/margin-preview', protect, async (req, res) => {
     let brokerage = 0;
     let spread = 0;
     try {
-      const baseBrokerage = await TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
+      const brokerageLots = isIndianQtySegment ? effectivePreviewLots : lots;
+      const brokeragePayload = { ...req.body, quantity, lotSize };
+      const baseBrokerage = await TradeService.calculateUserBrokerage(
+        segmentSettings,
+        scriptSettings,
+        brokeragePayload,
+        brokerageLots
+      );
       const extraBrokerage = TradeService.instrumentAdditionalCommission(instrumentDoc, effectiveLots, tradeValue);
       const oneWayBrokerage = baseBrokerage + extraBrokerage;
       brokerage = Math.round(oneWayBrokerage * 2 * 100) / 100;
@@ -381,27 +380,56 @@ router.post('/margin-preview', protect, async (req, res) => {
       usedMarginDisplay = recalculatedMargin.mcxWallet;
       availableBalance = tradingBalance - usedMarginDisplay;
     } else {
-      // For NSE/BSE, use DB usedMargin instead of recalculated to avoid issues with quantity mode
-      tradingBalance = req.user.wallet?.tradingBalance || req.user.wallet?.cashBalance || 0;
-      usedMarginDisplay = req.user.wallet?.usedMargin || 0;
+      const { getNseBseBalance } = await import('../utils/nseBseWallet.js');
+      tradingBalance = getNseBseBalance(req.user);
+      usedMarginDisplay = recalculatedMargin.nseBseWallet ?? recalculatedMargin.wallet ?? 0;
       availableBalance = tradingBalance - usedMarginDisplay;
     }
     
-    // Get lot/qty limits from settings - prefer quantityModeSettings for all exchanges
+    // FUT / EQ / MCXFUT → quantityModeSettings; OPTIONS → lotSettings
     const qtyModeSettings = segmentSettings?.quantityModeSettings;
-    const maxLots = (qtyModeSettings?.maxQuantity > 0)
-      ? qtyModeSettings.maxQuantity
-      : (scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots);
-    const minLots = (qtyModeSettings?.minQuantity > 0)
-      ? qtyModeSettings.minQuantity
-      : (scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1);
-    
-    // Get breakup quantity and max bid limits - prefer quantityModeSettings.breakupQuantity for all exchanges
-    const instrumentBreakupQuantity = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.breakupQuantity;
-    const segmentBreakupQuantity = (qtyModeSettings?.breakupQuantity > 0)
-      ? qtyModeSettings.breakupQuantity
-      : (segmentSettings?.quantitySettings?.breakupQuantity || 0);
-    const breakupQuantity = instrumentBreakupQuantity || segmentBreakupQuantity || 0;
+    const segLotSettings = segmentSettings?.lotSettings || {};
+    const scriptLotSettings = scriptSettings?.lotSettings || {};
+    let maxLots;
+    let minLots;
+    let breakupQuantity;
+    if (isOption) {
+      maxLots =
+        scriptLotSettings.maxLots > 0
+          ? scriptLotSettings.maxLots
+          : segLotSettings.maxLots > 0
+            ? segLotSettings.maxLots
+            : segmentSettings?.maxLots;
+      minLots =
+        scriptLotSettings.minLots > 0
+          ? scriptLotSettings.minLots
+          : segLotSettings.minLots > 0
+            ? segLotSettings.minLots
+            : segmentSettings?.minLots || 1;
+      breakupQuantity =
+        scriptLotSettings.breakupLots > 0
+          ? scriptLotSettings.breakupLots
+          : segLotSettings.breakupLots > 0
+            ? segLotSettings.breakupLots
+            : segmentSettings?.orderLots || 0;
+    } else {
+      maxLots =
+        qtyModeSettings?.maxQuantity > 0
+          ? qtyModeSettings.maxQuantity
+          : scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots;
+      minLots =
+        qtyModeSettings?.minQuantity > 0
+          ? qtyModeSettings.minQuantity
+          : scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1;
+      const instrumentBreakupQuantity =
+        instrumentDoc?.tradingDefaults?.enabled &&
+        instrumentDoc.tradingDefaults.quantitySettings?.breakupQuantity;
+      const segmentBreakupQuantity =
+        qtyModeSettings?.breakupQuantity > 0
+          ? qtyModeSettings.breakupQuantity
+          : segmentSettings?.quantitySettings?.breakupQuantity || 0;
+      breakupQuantity = instrumentBreakupQuantity || segmentBreakupQuantity || 0;
+    }
 
     const instrumentMaxBid = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.maxBid;
     const segmentMaxBid = segmentSettings?.quantitySettings?.maxBid;
@@ -442,12 +470,49 @@ router.post('/margin-preview', protect, async (req, res) => {
       }
     } else if (orderIsUsdSpot({ ...req.body, segment, instrumentType }) || isMCX) {
       // For MCX and USD spot, validate quantity directly (not lots)
-      lotsValid = quantity > 0;
-      if (quantity > 0 && !lotsValid) {
+      lotsValid = Number.isFinite(quantity) && quantity > 0;
+      if (!lotsValid) {
         lotsError = `Invalid quantity`;
+      } else if (minQuantity > 0 && quantity < minQuantity) {
+        lotsValid = false;
+        lotsError = `Minimum quantity is ${minQuantity}`;
+      } else if (maxQuantity > 0 && quantity > maxQuantity) {
+        lotsValid = false;
+        lotsError = `Maximum quantity is ${maxQuantity}`;
+      } else if (breakupQuantity > 0 && quantity > breakupQuantity) {
+        lotsValid = false;
+        lotsError = `Max ${breakupQuantity} quantity per order`;
       }
     } else {
-      lotsValid = lots >= minLots && lots <= maxLots;
+      const isIndianQtySegment =
+        !isCrypto &&
+        !isForex &&
+        !isMCX &&
+        (['NSEFUT', 'NSEOPT', 'NSE-EQ', 'NSE', 'BSE', 'BSE-FUT', 'BSE-OPT', 'NFO', 'BFO', 'FNO', 'EQUITY'].includes(
+          segPrev
+        ) ||
+          ['NSE', 'NFO', 'BSE', 'BFO'].includes(String(exchange || '').toUpperCase()));
+
+      if (isIndianQtySegment) {
+        const minQty = minLots > 0 ? minLots : 1;
+        const maxQty = maxLots > 0 ? maxLots : 0;
+        lotsValid = Number.isFinite(quantity) && quantity > 0;
+        if (lotsValid && quantity < minQty) {
+          lotsValid = false;
+          lotsError = `Minimum quantity is ${minQty}`;
+        } else if (lotsValid && maxQty > 0 && quantity > maxQty) {
+          lotsValid = false;
+          lotsError = `Maximum quantity is ${maxQty}`;
+        } else if (lotsValid && breakupQuantity > 0 && quantity > breakupQuantity) {
+          lotsValid = false;
+          lotsError = `Max ${breakupQuantity} quantity per order`;
+        }
+      } else {
+        lotsValid = lots >= minLots && lots <= maxLots;
+        if (!lotsValid) {
+          lotsError = `Quantity must be between ${minLots} and ${maxLots} lots`;
+        }
+      }
     }
     
     // Get commission from segment settings
@@ -457,21 +522,25 @@ router.post('/margin-preview', protect, async (req, res) => {
     const segmentOrderLots = segmentSettings?.lotSettings?.breakupLots ?? segmentSettings?.orderLots;
     const perOrderLots = scriptOrderLots || segmentOrderLots || maxLots;
     
-    // For crypto/forex/MCX, only check marginRequired, don't include brokerage in required check
-    const totalRequired = (isCrypto || isForex || isMCX) ? marginRequired : marginRequired + brokerage;
-
-    // SIMPLE RULE for ALL segments: If wallet balance > required margin, allow trade
-    const canPlace = lotsValid && totalRequired <= tradingBalance;
-    const shortfall = totalRequired > tradingBalance ? totalRequired - tradingBalance : 0;
+    const totalRequired = marginRequired + brokerage;
+    const marginShortfall = Math.max(0, marginRequired - availableBalance);
+    const brokerageShortfall = Math.max(0, totalRequired - availableBalance);
+    const canPlace = lotsValid && totalRequired <= availableBalance;
+    const shortfall = brokerageShortfall;
+    const displayAvailableBalance = Math.max(0, availableBalance - brokerage);
 
     res.json({
       marginRequired: Math.round(marginRequired * 100) / 100,
+      totalRequired: Math.round(totalRequired * 100) / 100,
       tradeValue: Math.round(tradeValue * 100) / 100,
       effectiveMargin: marginCalc.effectiveMargin,
       leverage,
       canPlace,
       availableBalance,
+      displayAvailableBalance: Math.round(displayAvailableBalance * 100) / 100,
       tradingBalance,
+      brokerageShortfall: Math.round(brokerageShortfall * 100) / 100,
+      marginShortfall: Math.round(marginShortfall * 100) / 100,
       usedFixedMargin,
       marginSource,
       brokerage: Math.round(brokerage * 100) / 100,
@@ -570,6 +639,17 @@ router.get('/history', protect, async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const trades = await TradingService.getTradeHistory(req.user._id, limit);
     res.json(trades);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Autosquare event log (every run at 12:00, 13:00, end time, etc.)
+router.get('/autosquare-history', protect, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 300;
+    const rows = await TradingService.getAutoSquareHistory(req.user._id, limit);
+    res.json(rows);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

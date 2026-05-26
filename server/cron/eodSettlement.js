@@ -9,6 +9,13 @@ import { getLTPMapForTrades, cacheKeyForTrade } from '../services/ltpResolutionS
 import TradingService from '../services/tradingService.js';
 import { getCryptoData } from '../services/binanceWebSocket.js';
 import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
+import {
+  computeNseBseRealBalance,
+  executeLedgerAutosquareNil,
+  shouldTriggerLedgerAutosquare,
+  ledgerClosePercent,
+  getLedgerReferenceBalance,
+} from '../services/nseBseLedgerAutosquareService.js';
 
 /**
  * TradePro Trading Engine - EOD Settlement Cron Jobs
@@ -147,13 +154,34 @@ class EODSettlement {
     if (segmentGroup === 'MCX') {
       return { balancePath: 'mcxWallet.balance', usedMarginPath: 'mcxWallet.usedMargin' };
     }
-    return { balancePath: 'wallet.tradingBalance', usedMarginPath: 'wallet.usedMargin' };
+    if (segmentGroup === 'NSE' || segmentGroup === 'BSE') {
+      return { balancePath: 'nseBseWallet.balance', usedMarginPath: 'nseBseWallet.usedMargin' };
+    }
+    return { balancePath: 'nseBseWallet.balance', usedMarginPath: 'nseBseWallet.usedMargin' };
   }
 
   /**
    * Carry-forward qty for next session:
    * nextDayQty = floor((walletBalance + positionPnL) × carryForwardLeverage / endLtp)
    */
+  static sameISTDay(a, b) {
+    if (!a || !b) return false;
+    const fmt = (d) =>
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(d));
+    return fmt(a) === fmt(b);
+  }
+
+  /** NSE / BSE / NFO / BFO — autosquare keeps position OPEN (carry-forward qty), does not close. */
+  static isNseBseAutosquareSegment(segment, trade) {
+    if (segment === 'NSE' || segment === 'BSE') return true;
+    if (!trade) return false;
+    const ex = String(trade.exchange || '').toUpperCase();
+    const seg = String(trade.segment || '').toUpperCase();
+    if (['NSE', 'BSE', 'NFO', 'BFO'].includes(ex)) return true;
+    if (seg.startsWith('NSE') || seg.startsWith('BSE')) return true;
+    return false;
+  }
+
   static async applyCarryForwardAutosquare(trade, { ltp, closeTime, segmentGroup, admin }) {
     const { carryForwardLeverage } = EODSettlement.getAutosquareSettingsForTrade(
       admin,
@@ -169,29 +197,55 @@ class EODSettlement {
 
     const walletRoot = balancePath.split('.')[0];
     const initialBalance = Number(user[walletRoot]?.balance) || 0;
-    const originalQty = trade.originalQty || trade.quantity || trade.lots || 1;
+    const qtyAtEvent = Number(trade.quantity) || Number(trade.lots) || 1;
+    const firstOrigQty = trade.originalQty != null ? Number(trade.originalQty) : qtyAtEvent;
     const entryLtp = Number(trade.entryPrice) || 0;
     const multiplier = trade.side === 'BUY' ? 1 : -1;
-    const pnl = (Number(ltp) - entryLtp) * originalQty * multiplier;
+    const pnl = (Number(ltp) - entryLtp) * qtyAtEvent * multiplier;
     const netBalance = Math.max(0, initialBalance + pnl);
     const nextDayQty = Math.max(
       0,
       Math.floor((netBalance * carryForwardLeverage) / Number(ltp))
     );
     const carryForwardQty = nextDayQty;
+    const squaredAt = new Date();
+    const historyEntry = {
+      autoSquaredAt: squaredAt,
+      closeTime: closeTime ? String(closeTime) : '',
+      autoSquareLtp: Number(ltp) > 0 ? Number(ltp) : null,
+      originalQty: qtyAtEvent,
+      nextDayQty,
+      pnlAtAutoSquare: pnl,
+      netBalanceAtAutoSquare: netBalance,
+      carryForwardLeverage,
+    };
     const prevMargin = Number(trade.marginUsed) || Number(trade.requiredMargin) || 0;
     const nextMargin =
-      originalQty > 0 && prevMargin > 0
-        ? Math.round((prevMargin * nextDayQty) / originalQty * 100) / 100
+      qtyAtEvent > 0 && prevMargin > 0
+        ? Math.round((prevMargin * nextDayQty) / qtyAtEvent * 100) / 100
         : Math.round(((nextDayQty * Number(ltp)) / carryForwardLeverage) * 100) / 100;
 
-    await User.updateOne({ userId: trade.userId }, { $set: { [balancePath]: netBalance } });
+    if (!skipWalletUpdate) {
+      await User.updateOne({ userId: trade.userId }, { $set: { [balancePath]: netBalance } });
+    }
 
-    await Trade.findByIdAndUpdate(trade._id, {
+    const freshTrade = await Trade.findById(trade._id).select('autoSquareHistory').lean();
+    const closeKey = closeTime ? String(closeTime) : '';
+    const alreadyLogged = (freshTrade?.autoSquareHistory || []).some(
+      (e) =>
+        closeKey &&
+        String(e.closeTime || '') === closeKey &&
+        EODSettlement.sameISTDay(e.autoSquaredAt, squaredAt) &&
+        Math.abs(new Date(e.autoSquaredAt).getTime() - squaredAt.getTime()) < 120000
+    );
+
+    const latestFields = {
+      status: 'OPEN',
       isAutoSquared: true,
-      autoSquaredAt: EODSettlement.parseCloseTimeToDate(closeTime),
-      autoSquareLtp: ltp,
-      originalQty,
+      autoSquaredAt: squaredAt,
+      autoSquareLtp: Number(ltp) > 0 ? Number(ltp) : null,
+      closeReason: 'AUTO_SQUARE',
+      originalQty: firstOrigQty,
       pnlAtAutoSquare: pnl,
       carryForwardQty: nextDayQty,
       netBalanceAtAutoSquare: netBalance,
@@ -200,18 +254,167 @@ class EODSettlement {
       leverage: carryForwardLeverage,
       marginUsed: nextMargin,
       requiredMargin: nextMargin,
-    });
+    };
 
-    const userDoc = await User.findOne({ userId: trade.userId }).select('_id').lean();
+    if (alreadyLogged) {
+      await Trade.findByIdAndUpdate(trade._id, { $set: latestFields });
+    } else {
+      await Trade.findByIdAndUpdate(trade._id, {
+        $push: { autoSquareHistory: historyEntry },
+        $set: latestFields,
+      });
+    }
+
+    const userDoc = await User.findOne({ userId: trade.userId }).select('_id adminCode').lean();
     if (userDoc?._id) {
       try {
         await recalculateUsedMargin(userDoc._id);
       } catch (err) {
         console.warn(`[Auto-square] usedMargin recalc failed for ${trade.userId}:`, err.message);
       }
+
+      const walletSuffix =
+        segmentGroup === 'MCX'
+          ? ' (MCX)'
+          : segmentGroup === 'CRYPTO'
+            ? ' (Crypto)'
+            : segmentGroup === 'FOREX'
+              ? ' (Forex)'
+              : ' (NSE/BSE)';
+      const ledgerSegment =
+        segmentGroup === 'MCX'
+          ? 'MCX'
+          : segmentGroup === 'CRYPTO'
+            ? 'CRYPTO'
+            : segmentGroup === 'FOREX'
+              ? 'FOREX'
+              : 'NSE/BSE';
+      try {
+        const WalletLedger = (await import('../models/WalletLedger.js')).default;
+        const balAfter =
+          segmentGroup === 'MCX'
+            ? netBalance
+            : segmentGroup === 'CRYPTO'
+              ? netBalance
+              : segmentGroup === 'FOREX'
+                ? netBalance
+                : netBalance;
+        await WalletLedger.create({
+          ownerType: 'USER',
+          ownerId: userDoc._id,
+          adminCode: userDoc.adminCode || trade.adminCode,
+          type: pnl >= 0 ? 'CREDIT' : 'DEBIT',
+          reason: 'TRADE_PNL',
+          amount: Math.round(Math.abs(pnl) * 100) / 100,
+          balanceAfter: balAfter,
+          reference: { type: 'Trade', id: trade._id },
+          description:
+            `${trade.symbol || 'Trade'} ${trade.side || ''} Auto-square @ ₹${Number(ltp).toLocaleString('en-IN')} → next qty ${nextDayQty}${walletSuffix}`,
+          isAutoSquare: true,
+          meta: { segment: ledgerSegment, tradeId: trade.tradeId || String(trade._id) },
+        });
+      } catch (ledgerErr) {
+        console.warn('[Auto-square] ledger note failed:', ledgerErr?.message || ledgerErr);
+      }
     }
 
-    return { originalQty, nextDayQty, carryForwardQty: nextDayQty, pnl, netBalance, carryForwardLeverage };
+    return {
+      originalQty: qtyAtEvent,
+      firstOrigQty,
+      nextDayQty,
+      carryForwardQty: nextDayQty,
+      pnl,
+      netBalance,
+      carryForwardLeverage,
+      historyEntry,
+    };
+  }
+
+  /**
+   * NSE/BSE EOD: MTM at bid/ask → real balance; 90% ledger loss → nil all; else carry-forward per trade.
+   */
+  static async processNseBseEodAutosquare(trades, { admin, closeTime, segment, ltpMap }) {
+    let markedCount = 0;
+    let failedCount = 0;
+    let closedCount = 0;
+
+    const byUser = new Map();
+    for (const trade of trades) {
+      const uid = trade.user?.toString?.() || trade.user;
+      if (!uid) continue;
+      if (!byUser.has(String(uid))) byUser.set(String(uid), []);
+      byUser.get(String(uid)).push(trade);
+    }
+
+    for (const [userOid, userTrades] of byUser) {
+      try {
+        const user = await User.findById(userOid).select('userId settings nseBseWallet').lean();
+        if (!user) continue;
+
+        const snapshot = await computeNseBseRealBalance(userOid, { preferBidAsk: true });
+        const closePct = ledgerClosePercent(user);
+        const ref = snapshot.referenceBalance || (await getLedgerReferenceBalance(userOid));
+
+        if (shouldTriggerLedgerAutosquare(snapshot.realBalance, ref, closePct)) {
+          const nilResult = await executeLedgerAutosquareNil(userOid, {
+            reason: 'LEDGER_EOD',
+            force: false,
+          });
+          closedCount += nilResult.closed || 0;
+          console.log(
+            `[EOD NSE/BSE] Ledger nil user ${user.userId}: equity ₹${snapshot.realBalance} <= floor ₹${snapshot.minEquityFloor}`
+          );
+          continue;
+        }
+
+        const netBalance = snapshot.realBalance;
+        await User.updateOne(
+          { _id: userOid },
+          { $set: { 'nseBseWallet.balance': Math.max(0, netBalance), 'wallet.tradingBalance': 0 } }
+        );
+
+        for (const trade of userTrades) {
+          try {
+            const po = typeof trade.toObject === 'function' ? trade.toObject() : trade;
+            const ck = cacheKeyForTrade(po);
+            const priceRow = snapshot.priceMap?.get?.(String(trade._id));
+            const ltp =
+              priceRow?.markPrice ||
+              ltpMap.get(ck) ||
+              trade.currentPrice ||
+              trade.entryPrice;
+
+            if (!ltp || ltp <= 0) {
+              failedCount++;
+              continue;
+            }
+
+            const segGroup =
+              segment === 'BSE' || trade.exchange === 'BSE' || String(trade.segment || '').startsWith('BSE')
+                ? 'NSE'
+                : 'NSE';
+
+            await EODSettlement.applyCarryForwardAutosquare(trade, {
+              ltp,
+              closeTime,
+              segmentGroup: segGroup,
+              admin,
+              netBalanceOverride: netBalance,
+              skipWalletUpdate: true,
+            });
+            markedCount++;
+          } catch (err) {
+            failedCount++;
+            console.error(`[EOD NSE/BSE] carry-forward ${trade.tradeId}:`, err.message);
+          }
+        }
+      } catch (err) {
+        failedCount += userTrades.length;
+        console.error(`[EOD NSE/BSE] user batch ${userOid}:`, err.message);
+      }
+    }
+
+    return { markedCount, failedCount, closedCount };
   }
   
   /**
@@ -244,6 +447,8 @@ class EODSettlement {
       console.log('CRON: Daily counter reset starting...');
       try {
         await WalletService.resetDailyCounters();
+        const { resetDailyLedgerReference } = await import('../services/nseBseLedgerAutosquareService.js');
+        await resetDailyLedgerReference();
         
         // Also reset trading blocked status for users
         await User.updateMany(
@@ -277,9 +482,24 @@ class EODSettlement {
       timezone: 'Asia/Kolkata'
     });
     
+    // ==================== MCX MIS EOD SQUARE-OFF ====================
+    // Hard backup at 11:30 PM IST — dynamic scheduler alone missed positions when server was down
+    // or admin closingTime was unset (MCX trades Sun–Fri extended hours).
+    cron.schedule('30 23 * * *', async () => {
+      console.log('CRON: MCX MIS EOD square-off starting (23:30 IST)...');
+      try {
+        const result = await StopOutService.executeEODSquareOff('MCX');
+        console.log('CRON: MCX MIS EOD square-off complete:', result);
+      } catch (error) {
+        console.error('CRON: MCX MIS EOD square-off error:', error);
+      }
+    }, {
+      timezone: 'Asia/Kolkata'
+    });
+
     // ==================== MCX NRML MARGIN RECALCULATION ====================
     // Run at 11:45 PM IST (after MCX close)
-    cron.schedule('45 23 * * 1-5', async () => {
+    cron.schedule('45 23 * * *', async () => {
       console.log('CRON: MCX NRML margin recalculation starting...');
       try {
         await this.recalculateNRMLMargins('MCX');
@@ -427,19 +647,20 @@ class EODSettlement {
       } else if (segment === 'NSE') {
         segmentQuery = {
           $or: [
-            { exchange: 'NSE' },
+            { exchange: { $in: ['NSE', 'NFO'] } },
             { segment: 'NSEFUT' },
             { segment: 'NSEOPT' },
-            { segment: 'NSE-EQ' }
-          ]
+            { segment: 'NSE-EQ' },
+            { segment: 'FNO' },
+          ],
         };
       } else if (segment === 'BSE') {
         segmentQuery = {
           $or: [
-            { exchange: 'BSE' },
+            { exchange: { $in: ['BSE', 'BFO'] } },
             { segment: 'BSE-FUT' },
-            { segment: 'BSE-OPT' }
-          ]
+            { segment: 'BSE-OPT' },
+          ],
         };
       } else {
         segmentQuery = { segment: segment };
@@ -462,19 +683,21 @@ class EODSettlement {
         console.warn(`Auto-square: No closeTime for admin ${adminId} segment ${segment}; using current IST for stamp only`);
       }
       
-      // For ALL segments: select both MIS and NRML positions
-      // MIS will be closed, NRML will be marked as auto-squared for carry-forward
-      // Exclude already auto-squared trades to avoid re-processing
+      // NSE/BSE: MIS + NRML stay OPEN (carry-forward qty). MCX MIS may still close at EOD.
+      // CRYPTO: re-run at each close time (12:00, 13:00, …) and append autoSquareHistory
+      const markAllCrypto = segment === 'CRYPTO';
+      const keepOpenNseBse = EODSettlement.isNseBseAutosquareSegment(segment, null);
+      // NSE/BSE + Crypto: run every market close (new history row each day). MCX: first pass only.
       const trades = await Trade.find({
         adminCode: admin?.adminCode,
         productType: { $in: ['MIS', 'NRML', 'CARRYFORWARD'] },
         status: 'OPEN',
-        isAutoSquared: { $ne: true },
-        ...segmentQuery
+        ...(markAllCrypto || keepOpenNseBse ? {} : { isAutoSquared: { $ne: true } }),
+        ...segmentQuery,
       }).lean();
-      
+
       console.log(`Auto-square: Found ${trades.length} trades under admin ${adminId} with open ${segment} positions`);
-      
+
       // Get autosquarePercent and carryForwardLeverage from admin segment permissions
       let autosquarePercent = 90; // default
       let carryForwardLeverage = 40; // default
@@ -500,18 +723,36 @@ class EODSettlement {
       console.log(`Auto-square: Using autosquarePercent = ${autosquarePercent}%`);
       console.log(`Auto-square: Using carryForwardLeverage = ${carryForwardLeverage}x`);
 
-      // For CRYPTO: mark ALL positions as auto-squared and keep OPEN (no closing)
-      // For other segments: close MIS positions, mark NRML as auto-squared for carry-forward
-      const markAllCrypto = segment === 'CRYPTO';
-      console.log(`Auto-square: Segment ${segment}, ${markAllCrypto ? 'will mark ALL positions as auto-squared (keep OPEN)' : 'will close MIS positions and mark NRML as auto-squared'}`);
-
-      // Get LTP map for all trades
-      const posObjs = trades.map((t) => (typeof t.toObject === 'function' ? t.toObject() : t));
-      const ltpMap = await getLTPMapForTrades(posObjs);
+      console.log(
+        `Auto-square: Segment ${segment}, ${
+          markAllCrypto || keepOpenNseBse
+            ? 'MIS/NRML stay OPEN (carry-forward autosquare)'
+            : 'will close MIS and mark NRML as auto-squared'
+        }`
+      );
 
       let closedCount = 0;
       let markedCount = 0;
       let failedCount = 0;
+
+      const posObjs = trades.map((t) => (typeof t.toObject === 'function' ? t.toObject() : t));
+      const ltpMap = await getLTPMapForTrades(posObjs);
+
+      if (keepOpenNseBse) {
+        const nseStats = await EODSettlement.processNseBseEodAutosquare(trades, {
+          admin,
+          closeTime,
+          segment,
+          ltpMap,
+        });
+        markedCount += nseStats.markedCount;
+        failedCount += nseStats.failedCount;
+        closedCount += nseStats.closedCount;
+        console.log(
+          `Auto-square NSE/BSE batch: marked=${markedCount} closed=${closedCount} failed=${failedCount}`
+        );
+        return;
+      }
 
       for (const trade of trades) {
         try {
@@ -555,29 +796,19 @@ class EODSettlement {
                 `walletAfterPnl=${result.netBalance.toFixed(2)} carryFwdLeverage=${result.carryForwardLeverage}x ` +
                 `nextDayQty=${result.nextDayQty} pnl=${result.pnl.toFixed(2)}`
             );
-          } else if (trade.productType === 'MIS') {
-            const result = await TradingService.squareOffPosition(
-              trade._id.toString(),
-              'TIME_BASED',
-              ltp,
-              ltp, // bidPrice
-              ltp  // askPrice
-            );
-
-            if (result.success) {
-              closedCount++;
-              console.log(`Auto-square: Closed MIS position ${trade.tradeId} at ${ltp}`);
-            } else {
-              failedCount++;
-              console.error(`Auto-square: Failed to close MIS position ${trade.tradeId}: ${result.message}`);
-            }
-          } else {
+          } else if (
+            EODSettlement.isNseBseAutosquareSegment(segment, trade) ||
+            trade.productType === 'NRML' ||
+            trade.productType === 'CARRYFORWARD'
+          ) {
             const segGroup =
-              segment === 'MCX' || trade.exchange === 'MCX'
-                ? 'MCX'
-                : trade.isForex
-                  ? 'FOREX'
-                  : 'NSE';
+              segment === 'BSE' || trade.exchange === 'BSE' || String(trade.segment || '').startsWith('BSE')
+                ? 'NSE'
+                : segment === 'MCX' || trade.exchange === 'MCX'
+                  ? 'MCX'
+                  : trade.isForex
+                    ? 'FOREX'
+                    : 'NSE';
             const result = await EODSettlement.applyCarryForwardAutosquare(trade, {
               ltp,
               closeTime,
@@ -586,9 +817,27 @@ class EODSettlement {
             });
             markedCount++;
             console.log(
-              `Auto-square NRML ${trade.tradeId} (${segGroup}): origQty=${result.originalQty} ` +
+              `Auto-square ${trade.productType} ${trade.tradeId} (${segGroup}, keep OPEN): origQty=${result.originalQty} ` +
                 `nextDayQty=${result.nextDayQty} pnl=${result.pnl.toFixed(2)}`
             );
+          } else if (trade.productType === 'MIS') {
+            const result = await TradingService.squareOffPosition(
+              trade._id.toString(),
+              'TIME_BASED',
+              ltp,
+              ltp,
+              ltp
+            );
+
+            if (result?.trade?.status === 'CLOSED' || result?.success) {
+              closedCount++;
+              console.log(`Auto-square: Closed MIS position ${trade.tradeId} at ${ltp}`);
+            } else {
+              failedCount++;
+              console.error(
+                `Auto-square: Failed to close MIS position ${trade.tradeId}: ${result?.message || 'close did not complete'}`
+              );
+            }
           }
         } catch (error) {
           failedCount++;
@@ -639,19 +888,20 @@ class EODSettlement {
       } else if (segment === 'NSE') {
         segmentQuery = {
           $or: [
-            { exchange: 'NSE' },
+            { exchange: { $in: ['NSE', 'NFO'] } },
             { segment: 'NSEFUT' },
             { segment: 'NSEOPT' },
-            { segment: 'NSE-EQ' }
-          ]
+            { segment: 'NSE-EQ' },
+            { segment: 'FNO' },
+          ],
         };
       } else if (segment === 'BSE') {
         segmentQuery = {
           $or: [
-            { exchange: 'BSE' },
+            { exchange: { $in: ['BSE', 'BFO'] } },
             { segment: 'BSE-FUT' },
-            { segment: 'BSE-OPT' }
-          ]
+            { segment: 'BSE-OPT' },
+          ],
         };
       } else {
         segmentQuery = { segment: segment };
@@ -662,6 +912,7 @@ class EODSettlement {
         user: userId,
         productType: 'MIS',
         status: 'OPEN',
+        isAutoSquared: { $ne: true },
         ...segmentQuery
       }).populate('user');
       
@@ -676,7 +927,9 @@ class EODSettlement {
       const ltpMap = await getLTPMapForTrades(posObjs);
       
       let closedCount = 0;
+      let markedCount = 0;
       let failedCount = 0;
+      const Admin = (await import('../models/Admin.js')).default;
       
       for (const position of positions) {
         if (!position.user) continue;
@@ -691,20 +944,34 @@ class EODSettlement {
         }
         
         try {
-          const result = await TradingService.squareOffPosition(
-            position._id.toString(),
-            'TIME_BASED',
-            ltp,
-            ltp, // bidPrice
-            ltp  // askPrice
-          );
-          
-          if (result.success) {
-            closedCount++;
-            console.log(`Auto-square: Closed ${position.tradeId} at ${ltp}`);
+          if (EODSettlement.isNseBseAutosquareSegment(segment, po)) {
+            const admin = position.adminCode
+              ? await Admin.findOne({ adminCode: position.adminCode }).select('adminCode segmentPermissions').lean()
+              : null;
+            await EODSettlement.applyCarryForwardAutosquare(po, {
+              ltp,
+              closeTime: '15:30:00',
+              segmentGroup: 'NSE',
+              admin,
+            });
+            markedCount++;
+            console.log(`Auto-square: NSE/BSE MIS ${position.tradeId} carry-forward (kept OPEN) at ${ltp}`);
           } else {
-            failedCount++;
-            console.error(`Auto-square: Failed to close ${position.tradeId}: ${result.message}`);
+            const result = await TradingService.squareOffPosition(
+              position._id.toString(),
+              'TIME_BASED',
+              ltp,
+              ltp,
+              ltp
+            );
+            
+            if (result.success) {
+              closedCount++;
+              console.log(`Auto-square: Closed ${position.tradeId} at ${ltp}`);
+            } else {
+              failedCount++;
+              console.error(`Auto-square: Failed to close ${position.tradeId}: ${result.message}`);
+            }
           }
         } catch (error) {
           failedCount++;
@@ -712,7 +979,10 @@ class EODSettlement {
         }
       }
       
-      console.log(`Auto-square: Completed for user ${userId} segment ${segment}. Closed: ${closedCount}, Failed: ${failedCount}`);
+      console.log(
+        `Auto-square: Completed for user ${userId} segment ${segment}. ` +
+          `Marked (OPEN): ${markedCount}, Closed: ${closedCount}, Failed: ${failedCount}`
+      );
       
     } catch (error) {
       console.error(`Auto-square: Error for user ${userId} segment ${segment}:`, error);

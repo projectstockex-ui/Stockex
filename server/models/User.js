@@ -471,6 +471,23 @@ const userSchema = new mongoose.Schema({
       default: Date.now
     }
   },
+
+  // NSE & BSE only — cash for NSE/BSE/NFO equity & derivatives (not main deposit wallet)
+  nseBseWallet: {
+    balance: { type: Number, default: 0 },
+    usedMargin: { type: Number, default: 0 },
+    realizedPnL: { type: Number, default: 0 },
+    unrealizedPnL: { type: Number, default: 0 },
+    todayRealizedPnL: { type: Number, default: 0 },
+    todayUnrealizedPnL: { type: Number, default: 0 },
+    depositTotal: { type: Number, default: 0 },
+    withdrawalTotal: { type: Number, default: 0 },
+    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    ledgerReferenceBalance: { type: Number, default: 0 },
+    ledgerAutosquareActive: { type: Boolean, default: false },
+    ledgerAutosquaredAt: { type: Date, default: null },
+    lastUpdatedAt: { type: Date, default: Date.now },
+  },
   
   // Separate Games Wallet - For fantasy trading/games
   gamesWallet: {
@@ -612,6 +629,13 @@ const userSchema = new mongoose.Schema({
     }
   },
 
+  /** Instrument tokens where user traded inside Super Admin LTP ±% bracket (dynamic limit applies). */
+  ltpBracketTokens: {
+    type: [String],
+    default: [],
+    index: true,
+  },
+
   // Segment Permissions - Detailed settings for each segment
   segmentPermissions: {
     type: Map,
@@ -631,8 +655,8 @@ const userSchema = new mongoose.Schema({
         maxLots: { type: Number, default: 50 },
         minLots: { type: Number, default: 1 },
         breakupLots: { type: Number, default: 0 },
-        notificationPercent: { type: Number, default: 70 },
-        autosquarePercent: { type: Number, default: 90 }
+        notificationPercent: { type: Number },
+        autosquarePercent: { type: Number },
       },
       // Nested quantity mode settings for separate quantity mode configuration
       quantityModeSettings: {
@@ -640,24 +664,32 @@ const userSchema = new mongoose.Schema({
         carryForwardLeverage: { type: Number, default: 1 },
         maxQuantity: { type: Number, default: 1000 },
         minQuantity: { type: Number, default: 1 },
-        breakupQuantity: { type: Number, default: 0 }
+        breakupQuantity: { type: Number, default: 0 },
+        notificationPercent: { type: Number },
+        autosquarePercent: { type: Number },
+      },
+      quantitySettings: {
+        breakupQuantity: { type: Number, default: 0 },
+        maxQuantity: { type: Number },
+        minQuantity: { type: Number },
+        maxLotQuantity: { type: Number },
+        maxBid: { type: Number },
       },
       // Toggle to enable/disable Lot Settings mode for this segment
       enableLotSettings: { type: Boolean, default: false },
       // Toggle to enable/disable Quantity Settings mode for this segment
       enableQuantitySettings: { type: Boolean, default: false },
-      quantitySettings: {
-        breakupQuantity: { type: Number, default: 0 }
-      },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
       intradayLeverage: { type: Number, default: 1 },
       carryForwardLeverage: { type: Number, default: 1 },
       allowClientIntradayOnly: { type: Boolean, default: true },
       defaultIntradayOnly: { type: Boolean, default: false },
+      intradayOnlyLeverage: { type: Number },
+      intradayOnlyMaxQty: { type: Number },
       allowLimitPendingOrders: { type: Boolean, default: true },
-      cryptoSpreadInr: { type: Number, default: 0 },
-      cryptoSpreadUsdPerSide: { type: Number, default: 0 },
+      cryptoSpreadInr: { type: Number },
+      cryptoSpreadUsdPerSide: { type: Number },
       /** IST earliest trading start (HH:mm or HH:mm:ss). Empty = no gate. */
       cryptoStartTime: { type: String, default: '' },
       /** IST session end hint (HH:mm or HH:mm:ss). */
@@ -680,15 +712,20 @@ const userSchema = new mongoose.Schema({
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 } // Number of strikes up/down from ATM
+        strikeSelection: { type: Number, default: 50 },
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxExchangeLots: { type: Number, default: 100 },
       },
-      // Option Sell Settings
       optionSell: {
         allowed: { type: Boolean, default: true },
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 } // Number of strikes up/down from ATM
+        strikeSelection: { type: Number, default: 50 },
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxExchangeLots: { type: Number, default: 100 },
       }
     },
     default: {} // Inherited from parent admin at creation time
@@ -909,6 +946,10 @@ userSchema.pre('save', async function(next) {
   if (this.mcxWallet) {
     if (this.mcxWallet.balance < 0) this.mcxWallet.balance = 0;
     if (this.mcxWallet.usedMargin < 0) this.mcxWallet.usedMargin = 0;
+  }
+  if (this.nseBseWallet) {
+    if (this.nseBseWallet.balance < 0) this.nseBseWallet.balance = 0;
+    if (this.nseBseWallet.usedMargin < 0) this.nseBseWallet.usedMargin = 0;
   }
   if (this.gamesWallet) {
     if (this.gamesWallet.balance < 0) this.gamesWallet.balance = 0;

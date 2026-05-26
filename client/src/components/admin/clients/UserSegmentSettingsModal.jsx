@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import axios from '../../../config/axios';
 import { X, Save, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { numInputValue, parseNumInput, parseIntInput, parseNonNegativeNumInput } from '../../../utils/segmentFormValues.js';
 
 const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
   const { admin } = useAuth();
@@ -14,42 +15,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
 
   const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
-  const defaultSegmentSettings = {
-    enabled: false,
-    commissionType: 'PER_LOT',
-    commissionLot: 0,
-    maxLots: 50,
-    minLots: 1,
-    intradayLeverage: 1,
-    carryForwardLeverage: 1,
-    exposureIntraday: 1,
-    exposureCarryForward: 1,
-    cryptoSpreadInr: 0,
-    cryptoSpreadUsdPerSide: 0,
-    cryptoStartTime: '',
-    cryptoClosingTime: '',
-    cryptoReferenceSymbol: '',
-    cryptoPricePerLotInr: 0,
-    cryptoLotSizeLots: 1,
-    cryptoLotSizeQuantity: 0,
-    allowLimitPendingOrders: true,
-    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50 },
-    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50 },
-    lotSettings: {
-      intradayLeverage: 1,
-      carryForwardLeverage: 1,
-      maxLots: 50,
-      minLots: 1,
-      breakupLots: 0
-    },
-    quantityModeSettings: {
-      intradayLeverage: 1,
-      carryForwardLeverage: 1,
-      maxQuantity: 1000,
-      minQuantity: 1,
-      breakupQuantity: 0
-    }
-  };
+  const defaultSegmentSettings = { enabled: false };
 
   useEffect(() => {
     fetchUserSettings();
@@ -235,11 +201,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               step="0.1"
-                              value={segmentPermissions[segment]?.lotSettings?.intradayLeverage ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleNestedChange(segment, 'lotSettings', 'intradayLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.lotSettings?.intradayLeverage)}
+                              onChange={(e) => handleNestedChange(segment, 'lotSettings', 'intradayLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -248,11 +211,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               step="0.1"
-                              value={segmentPermissions[segment]?.lotSettings?.carryForwardLeverage ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleNestedChange(segment, 'lotSettings', 'carryForwardLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.lotSettings?.carryForwardLeverage)}
+                              onChange={(e) => handleNestedChange(segment, 'lotSettings', 'carryForwardLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -263,11 +223,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               min="0"
-                              value={segmentPermissions[segment]?.lotSettings?.maxLots ?? 50}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleNestedChange(segment, 'lotSettings', 'maxLots', isNaN(val) ? 50 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.lotSettings?.maxLots)}
+                              onChange={(e) => handleNestedChange(segment, 'lotSettings', 'maxLots', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -276,11 +233,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               min="0"
-                              value={segmentPermissions[segment]?.lotSettings?.minLots ?? 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleNestedChange(segment, 'lotSettings', 'minLots', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.lotSettings?.minLots)}
+                              onChange={(e) => handleNestedChange(segment, 'lotSettings', 'minLots', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -290,10 +244,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                               type="number"
                               min="0"
                               value={segmentPermissions[segment]?.lotSettings?.breakupLots ?? 0}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleNestedChange(segment, 'lotSettings', 'breakupLots', isNaN(val) ? 0 : val);
-                              }}
+                              onChange={(e) => handleNestedChange(segment, 'lotSettings', 'breakupLots', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -311,11 +262,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               step="0.1"
-                              value={segmentPermissions[segment]?.quantityModeSettings?.intradayLeverage ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleNestedChange(segment, 'quantityModeSettings', 'intradayLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.quantityModeSettings?.intradayLeverage)}
+                              onChange={(e) => handleNestedChange(segment, 'quantityModeSettings', 'intradayLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -324,11 +272,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               step="0.1"
-                              value={segmentPermissions[segment]?.quantityModeSettings?.carryForwardLeverage ?? 1}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                handleNestedChange(segment, 'quantityModeSettings', 'carryForwardLeverage', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.quantityModeSettings?.carryForwardLeverage)}
+                              onChange={(e) => handleNestedChange(segment, 'quantityModeSettings', 'carryForwardLeverage', parseNumInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -339,11 +284,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               min="0"
-                              value={segmentPermissions[segment]?.quantityModeSettings?.maxQuantity ?? 1000}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleNestedChange(segment, 'quantityModeSettings', 'maxQuantity', isNaN(val) ? 1000 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.quantityModeSettings?.maxQuantity)}
+                              onChange={(e) => handleNestedChange(segment, 'quantityModeSettings', 'maxQuantity', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -352,11 +294,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               min="0"
-                              value={segmentPermissions[segment]?.quantityModeSettings?.minQuantity ?? 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleNestedChange(segment, 'quantityModeSettings', 'minQuantity', isNaN(val) ? 1 : val);
-                              }}
+                              value={numInputValue(segmentPermissions[segment]?.quantityModeSettings?.minQuantity)}
+                              onChange={(e) => handleNestedChange(segment, 'quantityModeSettings', 'minQuantity', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -366,10 +305,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                               type="number"
                               min="0"
                               value={segmentPermissions[segment]?.quantityModeSettings?.breakupQuantity ?? 0}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                handleNestedChange(segment, 'quantityModeSettings', 'breakupQuantity', isNaN(val) ? 0 : val);
-                              }}
+                              onChange={(e) => handleNestedChange(segment, 'quantityModeSettings', 'breakupQuantity', parseIntInput(e.target.value))}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                             />
                           </div>
@@ -403,7 +339,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                           <input
                             type="number"
                             step="0.1"
-                            value={segmentPermissions[segment]?.intradayLeverage ?? 1}
+                            value={numInputValue(segmentPermissions[segment]?.intradayLeverage)}
                             onChange={(e) => handleSegmentChange(segment, 'intradayLeverage', e.target.value === '' ? 0 : parseFloat(e.target.value))}
                             className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                           />
@@ -413,7 +349,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                           <input
                             type="number"
                             step="0.1"
-                            value={segmentPermissions[segment]?.carryForwardLeverage ?? 1}
+                            value={numInputValue(segmentPermissions[segment]?.carryForwardLeverage)}
                             onChange={(e) => handleSegmentChange(segment, 'carryForwardLeverage', e.target.value === '' ? 0 : parseFloat(e.target.value))}
                             className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                           />
@@ -423,7 +359,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                           <input
                             type="number"
                             step="0.1"
-                            value={segmentPermissions[segment]?.exposureIntraday ?? 1}
+                            value={numInputValue(segmentPermissions[segment]?.exposureIntraday)}
                             onChange={(e) => handleSegmentChange(segment, 'exposureIntraday', e.target.value === '' ? 0 : parseFloat(e.target.value))}
                             className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                           />
@@ -433,7 +369,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                           <input
                             type="number"
                             step="0.1"
-                            value={segmentPermissions[segment]?.exposureCarryForward ?? 1}
+                            value={numInputValue(segmentPermissions[segment]?.exposureCarryForward)}
                             onChange={(e) => handleSegmentChange(segment, 'exposureCarryForward', e.target.value === '' ? 0 : parseFloat(e.target.value))}
                             className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                           />
@@ -537,8 +473,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               step="0.01"
-                              value={segmentPermissions[segment]?.cryptoSpreadInr || 0}
-                              onChange={(e) => handleSegmentChange(segment, 'cryptoSpreadInr', parseFloat(e.target.value) || 0)}
+                              value={numInputValue(segmentPermissions[segment]?.cryptoSpreadInr)}
+                              onChange={(e) => handleSegmentChange(segment, 'cryptoSpreadInr', parseNonNegativeNumInput(e.target.value))}
                               className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                             />
                           </div>
@@ -547,8 +483,8 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             <input
                               type="number"
                               step="0.01"
-                              value={segmentPermissions[segment]?.cryptoSpreadUsdPerSide || 0}
-                              onChange={(e) => handleSegmentChange(segment, 'cryptoSpreadUsdPerSide', parseFloat(e.target.value) || 0)}
+                              value={numInputValue(segmentPermissions[segment]?.cryptoSpreadUsdPerSide)}
+                              onChange={(e) => handleSegmentChange(segment, 'cryptoSpreadUsdPerSide', parseNonNegativeNumInput(e.target.value))}
                               className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                             />
                           </div>

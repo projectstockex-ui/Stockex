@@ -15,6 +15,7 @@ import {
 import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGameLedgerPanel.jsx';
 import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
 import { fmtTransferInr, validateTransferAmount } from '../lib/walletTransferLimits.js';
+import { getTradeQtyLotsDisplay } from '../utils/tradeQtyLotsDisplay.js';
 
 /** MCX-only wallet row (commodity), excluding crypto/forex. */
 function isMcxWalletTrade(row) {
@@ -28,6 +29,8 @@ const UserAccounts = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [walletData, setWalletData] = useState(null);
+  /** Authoritative NSE/BSE balance (direct DB read — not overwritten by /api/user/wallet). */
+  const [nseBseWalletSnapshot, setNseBseWalletSnapshot] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferDirection, setTransferDirection] = useState('toAccount'); // 'toAccount' or 'toWallet'
@@ -72,6 +75,45 @@ const UserAccounts = () => {
   const [walletTransferSource, setWalletTransferSource] = useState('');
   const [walletTransferTarget, setWalletTransferTarget] = useState('');
 
+  const fetchNseBseWallet = useCallback(async () => {
+    if (!user?.token) return;
+    try {
+      const { data } = await axios.get('/api/user/funds/nse-bse-wallet', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setNseBseWalletSnapshot(data);
+    } catch (error) {
+      console.error('Error fetching NSE/BSE wallet:', error);
+    }
+  }, [user?.token]);
+
+  const patchWalletFromTransfer = useCallback((data) => {
+    if (!data) return;
+    const nseBal = data.nseBseBalance ?? data.nseBseWallet?.balance;
+    const mainBal = data.mainWalletBalance ?? data.cashBalance;
+    if (nseBal != null) {
+      const um = data.nseBseWallet?.usedMargin ?? 0;
+      setNseBseWalletSnapshot((prev) => ({
+        ...(prev || {}),
+        balance: nseBal,
+        usedMargin: um,
+        availableBalance: Math.max(0, nseBal - um),
+        transferableBalance: Math.max(0, nseBal - um),
+        mainBalance: mainBal ?? prev?.mainBalance,
+      }));
+    }
+    if (mainBal == null) return;
+    setWalletData((prev) => ({
+      ...prev,
+      cashBalance: mainBal,
+      wallet: {
+        ...(prev?.wallet || {}),
+        cashBalance: mainBal,
+        balance: mainBal,
+      },
+    }));
+  }, []);
+
   const fetchWallet = useCallback(async () => {
     if (!user?.token) return;
     try {
@@ -88,13 +130,17 @@ const UserAccounts = () => {
 
   useEffect(() => {
     fetchWallet();
-  }, [fetchWallet]);
+    fetchNseBseWallet();
+  }, [fetchWallet, fetchNseBseWallet]);
 
   useEffect(() => {
-    const onSoftRefresh = () => fetchWallet();
+    const onSoftRefresh = () => {
+      fetchWallet();
+      fetchNseBseWallet();
+    };
     window.addEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
     return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
-  }, [fetchWallet]);
+  }, [fetchWallet, fetchNseBseWallet]);
 
   const opestockexRoom = () => {
     navigate('/user/trader-room');
@@ -108,10 +154,9 @@ const UserAccounts = () => {
   // Main wallet balance (for deposit/withdraw with admin)
   // API returns data at top level and also in wallet object
   const mainWalletBalance = walletData?.cashBalance || walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0;
-  // Trading account balance (used for trading)
-  const tradingAccountBalance = walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0;
-  const usedMargin = walletData?.usedMargin || walletData?.wallet?.usedMargin || walletData?.wallet?.blocked || 0;
-  const availableTradingBalance = tradingAccountBalance - usedMargin;
+  const nseBseBalance = nseBseWalletSnapshot?.balance ?? 0;
+  const usedMargin = nseBseWalletSnapshot?.usedMargin ?? 0;
+  const availableNseBseBalance = nseBseBalance - usedMargin;
   
 
   // MCX wallet balance (INR for MCX trading)
@@ -296,7 +341,16 @@ const UserAccounts = () => {
         params: { wallet: 'mcx', limit: 50 },
         headers: { Authorization: `Bearer ${user.token}` },
       });
-      setMcxTransferLedger(Array.isArray(data?.entries) ? data.entries : []);
+      const entries = Array.isArray(data?.entries) ? data.entries : [];
+      setMcxTransferLedger(
+        entries.filter((row) => {
+          const d = String(row.description || '');
+          if (/\(NSE\/BSE\)/i.test(d)) return false;
+          if (/\(Crypto\)/i.test(d) || /\(Forex\)/i.test(d) || /\(Games\)/i.test(d)) return false;
+          if (row.kind === 'between_wallets') return true;
+          return /\(MCX\)/i.test(d);
+        })
+      );
     } catch (e) {
       console.error('MCX transfer ledger:', e);
       setMcxTransferLedger([]);
@@ -384,8 +438,11 @@ const UserAccounts = () => {
   }, [gamesLedgerGameFilter, showGamesLedger, fetchGamesLedger]);
 
   useEffect(() => {
-    if (showMcxOrders) fetchMcxOrders();
-  }, [showMcxOrders, fetchMcxOrders]);
+    if (showMcxOrders) {
+      fetchMcxOrders();
+      if (showMcxTransferLedger) fetchMcxTransferLedger();
+    }
+  }, [showMcxOrders, fetchMcxOrders, showMcxTransferLedger, fetchMcxTransferLedger]);
 
   if (loading) {
     return (
@@ -402,7 +459,13 @@ const UserAccounts = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold">My Accounts</h1>
-          <button onClick={fetchWallet} className="text-gray-400 hover:text-white">
+          <button
+            onClick={() => {
+              fetchWallet();
+              fetchNseBseWallet();
+            }}
+            className="text-gray-400 hover:text-white"
+          >
             <RefreshCw size={18} />
           </button>
         </div>
@@ -411,7 +474,7 @@ const UserAccounts = () => {
       {/* Account Cards: row 1 = Standard / MCX / Games; row 2 = Crypto + Forex */}
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="grid grid-cols-1 min-[520px]:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-        {/* Trading Account */}
+        {/* NSE & BSE Wallet */}
         <div className="bg-dark-800 rounded-xl overflow-hidden">
           {/* Account Header */}
           <div className="p-4 border-b border-dark-600">
@@ -439,12 +502,12 @@ const UserAccounts = () => {
             </div>
             
             <div className="text-4xl font-bold mb-1">
-              ₹{tradingAccountBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              ₹{nseBseBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-sm text-gray-500">Trading Balance</div>
+            <div className="text-sm text-gray-500">NSE & BSE only</div>
             {usedMargin > 0 && (
               <div className="text-xs text-yellow-400 mt-1">
-                Margin Used: ₹{usedMargin.toLocaleString()} | Available: ₹{availableTradingBalance.toLocaleString()}
+                Margin Used: ₹{usedMargin.toLocaleString()} | Available: ₹{availableNseBseBalance.toLocaleString()}
               </div>
             )}
 
@@ -467,7 +530,7 @@ const UserAccounts = () => {
               <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden max-h-72 overflow-y-auto">
                 <div className="flex flex-col gap-2 px-3 py-2 border-b border-dark-600 bg-dark-800/80 sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
-                    Trading account transactions
+                    NSE & BSE wallet transactions
                   </span>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -569,7 +632,7 @@ const UserAccounts = () => {
                   <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
                 ) : tradingTransferLedger.length === 0 ? (
                   <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
-                    No transfers yet. Moves between Main Wallet and this Trading account (Deposit/Withdraw above) appear here.
+                    No transfers yet. Moves between Main Wallet and NSE & BSE wallet (Deposit/Withdraw above) appear here.
                   </p>
                 ) : (
                   <table className="w-full text-[11px]">
@@ -617,18 +680,18 @@ const UserAccounts = () => {
             <button 
               onClick={() => openTransfer('toAccount')}
               className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
-              title="Transfer from Wallet to Trading Account"
+              title="Transfer from Main Wallet to NSE & BSE Wallet"
             >
               <Plus size={18} />
-              Deposit
+              Add funds
             </button>
             <button 
               onClick={() => openTransfer('toWallet')}
               className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
-              title="Transfer from Trading Account to Wallet"
+              title="Move free balance from NSE & BSE Wallet back to Main Wallet"
             >
               <Minus size={18} />
-              Withdraw
+              Move to Main
             </button>
             <button 
               onClick={() => setShowWalletTransferDropdown(showWalletTransferDropdown === 'trading' ? null : 'trading')}
@@ -645,25 +708,31 @@ const UserAccounts = () => {
                 <div className="p-2">
                   <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
                   <button
-                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    onClick={() => { setWalletTransferSource('nseBseWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Main Wallet (cash)
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('nseBseWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
                     MCX Wallet
                   </button>
                   <button
-                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    onClick={() => { setWalletTransferSource('nseBseWallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
                     Games Wallet
                   </button>
                   <button
-                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('cryptoWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    onClick={() => { setWalletTransferSource('nseBseWallet'); setWalletTransferTarget('cryptoWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
                     Crypto Wallet
                   </button>
                   <button
-                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('forexWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    onClick={() => { setWalletTransferSource('nseBseWallet'); setWalletTransferTarget('forexWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
                     Forex Wallet
@@ -766,10 +835,12 @@ const UserAccounts = () => {
                           <th className="px-2 py-2 font-medium">Symbol</th>
                           <th className="px-2 py-2 font-medium">Side</th>
                           <th className="px-2 py-2 font-medium text-right">Qty</th>
+                          <th className="px-2 py-2 font-medium text-right">Lots</th>
                           <th className="px-2 py-2 font-medium">Status</th>
                           <th className="px-2 py-2 font-medium text-right">Entry</th>
                           <th className="px-2 py-2 font-medium text-right">Exit</th>
                           <th className="px-2 py-2 font-medium text-right">P/L</th>
+                          <th className="px-2 py-2 font-medium text-right">Brokerage</th>
                           <th className="px-2 py-2 font-medium">Autosquare</th>
                         </tr>
                       </thead>
@@ -788,6 +859,7 @@ const UserAccounts = () => {
                             row.status === 'CLOSED'
                               ? row.netPnL ?? row.realizedPnL
                               : null;
+                          const { qtyText, lotsText } = getTradeQtyLotsDisplay(row);
                           return (
                             <tr key={row._id} className="hover:bg-dark-800/60">
                               <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{timeStr}</td>
@@ -807,11 +879,10 @@ const UserAccounts = () => {
                                 </span>
                               </td>
                               <td className="px-2 py-2 text-right text-gray-300 align-top whitespace-nowrap tabular-nums">
-                                {row.lots != null && row.lots > 0
-                                  ? `${row.lots} lot${row.lots !== 1 ? 's' : ''}`
-                                  : row.quantity != null
-                                    ? Number(row.quantity).toLocaleString('en-IN')
-                                    : '—'}
+                                {qtyText}
+                              </td>
+                              <td className="px-2 py-2 text-right text-gray-300 align-top whitespace-nowrap tabular-nums">
+                                {lotsText}
                               </td>
                               <td className="px-2 py-2 align-top text-gray-300">{row.status || '—'}</td>
                               <td className="px-2 py-2 text-right text-gray-300 align-top tabular-nums">
@@ -829,6 +900,15 @@ const UserAccounts = () => {
                                   <span className={Number(pnl) >= 0 ? 'text-green-400' : 'text-red-400'}>
                                     {Number(pnl) >= 0 ? '+' : ''}₹
                                     {Number(pnl).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-600">—</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-right align-top tabular-nums">
+                                {(Number(row.commission) || 0) > 0 ? (
+                                  <span className="text-amber-300" title="Round-trip brokerage (charged at open)">
+                                    ₹{Number(row.commission).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                   </span>
                                 ) : (
                                   <span className="text-gray-600">—</span>
@@ -873,7 +953,7 @@ const UserAccounts = () => {
                   <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
                 ) : mcxTransferLedger.length === 0 ? (
                   <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
-                    No transfers yet. Main ↔ MCX moves and wallet-to-wallet transfers involving MCX appear here.
+                    No entries yet. Main ↔ MCX moves, trade P&L, and brokerage (red) appear here when you open a trade.
                   </p>
                 ) : (
                   <table className="w-full text-[11px]">
@@ -896,9 +976,19 @@ const UserAccounts = () => {
                             })}
                           </td>
                           <td className="p-2 align-top text-gray-300 leading-snug">
-                            {row.kind === 'trade_pnl' ? (
+                            {row.kind === 'trade_pnl' || row.kind === 'trade_brokerage' || row.kind === 'trade_autosquare' ? (
                               <div>
-                                <span className="text-cyan-300">{row.description}</span>
+                                <span
+                                  className={
+                                    row.kind === 'trade_brokerage'
+                                      ? 'text-red-300'
+                                      : row.kind === 'trade_autosquare'
+                                        ? 'text-purple-300'
+                                        : 'text-cyan-300'
+                                  }
+                                >
+                                  {row.description}
+                                </span>
                               </div>
                             ) : (
                               <>
@@ -961,6 +1051,12 @@ const UserAccounts = () => {
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
                     Main Wallet (cash)
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('nseBseWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    NSE & BSE Wallet
                   </button>
                   <button
                     onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
@@ -1248,10 +1344,10 @@ const UserAccounts = () => {
                 <div className="p-2">
                   <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
                   <button
-                    onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('tradingAccount'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('nseBseWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
-                    Trading Account (IND)
+                    NSE & BSE Wallet
                   </button>
                   <button
                     onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
@@ -1446,6 +1542,12 @@ const UserAccounts = () => {
                     Main Wallet (cash)
                   </button>
                   <button
+                    onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('nseBseWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    NSE & BSE Wallet
+                  </button>
+                  <button
                     onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
@@ -1630,6 +1732,12 @@ const UserAccounts = () => {
                       Main Wallet (cash)
                     </button>
                     <button
+                      onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('nseBseWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                    >
+                      NSE & BSE Wallet
+                    </button>
+                    <button
                       onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                     >
@@ -1667,9 +1775,9 @@ const UserAccounts = () => {
             </div>
           </div>
           <div>
-            <div className="text-sm text-gray-400 mb-1">Trading Account</div>
+            <div className="text-sm text-gray-400 mb-1">NSE & BSE Wallet</div>
             <div className="text-2xl font-bold text-green-400">
-              ₹{tradingAccountBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              ₹{nseBseBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div>
@@ -1716,13 +1824,14 @@ const UserAccounts = () => {
         <InternalTransferModal
           user={user}
           walletBalance={mainWalletBalance}
-          tradingBalance={availableTradingBalance}
+          tradingBalance={availableNseBseBalance}
           direction={transferDirection}
           onClose={() => setShowTransferModal(false)}
-          onSuccess={() => {
-            fetchWallet();
+          onSuccess={(transferData) => {
+            patchWalletFromTransfer(transferData);
             setShowTransferModal(false);
             fetchTradingTransferLedger();
+            fetchNseBseWallet();
           }}
         />
       )}
@@ -1811,7 +1920,13 @@ const UserAccounts = () => {
             if (walletTransferSource === 'gamesWallet' || walletTransferTarget === 'gamesWallet') {
               fetchGamesTransferLedger();
             }
-            if (walletTransferSource === 'tradingAccount' || walletTransferTarget === 'tradingAccount') {
+            if (
+              walletTransferSource === 'nseBseWallet' ||
+              walletTransferTarget === 'nseBseWallet' ||
+              walletTransferSource === 'tradingAccount' ||
+              walletTransferTarget === 'tradingAccount'
+            ) {
+              fetchNseBseWallet();
               fetchTradingTransferLedger();
             }
           }}
@@ -1821,7 +1936,7 @@ const UserAccounts = () => {
   );
 };
 
-// Internal Transfer Modal - Transfer between Wallet and Trading Account
+// Internal Transfer Modal - Main Wallet ↔ NSE & BSE Wallet
 const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction, onClose, onSuccess }) => {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1829,8 +1944,8 @@ const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction,
 
   const isToAccount = direction === 'toAccount';
   const sourceBalance = isToAccount ? walletBalance : tradingBalance;
-  const sourceLabel = isToAccount ? 'Main Wallet' : 'Trading Account';
-  const destLabel = isToAccount ? 'Trading Account' : 'Main Wallet';
+  const sourceLabel = isToAccount ? 'Main Wallet' : 'NSE & BSE Wallet';
+  const destLabel = isToAccount ? 'NSE & BSE Wallet' : 'Main Wallet';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1849,13 +1964,13 @@ const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction,
     setError('');
 
     try {
-      await axios.post('/api/user/funds/internal-transfer', {
+      const { data } = await axios.post('/api/user/funds/internal-transfer', {
         amount: amt,
         direction: direction // 'toAccount' or 'toWallet'
       }, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
-      onSuccess();
+      onSuccess(data);
     } catch (err) {
       setError(err.response?.data?.message || 'Transfer failed');
     } finally {
@@ -1875,6 +1990,9 @@ const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction,
             <X size={20} />
           </button>
         </div>
+        <p className="text-xs text-gray-400 mb-4 -mt-2">
+          Move money between Main Wallet (deposit/withdraw) and NSE &amp; BSE wallet (NSE/BSE trades only).
+        </p>
 
         {/* Transfer Direction Display */}
         <div className="bg-dark-700 rounded-lg p-4 mb-4">
@@ -2601,7 +2719,8 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
   const getWalletDisplayName = (walletType) => {
     switch(walletType) {
       case 'wallet': return 'Main Wallet (cash)';
-      case 'tradingAccount': return 'Trading Account (IND)';
+      case 'tradingAccount':
+      case 'nseBseWallet': return 'NSE & BSE Wallet';
       case 'cryptoWallet': return 'Crypto Wallet';
       case 'forexWallet': return 'Forex Wallet';
       case 'mcxWallet': return 'MCX Wallet';
@@ -2632,7 +2751,7 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
             >
               <option value="wallet">Main Wallet (cash)</option>
-              <option value="tradingAccount">Trading Account (IND)</option>
+              <option value="nseBseWallet">NSE & BSE Wallet</option>
               <option value="cryptoWallet">Crypto Wallet</option>
               <option value="forexWallet">Forex Wallet</option>
               <option value="mcxWallet">MCX Wallet</option>
@@ -2649,7 +2768,7 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
             >
               <option value="">-- Select Target --</option>
               <option value="wallet" disabled={source === 'wallet'}>Main Wallet (cash)</option>
-              <option value="tradingAccount" disabled={source === 'tradingAccount'}>Trading Account (IND)</option>
+              <option value="nseBseWallet" disabled={source === 'nseBseWallet'}>NSE & BSE Wallet</option>
               <option value="cryptoWallet" disabled={source === 'cryptoWallet'}>Crypto Wallet</option>
               <option value="forexWallet" disabled={source === 'forexWallet'}>Forex Wallet</option>
               <option value="mcxWallet" disabled={source === 'mcxWallet'}>MCX Wallet</option>

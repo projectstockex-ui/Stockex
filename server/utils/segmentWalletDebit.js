@@ -1,9 +1,11 @@
 /**
- * Inter-wallet transfers: debit only free balance on segment wallets (MCX / crypto / forex)
+ * Inter-wallet transfers: debit only free balance on segment wallets (MCX / crypto / forex / NSE&BSE)
  * Free balance = balance - usedMargin (cannot transfer locked margin)
  */
 
-const MARGIN_SEGMENTS = new Set(['mcxWallet', 'cryptoWallet', 'forexWallet']);
+import { prepareNseBseWalletForTransfer } from './nseBseWallet.js';
+
+const MARGIN_SEGMENTS = new Set(['nseBseWallet', 'mcxWallet', 'cryptoWallet', 'forexWallet']);
 
 export function isMarginSegmentWallet(key) {
   return MARGIN_SEGMENTS.has(String(key));
@@ -22,6 +24,10 @@ export async function atomicMarginSegmentDebitForTransfer(User, userId, segmentK
   if (!isMarginSegmentWallet(key)) return null;
   const amt = Number(amount);
   if (!Number.isFinite(amt) || amt <= 0) return null;
+
+  if (key === 'nseBseWallet') {
+    await prepareNseBseWalletForTransfer(userId);
+  }
 
   const balPath = `${key}.balance`;
   const umPath = `${key}.usedMargin`;

@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { Menu, X, Sun, Moon, ChevronDown, Gamepad2 } from "lucide-react"
 import { Button } from "@/components/landing/ui/button"
 import { useTheme } from "@/context/ThemeContext"
+import { StockExLogo } from "@/components/StockExLogo"
 
 const navLinks = [
   { href: "/", label: "Home" },
@@ -13,7 +14,7 @@ const navLinks = [
   { href: "/broker-program", label: "Broker Program" },
 ]
 
-export function Navbar() {
+export function Navbar({ embedded = false }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [featuresOpen, setFeaturesOpen] = useState(false)
   const [mobileFeaturesOpen, setMobileFeaturesOpen] = useState(false)
@@ -25,17 +26,19 @@ export function Navbar() {
   ]
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 pt-4 px-4">
+    <header
+      className={
+        embedded
+          ? "relative pt-4 px-4"
+          : "fixed top-0 left-0 right-0 z-50 pt-4 px-4"
+      }
+    >
       <div className="max-w-6xl mx-auto">
         {/* Floating Pill Navbar */}
         <nav className="bg-white rounded-full shadow-lg px-2 py-2 flex items-center justify-between">
           {/* Logo */}
           <Link to="/" className="flex items-center pl-2">
-            <img 
-              src="/images/stockex_logo.png" 
-              alt="STOCKEX" 
-              className="h-8 w-auto"
-            />
+            <StockExLogo className="h-9 w-auto" alt="StockEx" />
           </Link>
 
           {/* Desktop Navigation Links */}

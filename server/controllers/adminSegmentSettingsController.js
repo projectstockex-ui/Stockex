@@ -131,8 +131,10 @@ class AdminSegmentSettingsController {
       const updateFields = {};
 
       if (segmentPermissions && typeof segmentPermissions === 'object') {
-        let plain =
-          segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+        const { normalizeSegmentPermissionsPayload } = await import('../utils/segmentPermissionNormalize.js');
+        let plain = normalizeSegmentPermissionsPayload(
+          segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions
+        );
 
         // Validate all segment permission fields against parent's limits
         const parentSegPerms = currentAdmin.segmentPermissions instanceof Map
@@ -328,6 +330,18 @@ class AdminSegmentSettingsController {
           if (segData.quantityModeSettings !== undefined) {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].quantityModeSettings = segData.quantityModeSettings;
+          }
+          if (segData.quantitySettings !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].quantitySettings = segData.quantitySettings;
+          }
+          if (segData.intradayOnlyLeverage !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].intradayOnlyLeverage = segData.intradayOnlyLeverage;
+          }
+          if (segData.intradayOnlyMaxQty !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].intradayOnlyMaxQty = segData.intradayOnlyMaxQty;
           }
           // Preserve commission fields
           if (segData.commission !== undefined) {

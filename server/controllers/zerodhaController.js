@@ -40,7 +40,12 @@ import AutoTokenRenewalService from '../services/zerodha/token/AutoTokenRenewalS
 
 import TokenPersistenceService from '../services/zerodha/token/TokenPersistenceService.js';
 
-import { connectTicker, getTickerStatus, subscribeTokens as wsSubscribeTokens } from '../services/zerodhaWebSocket.js';
+import {
+  connectTicker,
+  getTickerStatus,
+  subscribeTokens as wsSubscribeTokens,
+  getMarketData as getWsMarketData,
+} from '../services/zerodhaWebSocket.js';
 
 import zerodhaErrorHandler from '../services/zerodha/error/ZerodhaErrorHandler.js';
 
@@ -1709,6 +1714,35 @@ class ZerodhaController {
 
   }
 
+  /** Public landing-page ticker: subscribe indices + popular symbols (no auth). */
+  async landingTickerSubscribe(req, res) {
+    try {
+      const { resolveLandingTickerSubscriptions } = await import('../services/landingTickerService.js');
+      const { tokens, symbols } = await resolveLandingTickerSubscriptions();
+      req.body = { tokens, symbols };
+      return this.tickSubscribe(req, res);
+    } catch (error) {
+      this.logger.error('landingTickerSubscribe:', error);
+      req.body = {
+        symbols: ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'NIFTY', 'BANKNIFTY', 'GOLD', 'CRUDEOIL', 'TATAMOTORS'],
+        tokens: [256265, 260105, 265, 2885, 11536, 1333, 1594, 17963, 3456],
+      };
+      return this.tickSubscribe(req, res);
+    }
+  }
+
+  /** Public landing-page ticker quotes (live WS + DB fallback). */
+  async getLandingTickerQuotes(req, res) {
+    try {
+      const { buildLandingTickerQuotes } = await import('../services/landingTickerService.js');
+      const quotes = await buildLandingTickerQuotes();
+      return res.json({ quotes, updatedAt: Date.now() });
+    } catch (error) {
+      this.logger.error('getLandingTickerQuotes:', error);
+      return res.status(500).json({ message: 'Failed to load ticker quotes', quotes: [] });
+    }
+  }
+
 
 
   /**
@@ -1775,9 +1809,12 @@ class ZerodhaController {
 
     try {
 
-      const marketData = this.orchestrator?.getMarketData?.();
-
-      const payload = marketData && typeof marketData === 'object' ? marketData : {};
+      const orchMd = this.orchestrator?.getMarketData?.() || {};
+      const wsMd = getWsMarketData() || {};
+      const payload =
+        typeof orchMd === 'object' || typeof wsMd === 'object'
+          ? { ...orchMd, ...wsMd }
+          : {};
 
       return sendJson(res, payload);
 
@@ -1863,7 +1900,10 @@ class ZerodhaController {
 
 
 
-      const md = this.orchestrator?.getMarketData?.() || {};
+      const md = {
+        ...(this.orchestrator?.getMarketData?.() || {}),
+        ...(getWsMarketData() || {}),
+      };
 
       const tokenNum = Number.parseInt(tokenRaw, 10);
 
@@ -1999,49 +2039,61 @@ class ZerodhaController {
 
 
 
-      // ONLY use WebSocket live data - no database fallbacks
+      const sourceRow = dbRow || baseFamilyRow || null;
 
-      if (!tick || !tick.ltp) {
+      let ltp = pick(tick?.ltp, tick?.close);
 
-        return res.status(404).json({ 
+      let ltpSource = ltp != null ? 'ws_orchestrator' : null;
 
-          message: 'No live WebSocket data available',
+      if (ltp == null) {
 
-          symbol: symbolRaw || tradingSymbolRaw,
+        ltp = pick(
 
-          note: 'Only live WebSocket data is served - no historical database data'
+          sourceRow?.ltp,
 
-        });
+          sourceRow?.close,
+
+          sourceRow?.previousDayClosePrice,
+
+          sourceRow?.lastBid,
+
+          sourceRow?.lastAsk,
+
+          sourceRow?.open,
+
+          sourceRow?.high,
+
+          sourceRow?.low
+
+        );
+
+        if (ltp != null) ltpSource = 'instrument_db';
 
       }
 
+      const tickerConnected = !!getTickerStatus().connected;
+      const connection = this.orchestrator?.getConnectionStatus?.() || {};
+      const wsConnected = tickerConnected || !!connection.connected;
 
-
-      let ltp = tick?.ltp;
-
-      let ltpSource = 'ws_orchestrator';
-
-
-
-      // NO REST FALLBACKS - only WebSocket data allowed
-
-      // Auto-subscribe requested token so subsequent ticks flow even if watchlist subscribe lagged.
+      // Auto-subscribe so subsequent socket ticks flow even if watchlist subscribe lagged.
 
       try {
 
         const subToken = Number.parseInt(tokenKey, 10);
 
-        if (
+        if (Number.isFinite(subToken) && subToken > 0) {
 
-          Number.isFinite(subToken) &&
+          if (wsConnected) {
 
-          subToken > 0 &&
+            void wsSubscribeTokens([subToken]).catch(() => {});
 
-          this.orchestrator?.getConnectionStatus?.().connected
+            void this.orchestrator?.subscribeTokens?.([subToken]).catch(() => {});
 
-        ) {
+          } else {
 
-          void this.orchestrator.subscribeTokens([subToken]).catch(() => {});
+            void this.ensureWebSocketConnected('contract_price_subscribe');
+
+          }
 
         }
 
@@ -2051,9 +2103,36 @@ class ZerodhaController {
 
       }
 
+      // Live socket will update UI — avoid 404 noise when instrument exists but DB snapshot is stale.
+      if (ltp == null && sourceRow) {
 
+        return res.json({
 
-      const connection = this.orchestrator?.getConnectionStatus?.() || {};
+          token: sourceRow.token || tokenKey || null,
+
+          symbol: sourceRow.symbol || symbolRaw || baseSymbolRaw || null,
+
+          tradingSymbol: sourceRow.tradingSymbol || tradingSymbolRaw || null,
+
+          exchange: sourceRow.exchange || 'NFO',
+
+          ltp: 0,
+
+          available: false,
+
+          change: 0,
+
+          changePercent: 0,
+
+          source: 'awaiting_live_tick',
+
+          wsConnected,
+
+          timestamp: new Date().toISOString(),
+
+        });
+
+      }
 
       if (ltp == null) {
 
@@ -2061,13 +2140,15 @@ class ZerodhaController {
 
           message: 'Price unavailable for requested contract',
 
+          symbol: symbolRaw || tradingSymbolRaw,
+
           debug: {
 
             requested: { tokenRaw, symbolRaw, tradingSymbolRaw, baseSymbolFromReq, baseSymbolRaw },
 
             checks: {
 
-              wsConnected: !!connection.connected,
+              wsConnected,
 
               tickFound: !!tick,
 
@@ -2077,31 +2158,7 @@ class ZerodhaController {
 
               hasKiteSession: !!(this.session?.apiKey && this.session?.accessToken),
 
-              autoReconnectScheduled: !connection.connected,
-
             },
-
-            instrumentRowSnapshot: dbRow
-
-              ? {
-
-                  ltp: dbRow.ltp,
-
-                  close: dbRow.close,
-
-                  open: dbRow.open,
-
-                  prevDayClose: dbRow.previousDayClosePrice,
-
-                  lastBid: dbRow.lastBid,
-
-                  lastAsk: dbRow.lastAsk,
-
-                }
-
-              : null,
-
-            restAttempts,
 
           },
 
@@ -2113,7 +2170,13 @@ class ZerodhaController {
 
       const ask = pick(tick?.rawAsk, tick?.ask, sourceRow?.lastAsk, sourceRow?.open, ltp);
 
+      const closePx = pick(tick?.close, sourceRow?.close, sourceRow?.previousDayClosePrice, ltp);
 
+      const prevClose = pick(sourceRow?.previousDayClosePrice, sourceRow?.close, closePx, ltp);
+
+      const change = prevClose && prevClose > 0 ? ltp - prevClose : 0;
+
+      const changePercent = prevClose && prevClose > 0 ? (change / prevClose) * 100 : 0;
 
       return res.json({
 
@@ -2123,7 +2186,7 @@ class ZerodhaController {
 
         tradingSymbol: tick?.tradingSymbol || sourceRow?.tradingSymbol || tradingSymbolRaw || null,
 
-        exchange: tick?.exchange || sourceRow?.exchange || 'MCX',
+        exchange: tick?.exchange || sourceRow?.exchange || 'NFO',
 
         ltp,
 
@@ -2137,13 +2200,19 @@ class ZerodhaController {
 
         low: pick(tick?.low, sourceRow?.low, sourceRow?.open, ltp),
 
-        close: pick(tick?.close, sourceRow?.close, sourceRow?.previousDayClosePrice, ltp),
+        close: closePx,
 
-        prevDayClose: pick(sourceRow?.previousDayClosePrice, sourceRow?.close, ltp),
+        prevDayClose: prevClose,
+
+        change,
+
+        changePercent,
 
         source: ltpSource,
 
-        wsConnected: !!connection.connected,
+        available: true,
+
+        wsConnected,
 
         timestamp: new Date().toISOString(),
 

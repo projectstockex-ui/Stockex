@@ -225,6 +225,19 @@ const tradeSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
+  /** Full log of each autosquare run (12:00, 13:00, …) — never overwrite previous entries */
+  autoSquareHistory: [
+    {
+      autoSquaredAt: { type: Date, default: null },
+      closeTime: { type: String, default: '' },
+      autoSquareLtp: { type: Number, default: null },
+      originalQty: { type: Number, default: null },
+      nextDayQty: { type: Number, default: null },
+      pnlAtAutoSquare: { type: Number, default: null },
+      netBalanceAtAutoSquare: { type: Number, default: null },
+      carryForwardLeverage: { type: Number, default: null },
+    },
+  ],
   // Who/what closed the position (for TradePro engine)
   closedBy: {
     type: String,
@@ -256,8 +269,13 @@ const tradeSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  /** True after round-trip brokerage is debited from segment wallet balance on open */
+  /** Legacy: true when round-trip brokerage was debited from wallet balance (old trades) */
   walletBrokerageDebited: {
+    type: Boolean,
+    default: false
+  },
+  /** Round-trip brokerage reserved in segment usedMargin (not debited from wallet balance) */
+  brokerageReservedInMargin: {
     type: Boolean,
     default: false
   },

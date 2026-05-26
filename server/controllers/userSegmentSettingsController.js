@@ -147,8 +147,10 @@ class UserSegmentSettingsController {
       const updateFields = {};
 
       if (segmentPermissions && typeof segmentPermissions === 'object') {
-        let plain =
-          segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+        const { normalizeSegmentPermissionsPayload } = await import('../utils/segmentPermissionNormalize.js');
+        let plain = normalizeSegmentPermissionsPayload(
+          segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions
+        );
 
         console.log('[UserSegmentSettings] Plain data before validation:', JSON.stringify(plain, null, 2));
 

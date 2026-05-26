@@ -16,6 +16,7 @@ import {
   useIOSToast,
   useIOSConfirm
 } from '../components/IOSComponents';
+import { getTradeQtyLotsDisplay } from '../utils/tradeQtyLotsDisplay.js';
 
 const UserOrders = () => {
   const navigate = useNavigate();
@@ -58,7 +59,13 @@ const UserOrders = () => {
     if (user?.token) {
       fetchAllOrders();
     }
-  }, [user?.token, dateFilter, customDateFrom, customDateTo, mcxOnly, cryptoOnly, forexOnly]);
+  }, [user?.token, dateFilter, customDateFrom, customDateTo, mcxOnly, cryptoOnly, forexOnly, activeTab]);
+
+  useEffect(() => {
+    if (!user?.token || activeTab !== 'autosquare') return;
+    const id = setInterval(fetchAllOrders, 30000);
+    return () => clearInterval(id);
+  }, [user?.token, activeTab, dateFilter, customDateFrom, customDateTo, mcxOnly, cryptoOnly, forexOnly]);
 
   useEffect(() => {
     if (!user?.token) return;
@@ -177,21 +184,29 @@ const UserOrders = () => {
       if (fromDate) params.fromDate = fromDate.toISOString();
       if (toDate) params.toDate = toDate.toISOString();
 
-      const [positionsRes, historyRes, pendingRes] = await Promise.all([
+      const [positionsRes, historyRes, pendingRes, autoSquareRes] = await Promise.all([
         axios.get('/api/trading/positions?status=OPEN', { headers }),
         axios.get('/api/trading/history', { headers, params }),
-        axios.get('/api/trading/pending-orders', { headers })
+        axios.get('/api/trading/pending-orders', { headers }),
+        axios.get('/api/trading/autosquare-history', { headers, params: { limit: 300 } }),
       ]);
 
       const allPositions = positionsRes.data || [];
       const allHistory = historyRes.data || [];
       const allPending = pendingRes.data || [];
+      const allAutoSquareEvents = autoSquareRes.data || [];
 
       // Filter by date if needed
-      const filterByDate = (items) => {
+      const filterByDate = (items, { dateKey } = {}) => {
         if (!fromDate) return items;
-        return items.filter(item => {
-          const itemDate = new Date(item.closedAt || item.createdAt || item.openedAt);
+        return items.filter((item) => {
+          const raw =
+            (dateKey && item[dateKey]) ||
+            item.autoSquaredAt ||
+            item.closedAt ||
+            item.createdAt ||
+            item.openedAt;
+          const itemDate = new Date(raw);
           return itemDate >= fromDate && itemDate <= toDate;
         });
       };
@@ -223,11 +238,21 @@ const UserOrders = () => {
       const filteredPositions = filterByMode(filterByDate(allPositions));
       const filteredHistory = filterByMode(filterByDate(allHistory));
       const filteredPending = filterByMode(filterByDate(allPending));
+      const filteredAutoSquare = filterByMode(
+        filterByDate(
+          allAutoSquareEvents.map((ev) => ({
+            ...ev,
+            createdAt: ev.autoSquaredAt || ev.createdAt,
+            openedAt: ev.autoSquaredAt || ev.openedAt,
+          })),
+          { dateKey: 'autoSquaredAt' }
+        )
+      );
 
       setPositions(filteredPositions.filter(t => !t.isAutoSquared));
       setClosedTrades(filteredHistory.filter(t => t.status === 'CLOSED'));
       setCancelledOrders(filteredHistory.filter(t => t.status === 'CANCELLED'));
-      setAutoSquareOrders(filteredPositions.filter(t => t.isAutoSquared && t.status === 'OPEN'));
+      setAutoSquareOrders(filteredAutoSquare);
       setPendingOrders(filteredPending);
 
       // Calculate stats from filtered data
@@ -629,6 +654,9 @@ const UserOrders = () => {
                           <th className="pb-2 text-right">
                             {activeTab === 'autosquare' ? 'Orig Qty' : 'Qty'}
                           </th>
+                          {mcxOnly && activeTab !== 'autosquare' && (
+                            <th className="pb-2 text-right">Lots</th>
+                          )}
                           <th className="pb-2 text-right">Entry</th>
                           {activeTab === 'autosquare' && <th className="pb-2 text-right">LTP @ End Time</th>}
                           {activeTab === 'autosquare' && <th className="pb-2 text-right">Next Day Qty</th>}
@@ -659,9 +687,26 @@ const UserOrders = () => {
                           </td>
                           <td className="py-2 text-right">
                             {activeTab === 'autosquare'
-                              ? (item.originalQty ?? item.quantity ?? item.lots ?? 1)
-                              : (item.quantity || item.lots || 1)}
+                              ? (() => {
+                                  const orig = item.originalQty ?? item.quantity ?? item.lots;
+                                  if (mcxOnly) {
+                                    const { qtyText } = getTradeQtyLotsDisplay({
+                                      ...item,
+                                      quantity: orig,
+                                    });
+                                    return qtyText !== '—' ? qtyText : orig ?? '—';
+                                  }
+                                  return orig ?? 1;
+                                })()
+                              : mcxOnly
+                                ? getTradeQtyLotsDisplay(item).qtyText
+                                : item.quantity || item.lots || 1}
                           </td>
+                          {mcxOnly && activeTab !== 'autosquare' && (
+                            <td className="py-2 text-right">
+                              {getTradeQtyLotsDisplay(item).lotsText}
+                            </td>
+                          )}
                           <td className="py-2 text-right">₹{(item.entryPrice || item.price || 0).toLocaleString()}</td>
                           {activeTab === 'autosquare' && (
                             <td className="py-2 text-right">
@@ -670,9 +715,17 @@ const UserOrders = () => {
                               ) : (
                                 <div className="text-red-400">LTP not captured</div>
                               )}
-                              {item.autoSquaredAt && (
+                              {(item.closeTime || item.autoSquaredAt) && (
                                 <div className="text-[10px] text-gray-500">
-                                  @{new Date(item.autoSquaredAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                  @
+                                  {item.closeTime
+                                    ? String(item.closeTime).slice(0, 8)
+                                    : new Date(item.autoSquaredAt).toLocaleTimeString('en-IN', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit',
+                                        hour12: false,
+                                      })}
                                 </div>
                               )}
                             </td>
@@ -693,10 +746,20 @@ const UserOrders = () => {
                               item.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-400' :
                               'bg-red-500/20 text-red-400'
                             }`}>
-                              {item.isAutoSquared && item.status === 'OPEN' ? 'OPEN FOR NEXT DAY' : item.status}
+                              {item.isLegacyClosed
+                                ? 'CLOSED (legacy)'
+                                : item.isAutoSquared && item.status === 'OPEN' && !item.isHistoryEvent
+                                  ? 'OPEN FOR NEXT DAY'
+                                  : item.isHistoryEvent
+                                    ? 'AUTO-SQUARED'
+                                    : item.status}
                             </span>
                           </td>
-                          <td className="py-2 text-gray-400">{formatDate(item.createdAt || item.openedAt)}</td>
+                          <td className="py-2 text-gray-400">
+                            {activeTab === 'autosquare'
+                              ? formatDate(item.autoSquaredAt || item.createdAt)
+                              : formatDate(item.createdAt || item.openedAt)}
+                          </td>
                         </tr>
                       </tbody>
                     </table>

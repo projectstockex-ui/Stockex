@@ -25,6 +25,9 @@ export async function recalculateUsedMargin(userId) {
     let calculatedUsedMargin = 0;
     for (const trade of openTrades) {
       calculatedUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
+      if (trade.brokerageReservedInMargin) {
+        calculatedUsedMargin += Number(trade.commission) || 0;
+      }
     }
 
     // Calculate usedMargin for crypto wallet
@@ -37,6 +40,9 @@ export async function recalculateUsedMargin(userId) {
     let cryptoUsedMargin = 0;
     for (const trade of openCryptoTrades) {
       cryptoUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
+      if (trade.brokerageReservedInMargin) {
+        cryptoUsedMargin += Number(trade.commission) || 0;
+      }
     }
 
     // Calculate usedMargin for MCX wallet
@@ -49,6 +55,9 @@ export async function recalculateUsedMargin(userId) {
     let mcxUsedMargin = 0;
     for (const trade of openMcxTrades) {
       mcxUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
+      if (trade.brokerageReservedInMargin) {
+        mcxUsedMargin += Number(trade.commission) || 0;
+      }
     }
 
     // Calculate usedMargin for forex wallet
@@ -61,6 +70,9 @@ export async function recalculateUsedMargin(userId) {
     let forexUsedMargin = 0;
     for (const trade of openForexTrades) {
       forexUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
+      if (trade.brokerageReservedInMargin) {
+        forexUsedMargin += Number(trade.commission) || 0;
+      }
     }
 
     // Calculate usedMargin for games wallet
@@ -78,8 +90,13 @@ export async function recalculateUsedMargin(userId) {
       gamesUsedMargin += bet.marginUsed || bet.requiredMargin || bet.amount || 0;
     }
 
-    // Get current database values
-    const dbUsedMargin = user.wallet.usedMargin || 0;
+    // Get current database values (legacy wallet.usedMargin only when nseBseWallet.usedMargin unset)
+    const legacyWalletUm = Number(user.wallet?.usedMargin) || 0;
+    const nseStoredUm = user.nseBseWallet?.usedMargin;
+    const dbUsedMargin =
+      nseStoredUm != null && nseStoredUm !== ''
+        ? Number(nseStoredUm) || 0
+        : legacyWalletUm;
     const dbCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
     const dbMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
     const dbForexUsedMargin = user.forexWallet?.usedMargin || 0;
@@ -88,7 +105,11 @@ export async function recalculateUsedMargin(userId) {
     // Update database if calculated values differ from stored values
     const updateFields = {};
     if (Math.abs(calculatedUsedMargin - dbUsedMargin) > 0.01) {
-      updateFields['wallet.usedMargin'] = Math.round(calculatedUsedMargin * 100) / 100;
+      updateFields['nseBseWallet.usedMargin'] = Math.round(calculatedUsedMargin * 100) / 100;
+    }
+    // Clear legacy wallet.usedMargin when NSE margin is recalculated or was wrongly stored on wallet.
+    if (legacyWalletUm > 0.01 && (updateFields['nseBseWallet.usedMargin'] != null || calculatedUsedMargin < 0.01)) {
+      updateFields['wallet.usedMargin'] = 0;
     }
     if (Math.abs(cryptoUsedMargin - dbCryptoUsedMargin) > 0.01) {
       updateFields['cryptoWallet.usedMargin'] = Math.round(cryptoUsedMargin * 100) / 100;
@@ -109,6 +130,7 @@ export async function recalculateUsedMargin(userId) {
     }
 
     return {
+      nseBseWallet: Math.round(calculatedUsedMargin * 100) / 100,
       wallet: Math.round(calculatedUsedMargin * 100) / 100,
       cryptoWallet: Math.round(cryptoUsedMargin * 100) / 100,
       mcxWallet: Math.round(mcxUsedMargin * 100) / 100,

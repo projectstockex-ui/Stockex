@@ -824,8 +824,10 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
 
     const updateFields = {};
     if (segmentPermissions) {
-      let plain =
-        segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+      const { normalizeSegmentPermissionsPayload } = await import('../utils/segmentPermissionNormalize.js');
+      let plain = normalizeSegmentPermissionsPayload(
+        segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions
+      );
       if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
         const current = await Admin.findById(req.admin._id).select('segmentPermissions').lean();
         const existingSeg =

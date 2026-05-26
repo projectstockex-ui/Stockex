@@ -154,6 +154,17 @@ router.post('/subscribe-all',
   zc(zerodhaController.subscribeAllTokens)
 );
 
+// Landing page ticker (public, rate-limited)
+router.get('/landing-ticker-quotes',
+  rateLimitZerodha(120, 60000),
+  zc(zerodhaController.getLandingTickerQuotes)
+);
+
+router.post('/landing-ticker-subscribe',
+  rateLimitZerodha(10, 60000),
+  zc(zerodhaController.landingTickerSubscribe)
+);
+
 // User-facing tick subscribe (MCX/User dashboard socket flow)
 router.post('/tick-subscribe',
   protectUser,

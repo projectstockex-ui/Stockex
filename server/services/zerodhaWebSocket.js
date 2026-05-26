@@ -17,12 +17,15 @@ let marginMonitorEnabled = false; // DISABLED for maximum speed - re-enable if n
 // Balanced throttling - update DB frequently but not on every tick
 const DB_UPDATE_THROTTLE_MS = 300; // Update DB every 300ms per token
 const lastDbUpdateTimestamps = new Map();
+const PENDING_PROCESS_THROTTLE_MS = 1000;
+let lastPendingProcessAt = 0;
 
 // Initialize WebSocket with Socket.IO instance
 export const initZerodhaWebSocket = (socketIO) => {
   io = socketIO;
   // Initialize margin monitor with same Socket.IO instance
   MarginMonitorService.init(socketIO);
+  import('./nseBseLedgerAutosquareService.js').then((m) => m.initNseBseLedgerAutosquare(socketIO));
   
   // Clear any stale subscriptions from previous session
   console.log('[initZerodhaWebSocket] Clearing stale subscription list from previous session');
@@ -411,13 +414,35 @@ const processTicks = async (ticks) => {
   // Check and trigger stoploss for all updated instruments
   if (Object.keys(canonicalOnly).length > 0) {
     const TradingService = (await import('./tradingService.js')).default;
+    const pendingPriceUpdates = {};
     for (const [tok, tickData] of Object.entries(canonicalOnly)) {
+      pendingPriceUpdates[String(tok)] = tickData.ltp;
       TradingService.checkAndTriggerStopLoss({
         token: tok,
         ltp: tickData.ltp,
         bid: tickData.ltp,
         ask: tickData.ltp,
       }).catch((err) => console.error('checkAndTriggerStopLoss:', err?.message || err));
+    }
+
+    const now = Date.now();
+    if (now - lastPendingProcessAt > PENDING_PROCESS_THROTTLE_MS) {
+      lastPendingProcessAt = now;
+      TradingService.processPendingOrders(pendingPriceUpdates)
+        .then((filled) => {
+          if (io && filled?.length) {
+            for (const tr of filled) {
+              const t = tr?.trade;
+              const plain = typeof t?.toObject === 'function' ? t.toObject() : t;
+              io.emit('trade_update', {
+                type: 'PENDING_FILLED',
+                trade: plain,
+                adminCode: t?.adminCode,
+              });
+            }
+          }
+        })
+        .catch((err) => console.error('processPendingOrders:', err?.message || err));
     }
   }
 

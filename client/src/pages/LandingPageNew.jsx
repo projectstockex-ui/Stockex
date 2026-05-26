@@ -17,17 +17,19 @@ import { Footer } from "@/components/landing/footer"
 
 export default function LandingPageNew() {
   return (
-    <main className="min-h-screen bg-white">
-      <Navbar />
+    <main className="min-h-screen bg-white pt-[7.25rem]">
+      <div className="fixed top-0 left-0 right-0 z-50">
+        <Navbar embedded />
+        <LiveTicker />
+      </div>
       <HeroSection />
-      <LiveTicker />
+      <AccountsSection />
       <MarketAccessSection />
       <PricingTableSection />
       <EconomicCalendarSection />
       <TradingToolsSection />
       <QuestionnaireSection />
       <DemoTradingSection />
-      <AccountsSection />
       <PlatformSection />
       <CapitalSection />
       <PartnershipSection />

@@ -28,10 +28,28 @@ const instrumentSchema = new mongoose.Schema({
     required: true
   },
   
-  // Segment (internal)
+  // Segment (internal + Market Watch tab keys — crypto/forex rows use CRYPTOFUT, CRYPTOOPT, etc.)
   segment: {
     type: String,
-    enum: ['EQUITY', 'FNO', 'COMMODITY', 'CURRENCY', 'MCX'],
+    enum: [
+      'EQUITY',
+      'FNO',
+      'COMMODITY',
+      'CURRENCY',
+      'MCX',
+      'NSEFUT',
+      'NSEOPT',
+      'MCXFUT',
+      'MCXOPT',
+      'NSE-EQ',
+      'BSE-FUT',
+      'BSE-OPT',
+      'CRYPTOFUT',
+      'CRYPTOOPT',
+      'FOREX',
+      'FOREXFUT',
+      'FOREXOPT',
+    ],
     required: true
   },
   
@@ -171,6 +189,18 @@ const instrumentSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  /** Super Admin: show on user trading panel only from this date (start of day). Null = no start limit. */
+  tradingPanelVisibleFrom: {
+    type: Date,
+    default: null,
+    index: true,
+  },
+  /** Super Admin: hide from user trading panel after this date (end of day). Null = no end limit. */
+  tradingPanelVisibleUntil: {
+    type: Date,
+    default: null,
+    index: true,
+  },
   
   // Per-admin visibility (if empty, visible to all)
   visibleToAdmins: [{
@@ -275,6 +305,17 @@ const instrumentSchema = new mongoose.Schema({
     default: false
   },
 
+  /** Super Admin: % above current LTP — bracket upper bound (dynamic with LTP). */
+  ltpBracketPercentUp: {
+    type: Number,
+    default: null,
+  },
+  /** Super Admin: % below current LTP — bracket lower bound (dynamic with LTP). */
+  ltpBracketPercentDown: {
+    type: Number,
+    default: null,
+  },
+
   /**
    * Super-admin per-instrument trading economics (merged under user scriptSettings).
    * User scriptSettings still override any field you set here when both are present.
@@ -318,7 +359,9 @@ const instrumentSchema = new mongoose.Schema({
       buy: { type: Number, default: null },
       sell: { type: Number, default: null },
     },
-    /** Added on top of script/segment brokerage (when tradingDefaults.enabled). */
+    /** Full segment-style profile (Hierarchy Management → Settings fields). */
+    segmentProfile: { type: mongoose.Schema.Types.Mixed, default: null },
+    /** @deprecated Use segmentProfile commissionType / commissionLot. */
     additionalCharges: {
       perTradeInr: { type: Number, default: null },
       perLotInr: { type: Number, default: null },

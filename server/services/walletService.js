@@ -1,6 +1,7 @@
 import User from '../models/User.js';
 import Trade from '../models/Trade.js';
 import RiskConfig from '../models/RiskConfig.js';
+import { readNseBseWalletFromDb } from '../utils/nseBseWallet.js';
 
 /**
  * TradePro Trading Engine - Wallet Service
@@ -32,8 +33,8 @@ class WalletService {
       return { wallet: user.mcxWallet, field: 'mcxWallet' };
     }
     
-    // Default to regular trading wallet (NSE, BSE, NFO, etc.)
-    return { wallet: user.wallet, field: 'wallet' };
+    // NSE, BSE, NFO — dedicated nseBseWallet
+    return { wallet: user.nseBseWallet || user.wallet, field: 'nseBseWallet' };
   }
   
   /**
@@ -56,7 +57,7 @@ class WalletService {
         trade.segment === 'MCXFUT' || trade.segment === 'MCXOPT') {
       return 'mcxWallet';
     }
-    return 'wallet';
+    return 'nseBseWallet';
   }
   
   /**
@@ -126,7 +127,7 @@ class WalletService {
     const walletsToUpdate = segment 
       ? [this.getWalletBySegment(user, segment)]
       : [
-          { wallet: user.wallet, field: 'wallet' },
+          { wallet: user.nseBseWallet || user.wallet, field: 'nseBseWallet' },
           { wallet: user.cryptoWallet, field: 'cryptoWallet' },
           { wallet: user.forexWallet, field: 'forexWallet' },
           { wallet: user.mcxWallet, field: 'mcxWallet' }
@@ -136,8 +137,8 @@ class WalletService {
     const results = {};
     
     for (const { wallet, field } of walletsToUpdate) {
-      if (!wallet) continue;
-      
+      if (!wallet && field !== 'nseBseWallet') continue;
+
       // Build query for open positions in this wallet's segment
       const segmentQuery = this.buildSegmentQuery(field);
       
@@ -162,7 +163,11 @@ class WalletService {
       }
       
       // Get balance (this should NOT change from price movement)
-      const balance = wallet.tradingBalance || wallet.balance || 0;
+      let balance = wallet?.balance ?? wallet?.tradingBalance ?? 0;
+      if (field === 'nseBseWallet') {
+        const live = await readNseBseWalletFromDb(userId);
+        balance = live.balance;
+      }
       
       // Get user's leverage for this segment
       const leverage = await this.getUserLeverage(user, positionSegment);
@@ -425,7 +430,7 @@ class WalletService {
     }
     
     return {
-      balance: wallet.tradingBalance || wallet.balance || 0,
+      balance: wallet.balance ?? wallet.tradingBalance ?? 0,
       equity: wallet.equity || 0,
       usedMargin: wallet.usedMargin || 0,
       freeMargin: wallet.freeMargin || 0,

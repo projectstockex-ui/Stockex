@@ -82,7 +82,7 @@ export default function Accounts() {
       <section className="pt-32 pb-20" style={{ background: 'linear-gradient(135deg, #0B3C6D 0%, #1A73E8 100%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6">
-            Choose Your Account Type
+            Join Stockex as a Broker
           </h1>
           <p className="text-xl text-white/80 max-w-3xl mx-auto">
             Whether you're a beginner, experienced trader, or looking to start a brokerage business, we have the right account for you.

@@ -6,6 +6,9 @@ import { normalizeMongoMapOfObjects, isCryptoQtyOnlySegment } from '../utils';
 import { computeSegmentExplicitKeys } from '../../../../utils/segmentExplicitKeys';
 import { canManageLimitPendingSegmentGate, LIMIT_PENDING_HELP_TEXT } from '../../../../lib/adminSegmentRoleGates';
 import CryptoSegmentAdminExtras from '../ui/CryptoSegmentAdminExtras';
+import SegmentBrokerageFields from '../../segment/SegmentBrokerageFields.jsx';
+import { normalizeSegmentCommissionFields } from '../../../../utils/segmentCommissionType.js';
+import { numInputValue, parseNumInput } from '../../../../utils/segmentFormValues.js';
 
 const MySegmentSettings = () => {
   const { admin } = useAuth();
@@ -25,18 +28,7 @@ const MySegmentSettings = () => {
 
   const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
-  const defaultSegmentSettings = {
-    enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0,
-    maxLots: 50, minLots: 1, orderLots: 10, cryptoSpreadInr: 0, cryptoSpreadUsdPerSide: 0,
-    cryptoStartTime: '', cryptoClosingTime: '', cryptoReferenceSymbol: '', cryptoPricePerLotInr: 0,
-    cryptoLotSizeLots: 1,
-    cryptoLotSizeQuantity: 0,
-    allowLimitPendingOrders: true,
-    intradayLeverage: 1,
-    carryForwardLeverage: 1,
-    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
-    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
-  };
+  const emptySegmentSlice = () => ({ enabled: false });
 
   const showLimitPendingGate = canManageLimitPendingSegmentGate(admin?.role);
 
@@ -54,9 +46,10 @@ const MySegmentSettings = () => {
       if (myId !== mySettingsFetchGenRef.current) return;
 
       const sp = normalizeMongoMapOfObjects(data.segmentPermissions || {});
+      const adminDefaults = normalizeMongoMapOfObjects(data.adminSegmentDefaults || {});
       const normalized = {};
       segments.forEach(seg => {
-        normalized[seg] = { ...defaultSegmentSettings, ...(sp[seg] || {}) };
+        normalized[seg] = normalizeSegmentCommissionFields(sp[seg] || emptySegmentSlice(), adminDefaults[seg]);
       });
       setSegmentPermissions(normalized);
       setScriptSettings(normalizeMongoMapOfObjects(data.scriptSettings || {}));
@@ -109,14 +102,16 @@ const MySegmentSettings = () => {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const explicit = computeSegmentExplicitKeys(segmentPermissions, systemSegBaseline);
+      const segmentExplicitKeys = computeSegmentExplicitKeys(segmentPermissions, systemSegBaseline);
       await axios.put('/api/admin/my-settings', {
-        segmentPermissions: explicit,
-        scriptSettings
+        segmentPermissions,
+        scriptSettings,
+        segmentExplicitKeys,
       }, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setMessage({ type: 'success', text: 'Settings saved successfully' });
+      await fetchSettings();
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
     } catch (error) {
       setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to save settings' });
@@ -236,8 +231,8 @@ const MySegmentSettings = () => {
                         type="number"
                         min="1"
                         step="0.1"
-                        value={segmentPermissions[segment].intradayLeverage || 1}
-                        onChange={(e) => handleSegmentChange(segment, 'intradayLeverage', Number(e.target.value))}
+                        value={numInputValue(segmentPermissions[segment].intradayLeverage)}
+                        onChange={(e) => handleSegmentChange(segment, 'intradayLeverage', parseNumInput(e.target.value))}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                       />
                     </div>
@@ -247,8 +242,8 @@ const MySegmentSettings = () => {
                         type="number"
                         min="1"
                         step="0.1"
-                        value={segmentPermissions[segment].carryForwardLeverage || 1}
-                        onChange={(e) => handleSegmentChange(segment, 'carryForwardLeverage', Number(e.target.value))}
+                        value={numInputValue(segmentPermissions[segment].carryForwardLeverage)}
+                        onChange={(e) => handleSegmentChange(segment, 'carryForwardLeverage', parseNumInput(e.target.value))}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                       />
                     </div>
@@ -262,8 +257,8 @@ const MySegmentSettings = () => {
                         <label className="block text-xs text-gray-400 mb-1">{label}</label>
                         <input
                           type="number"
-                          value={segmentPermissions[segment][field] || 0}
-                          onChange={(e) => handleSegmentChange(segment, field, Number(e.target.value))}
+                          value={numInputValue(segmentPermissions[segment][field])}
+                          onChange={(e) => handleSegmentChange(segment, field, parseNumInput(e.target.value))}
                           className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                         />
                       </div>
@@ -288,8 +283,8 @@ const MySegmentSettings = () => {
                         type="number"
                         min="1"
                         step="0.1"
-                        value={segmentPermissions[segment].intradayLeverage || 1}
-                        onChange={(e) => handleSegmentChange(segment, 'intradayLeverage', Number(e.target.value))}
+                        value={numInputValue(segmentPermissions[segment].intradayLeverage)}
+                        onChange={(e) => handleSegmentChange(segment, 'intradayLeverage', parseNumInput(e.target.value))}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                       />
                     </div>
@@ -299,35 +294,23 @@ const MySegmentSettings = () => {
                         type="number"
                         min="1"
                         step="0.1"
-                        value={segmentPermissions[segment].carryForwardLeverage || 1}
-                        onChange={(e) => handleSegmentChange(segment, 'carryForwardLeverage', Number(e.target.value))}
+                        value={numInputValue(segmentPermissions[segment].carryForwardLeverage)}
+                        onChange={(e) => handleSegmentChange(segment, 'carryForwardLeverage', parseNumInput(e.target.value))}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
                       />
                     </div>
 
                     <div className="col-span-2 md:col-span-4 mt-2">
-                      <h4 className="text-sm font-semibold text-green-400 mb-2">Brokerage Settings</h4>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
-                      <input
-                        type="number"
-                        value={segmentPermissions[segment].commissionType === 'PER_LOT' ? (segmentPermissions[segment].commissionLot || 0) : (segmentPermissions[segment].commission || 0)}
-                        onChange={(e) => handleSegmentChange(segment, segmentPermissions[segment].commissionType === 'PER_LOT' ? 'commissionLot' : 'commission', Number(e.target.value))}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                      <SegmentBrokerageFields
+                        slice={segmentPermissions[segment] || {}}
+                        baseline={systemSegBaseline[segment]}
+                        onChange={(next) =>
+                          setSegmentPermissions((prev) => ({
+                            ...prev,
+                            [segment]: { ...(prev[segment] || {}), ...next },
+                          }))
+                        }
                       />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-                      <select
-                        value={segmentPermissions[segment].commissionType || 'PER_LOT'}
-                        onChange={(e) => handleSegmentChange(segment, 'commissionType', e.target.value)}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                      >
-                        <option value="PER_LOT">Per Lot</option>
-                        <option value="PER_TRADE">Per Trade</option>
-                        <option value="PER_CRORE">Per Crore</option>
-                      </select>
                     </div>
                   </div>
                 )}

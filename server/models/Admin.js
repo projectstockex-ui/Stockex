@@ -665,10 +665,6 @@ const adminSchema = new mongoose.Schema({
       commission: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },
-      /** Per-order quantity caps (MCX/FNO); used by TradeService margin/order validation */
-      quantitySettings: {
-        breakupQuantity: { type: Number, default: 0 }
-      },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
       intradayLeverage: { type: Number, default: 1 },
@@ -680,8 +676,8 @@ const adminSchema = new mongoose.Schema({
         maxLots: { type: Number, default: 50 },
         minLots: { type: Number, default: 1 },
         breakupLots: { type: Number, default: 0 },
-        notificationPercent: { type: Number, default: 70 },
-        autosquarePercent: { type: Number, default: 90 }
+        notificationPercent: { type: Number },
+        autosquarePercent: { type: Number },
       },
       // Quantity Mode Settings - applies when user trades in Quantity mode
       quantityModeSettings: {
@@ -689,7 +685,17 @@ const adminSchema = new mongoose.Schema({
         carryForwardLeverage: { type: Number, default: 1 },
         maxQuantity: { type: Number, default: 1000 },
         minQuantity: { type: Number, default: 1 },
-        breakupQuantity: { type: Number, default: 0 }
+        breakupQuantity: { type: Number, default: 0 },
+        notificationPercent: { type: Number },
+        autosquarePercent: { type: Number },
+      },
+      /** Legacy flat qty caps (breakup only in schema); UI may also use quantityModeSettings */
+      quantitySettings: {
+        breakupQuantity: { type: Number, default: 0 },
+        maxQuantity: { type: Number },
+        minQuantity: { type: Number },
+        maxLotQuantity: { type: Number },
+        maxBid: { type: Number },
       },
       // Toggle to enable/disable Lot Settings mode for this segment
       enableLotSettings: { type: Boolean, default: false },
@@ -697,11 +703,13 @@ const adminSchema = new mongoose.Schema({
       enableQuantitySettings: { type: Boolean, default: false },
       allowClientIntradayOnly: { type: Boolean, default: true },
       defaultIntradayOnly: { type: Boolean, default: false },
+      intradayOnlyLeverage: { type: Number },
+      intradayOnlyMaxQty: { type: Number },
       allowLimitPendingOrders: { type: Boolean, default: true },
       // Crypto (USD spot): total client bid–ask width in ₹ per coin (half applied to bid, half to ask vs exchange mid)
-      cryptoSpreadInr: { type: Number, default: 0 },
-      /** Binance USD spot: $ widened per side on client quotes (bid − n, ask + n). 0 = use cryptoSpreadInr only. */
-      cryptoSpreadUsdPerSide: { type: Number, default: 0 },
+      cryptoSpreadInr: { type: Number },
+      /** Binance USD spot: $ widened per side on client quotes (bid − n, ask + n). Unset = no spread until configured. */
+      cryptoSpreadUsdPerSide: { type: Number },
       /** IST (HH:mm or HH:mm:ss) — earliest time this segment allows trading */
       cryptoStartTime: { type: String, default: '' },
       cryptoClosingTime: { type: String, default: '' },
@@ -720,14 +728,20 @@ const adminSchema = new mongoose.Schema({
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 }
+        strikeSelection: { type: Number, default: 50 },
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxExchangeLots: { type: Number, default: 100 },
       },
       optionSell: {
         allowed: { type: Boolean, default: true },
         commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
-        strikeSelection: { type: Number, default: 50 }
+        strikeSelection: { type: Number, default: 50 },
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
+        maxExchangeLots: { type: Number, default: 100 },
       }
     },
     default: {}

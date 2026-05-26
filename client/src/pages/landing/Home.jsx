@@ -16,16 +16,18 @@ import { Footer } from "@/components/landing/footer"
 
 export default function Home() {
   return (
-    <main className="min-h-screen">
-      <Navbar />
+    <main className="min-h-screen pt-[7.25rem]">
+      <div className="fixed top-0 left-0 right-0 z-50">
+        <Navbar embedded />
+        <LiveTicker />
+      </div>
       <HeroSection />
-      <LiveTicker />
+      <AccountsSection />
       <MarketAccessSection />
       <PricingTableSection />
       <EconomicCalendarSection />
       <TradingToolsSection />
       <DemoTradingSection />
-      <AccountsSection />
       <PlatformSection />
       <CapitalSection />
       <PartnershipSection />

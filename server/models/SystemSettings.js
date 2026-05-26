@@ -447,8 +447,8 @@ const systemSettingsSchema = new mongoose.Schema({
       allowClientIntradayOnly: { type: Boolean, default: true },
       /** When true, new orders are marked intraday-only (EOD auto square). Set in Super Admin defaults + hierarchy; clients do not choose. */
       defaultIntradayOnly: { type: Boolean, default: false },
-      cryptoSpreadInr: { type: Number, default: 0 },
-      cryptoSpreadUsdPerSide: { type: Number, default: 0 },
+      cryptoSpreadInr: { type: Number },
+      cryptoSpreadUsdPerSide: { type: Number },
       /** IST (HH:mm or HH:mm:ss) — earliest time users may trade CRYPTOFUT/CRYPTOOPT; empty = no start gate */
       cryptoStartTime: { type: String, default: '' },
       /** IST session close hint (HH:mm or HH:mm:ss) - for crypto segments */
@@ -469,7 +469,9 @@ const systemSettingsSchema = new mongoose.Schema({
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 },
-        maxExchangeLots: { type: Number, default: 100 }
+        maxExchangeLots: { type: Number, default: 100 },
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
       },
       optionSell: {
         allowed: { type: Boolean, default: true },
@@ -477,7 +479,9 @@ const systemSettingsSchema = new mongoose.Schema({
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 },
-        maxExchangeLots: { type: Number, default: 100 }
+        maxExchangeLots: { type: Number, default: 100 },
+        intradayLeverage: { type: Number, default: 1 },
+        carryForwardLeverage: { type: Number, default: 1 },
       }
     },
     default: {}
@@ -520,6 +524,14 @@ const systemSettingsSchema = new mongoose.Schema({
       blocked: { type: Boolean, default: false }
     },
     default: {}
+  },
+
+  /** Self-serve demo user trial (days until convert-to-real or account deletion) */
+  demoAccountSettings: {
+    /** Trial length in calendar days (e.g. 7 or 15) */
+    trialDays: { type: Number, default: 7 },
+    /** Initial virtual balance for new demo users */
+    demoBalance: { type: Number, default: 1000000 },
   },
 
   /** Daily platform fee (Super Admin): debit user main wallet, credit active Super Admin wallet; IST cron */
