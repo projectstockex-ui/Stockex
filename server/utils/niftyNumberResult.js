@@ -13,3 +13,16 @@ export function closingPriceToDecimalPart(closingPrice) {
   if (!Number.isFinite(n) || n < 0 || n > 99) return null;
   return n;
 }
+
+/**
+ * Map price to the last 2 digits on the left side of decimal.
+ * Example: 75,242.89 -> 42
+ */
+export function closingPriceToLeftTwoDigits(closingPrice) {
+  const x = Number(closingPrice);
+  if (!Number.isFinite(x)) return null;
+  const intPart = Math.trunc(Math.abs(x));
+  const n = intPart % 100;
+  if (!Number.isFinite(n) || n < 0 || n > 99) return null;
+  return n;
+}

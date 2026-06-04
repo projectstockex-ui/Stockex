@@ -7,6 +7,7 @@ import {
   hasReachedThreshold,
   getReferralEligibilitySettings 
 } from './superAdminEarningsService.js';
+import { isReferralEnabledForUser } from '../utils/referralDistributionHelper.js';
 
 /**
  * Referral Payout Service
@@ -27,6 +28,11 @@ export async function processConditionalReferralPayout(referredUserId, amount, s
     if (!referredUserId || !amount || amount <= 0) {
       console.warn(`[ReferralPayout] Invalid parameters: userId=${referredUserId}, amount=${amount}`);
       return { success: false, reason: 'Invalid parameters' };
+    }
+
+    const referralAllowed = await isReferralEnabledForUser(referredUserId, segment);
+    if (!referralAllowed) {
+      return { success: false, reason: `Referral disabled for segment ${segment} in this hierarchy` };
     }
 
     // Get referral eligibility settings with error handling

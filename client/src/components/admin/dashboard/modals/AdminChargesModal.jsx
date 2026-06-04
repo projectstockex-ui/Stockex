@@ -4,6 +4,7 @@ import axios from '../../../../config/axios';
 import { computeSegmentExplicitKeys } from '../../../../utils/segmentExplicitKeys.js';
 import {
   canManageLimitPendingSegmentGate,
+  canEditMcxSessionTiming,
   showLimitPendingHierarchyTarget,
   LIMIT_PENDING_HELP_TEXT,
 } from '../../../../lib/adminSegmentRoleGates.js';
@@ -24,6 +25,7 @@ import {
   patchSegmentField,
 } from '../../../../utils/segmentFormValues.js';
 import SegmentNumberInput from '../../segment/SegmentNumberInput.jsx';
+import McxSegmentAdminExtras from '../ui/McxSegmentAdminExtras.jsx';
 
 function normalizeCryptoIstClock24(inputStr) {
   const s = String(inputStr ?? '').trim();
@@ -345,7 +347,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
         });
       } else if (activeTab === 'segments' || activeTab === 'scripts') {
         // Save segment permissions and script settings
-        const segmentExplicitKeys = computeSegmentExplicitKeys(segDefs, systemSegBaseline);
+        const segmentExplicitKeys = computeSegmentExplicitKeys(segDefs, systemSegBaseline, viewerRole);
 
         const response = await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
           segmentPermissions: segDefs,
@@ -619,6 +621,15 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           <CryptoSegmentAdminExtras
                             segmentKey={expandedSeg}
                             slice={s}
+                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
+                          />
+                        )}
+
+                        {['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
+                          <McxSegmentAdminExtras
+                            segmentKey={expandedSeg}
+                            slice={s}
+                            canEdit={canEditMcxSessionTiming(viewerRole)}
                             onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
                           />
                         )}

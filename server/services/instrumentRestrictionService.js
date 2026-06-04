@@ -121,10 +121,27 @@ export async function assertHierarchyInstrumentNotDenied(user, ctx) {
 }
 
 /**
- * Check if user is allowed to trade within low-high range for a specific instrument
- * Returns true if allowWithinLowHigh is enabled for any matching denylist entry
+ * True when any admin in the user’s hierarchy has restrictions.allowWithinLowHigh ON
+ * (e.g. Ram ON → all clients under Ram’s tree trade only within day low–high).
+ */
+export async function isHierarchyAllowWithinLowHigh(user) {
+  const ids = collectHierarchyAdminIds(user);
+  if (!ids.length) return false;
+  const docs = await Admin.find({ _id: { $in: ids } })
+    .select('restrictions.allowWithinLowHigh')
+    .lean();
+  const byId = Object.fromEntries(docs.map((d) => [String(d._id), d]));
+  for (const id of ids) {
+    if (byId[id]?.restrictions?.allowWithinLowHigh === true) return true;
+  }
+  return false;
+}
+
+/**
+ * Hierarchy-wide low–high and/or legacy per-deny-row allowWithinLowHigh.
  */
 export async function isAllowedWithinLowHigh(user, ctx) {
+  if (await isHierarchyAllowWithinLowHigh(user)) return true;
   const merged = await mergeInstrumentDenylistForAdminIds(collectHierarchyAdminIds(user));
   if (!merged.length) return false;
   for (const entry of merged) {

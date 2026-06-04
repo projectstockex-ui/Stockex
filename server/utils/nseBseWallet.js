@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import { recalculateUsedMargin } from './recalculateUsedMargin.js';
+import { isAbsurdWalletInr, sanitizeInrWalletAmount } from './walletBalanceSanity.js';
 
 /**
  * NSE & BSE dedicated wallet — replaces legacy wallet.tradingBalance.
@@ -37,10 +38,15 @@ export async function readNseBseWalletFromDb(userId) {
       },
     }
   );
-  const balance =
+  const rawBalance =
     doc?.nseBseWallet?.balance != null
       ? Number(doc.nseBseWallet.balance) || 0
       : Number(doc?.wallet?.tradingBalance) || 0;
+  const balance = sanitizeInrWalletAmount(rawBalance, {
+    field: 'nseBseWallet.balance',
+    userId: String(userId),
+    log: isAbsurdWalletInr(rawBalance),
+  });
   const hasNseWallet = doc?.nseBseWallet != null;
   const usedMargin = hasNseWallet
     ? doc.nseBseWallet.usedMargin != null && doc.nseBseWallet.usedMargin !== ''

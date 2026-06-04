@@ -171,7 +171,11 @@ const UserTransactions = () => {
         );
       case 'transfers':
         return allData.filter(t => 
-          t.reason === 'ADJUSTMENT' || 
+          t.reason === 'ADJUSTMENT' ||
+          t.reason === 'CLIENT_TRANSFER_IN' ||
+          t.reason === 'CLIENT_TRANSFER_OUT' ||
+          t.reason === 'WALLET_TRANSFER_DEBIT' ||
+          t.reason === 'WALLET_TRANSFER_CREDIT' ||
           t.description?.includes('transfer')
         );
       case 'trading':
@@ -193,7 +197,7 @@ const UserTransactions = () => {
     if (item.displayType === 'WITHDRAWAL' || item.reason === 'WITHDRAWAL') {
       return <ArrowUpCircle size={16} className="text-red-400" />;
     }
-    if (item.reason === 'ADJUSTMENT') {
+    if (item.reason === 'ADJUSTMENT' || item.reason === 'CLIENT_TRANSFER_IN' || item.reason === 'CLIENT_TRANSFER_OUT') {
       return <Repeat size={16} className="text-blue-400" />;
     }
     if (item.reason === 'TRADE' || item.reason === 'COMMISSION') {
@@ -203,6 +207,8 @@ const UserTransactions = () => {
   };
 
   const getTypeLabel = (item) => {
+    if (item.reason === 'CLIENT_TRANSFER_OUT') return 'Sent to Client';
+    if (item.reason === 'CLIENT_TRANSFER_IN') return 'Received from Client';
     if (item.reason === 'ADJUSTMENT') return 'Internal Transfer';
     if (item.reason === 'DEPOSIT' || item.displayType === 'DEPOSIT') return 'Deposit';
     if (item.reason === 'WITHDRAWAL' || item.displayType === 'WITHDRAWAL') return 'Withdrawal';

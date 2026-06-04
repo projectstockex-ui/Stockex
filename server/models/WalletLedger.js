@@ -55,7 +55,9 @@ const walletLedgerSchema = new mongoose.Schema({
       'REFERRAL_COMMISSION', // Credit to referrer from Super Admin's share of referred user's profit distribution
       'REFERRAL_COMMISSION_TRANSFER', // Debit from Super Admin pool for referral transfer out
       'PLATFORM_CHARGE_DEBIT',       // User main wallet — daily platform fee
-      'PLATFORM_CHARGE_CREDIT'       // Super Admin wallet — daily platform fee collection
+      'PLATFORM_CHARGE_CREDIT',      // Super Admin wallet — daily platform fee collection
+      'CLIENT_TRANSFER_OUT',         // Main wallet → another client's main wallet (debit)
+      'CLIENT_TRANSFER_IN',          // Main wallet ← another client's main wallet (credit)
     ],
     required: true
   },
@@ -106,6 +108,10 @@ const walletLedgerSchema = new mongoose.Schema({
 
   /** GAME_PROFIT: effective share % of baseAmount (loss pool, win brokerage, or gross fee) */
   meta: {
+    /** Trade linkage for brokerage / pnl rows */
+    tradeId: { type: String },
+    /** Brokerage leg marker: OPEN or CLOSE */
+    leg: { type: String },
     sharePercent: { type: Number },
     baseAmount: { type: Number },
     profitKind: { type: String },
@@ -143,6 +149,14 @@ const walletLedgerSchema = new mongoose.Schema({
     incentiveScope: { type: String },
     /** give-incentive: main wallet vs temporary (games) wallet credit leg */
     incentiveWallet: { type: String },
+    /** Franchise platform charge / book rows */
+    franchiseRootId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+    franchiseRootName: { type: String },
+    franchiseRootAdminCode: { type: String },
+    /** TRADING_PNL | BROKERAGE | FRANCHISE_BOOK */
+    chargeKind: { type: String },
+    platformPct: { type: Number },
+    clientNetPnL: { type: Number },
   },
 }, { timestamps: true });
 

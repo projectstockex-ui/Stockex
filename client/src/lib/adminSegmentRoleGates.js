@@ -3,6 +3,11 @@ export function canManageLimitPendingSegmentGate(role) {
   return role === 'SUPER_ADMIN' || role === 'ADMIN';
 }
 
+/** MCX session start/close — Super Admin only (sets on franchise admin; flows to full hierarchy). */
+export function canEditMcxSessionTiming(role) {
+  return role === 'SUPER_ADMIN';
+}
+
 /**
  * Hierarchy "Admin Settings" modal: show the limit/pending toggle only when the row being edited
  * is an Admin or Super Admin — not Broker/Sub broker — even when a Super Admin opens Settings.

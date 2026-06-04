@@ -526,11 +526,17 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
         // Fetch the user with referredBy information
         const referredUser = await User.findById(userId).select('referredBy username email admin');
         if (referredUser && referredUser.referredBy) {
+          const { isReferralEnabledForUser } = await import('../utils/referralDistributionHelper.js');
+          const referralAllowed = await isReferralEnabledForUser(referredUser._id, 'games');
+          if (!referralAllowed) {
+            console.log(
+              `[ReferralBrokerage] Referral in games disabled for hierarchy of ${referredUser.username}. Skipping transfer.`
+            );
+          } else {
           // Get the referral client
           const referralClient = await User.findById(referredUser.referredBy).select('username email wallet');
           if (referralClient) {
-            // Check if the referral client's admin has referral distribution enabled for this segment
-            // Determine the segment based on gameKey
+            // Determine the segment based on gameKey (legacy per-segment flags still apply)
             let segment = 'games'; // default
             if (gameKey?.includes('mcx') || gameKey?.includes('MCX')) {
               segment = 'mcx';
@@ -538,23 +544,9 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
               segment = 'forex';
             }
             
-            // Get the referral client's admin
-            const referralAdmin = await Admin.findById(referredUser.admin).select('referralDistributionEnabled');
-            
-            // Check if referral distribution is enabled for this segment
-            let referralEnabled = true;
-            if (referralAdmin && referralAdmin.referralDistributionEnabled) {
-              if (typeof referralAdmin.referralDistributionEnabled === 'boolean') {
-                // Backward compatibility: if it's a boolean, use that value
-                referralEnabled = referralAdmin.referralDistributionEnabled;
-              } else {
-                // Use segment-specific setting
-                referralEnabled = referralAdmin.referralDistributionEnabled[segment] !== false;
-              }
-            }
-            
-            if (!referralEnabled) {
-              console.log(`[ReferralBrokerage] Referral distribution disabled for segment ${segment} for referral client ${referralClient.username}. Skipping transfer.`);
+            const segmentAllowed = await isReferralEnabledForUser(referredUser._id, segment);
+            if (!segmentAllowed) {
+              console.log(`[ReferralBrokerage] Referral disabled for segment ${segment} for ${referredUser.username}. Skipping.`);
             } else {
               console.log(`[ReferralBrokerage] User ${referredUser.username} was referred by ${referralClient.username}. Processing referral commission ₹${totalSuperAdminShare.toFixed(2)} for segment ${segment}.`);
               
@@ -587,6 +579,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
                 console.log(`[ReferralBrokerage] Referral commission failed: ${payoutResult.reason}`);
               }
             }
+          }
           }
         }
       } catch (error) {

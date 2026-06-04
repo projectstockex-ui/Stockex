@@ -1,6 +1,10 @@
 import Admin from '../models/Admin.js';
 import leverageValidationService from '../services/leverageValidationService.js';
 import hierarchyValidationService from '../services/hierarchyValidationService.js';
+import {
+  clampOptionCommissionToParentFloor,
+  optionCommissionHierarchyError,
+} from '../utils/hierarchyOptionCommission.js';
 
 /**
  * Admin Segment Settings Controller
@@ -136,6 +140,11 @@ class AdminSegmentSettingsController {
           segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions
         );
 
+        if (currentAdmin.role !== 'SUPER_ADMIN') {
+          const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+          plain = stripMcxSessionTimingFromSegmentMap(plain);
+        }
+
         // Validate all segment permission fields against parent's limits
         const parentSegPerms = currentAdmin.segmentPermissions instanceof Map
           ? Object.fromEntries(currentAdmin.segmentPermissions)
@@ -210,6 +219,57 @@ class AdminSegmentSettingsController {
             }
           }
 
+          // Validate option buy/sell hierarchy caps
+          if (currentAdmin.role !== 'SUPER_ADMIN') {
+            for (const optionKey of ['optionBuy', 'optionSell']) {
+              const childOpt = segData?.[optionKey];
+              const parentOpt = parentSeg?.[optionKey];
+              if (!childOpt || typeof childOpt !== 'object' || !parentOpt || typeof parentOpt !== 'object') continue;
+
+              const optionLabel = optionKey === 'optionBuy' ? 'Option Buy' : 'Option Sell';
+
+              if (childOpt.allowed === true && parentOpt.allowed === false) {
+                return res.status(400).json({
+                  message: `Unable to enable ${optionLabel}. Parent hierarchy has it disabled.`
+                });
+              }
+
+              const numericCaps = [
+                ['intradayLeverage', 'Intraday Leverage'],
+                ['carryForwardLeverage', 'Carry Forward Leverage'],
+                ['strikeSelection', 'Strike Selection'],
+                ['maxExchangeLots', 'Max Exchange Lots'],
+              ];
+
+              for (const [fieldKey, fieldLabel] of numericCaps) {
+                const childVal = childOpt[fieldKey];
+                const parentVal = parentOpt[fieldKey];
+                if (childVal === undefined || childVal === null || parentVal === undefined || parentVal === null) continue;
+                if (!Number.isFinite(Number(childVal)) || !Number.isFinite(Number(parentVal))) continue;
+                if (Number(childVal) > Number(parentVal)) {
+                  return res.status(400).json({
+                    message: `Unable to set ${optionLabel} ${fieldLabel} more than parent hierarchy. ${segName} ${optionLabel} ${fieldLabel} (${childVal}) exceeds parent's limit (${parentVal})`
+                  });
+                }
+              }
+
+              const clampedOpt = clampOptionCommissionToParentFloor(childOpt, parentOpt);
+              if (clampedOpt !== childOpt) {
+                segData[optionKey] = clampedOpt;
+              }
+
+              const commissionErr = optionCommissionHierarchyError(
+                segData[optionKey]?.commission,
+                parentOpt.commission,
+                optionLabel,
+                segName
+              );
+              if (commissionErr) {
+                return res.status(400).json({ message: commissionErr });
+              }
+            }
+          }
+
           // Validate minExchangeQty - child cannot set lower than parent (must be >= parent)
           if (segData.minExchangeQty !== undefined && parentSeg.minExchangeQty !== undefined && currentAdmin.role !== 'SUPER_ADMIN') {
             if (segData.minExchangeQty < parentSeg.minExchangeQty) {
@@ -265,27 +325,9 @@ class AdminSegmentSettingsController {
           plain = this._preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
         }
 
-        const { alignSegmentDefaultsMap } = await import('../utils/commissionTypeUnit.js');
+        const { alignSegmentDefaultsMap, syncSegmentCommissionMap } = await import('../utils/commissionTypeUnit.js');
         
-        // Map commissionLot to commission when commissionType is PER_CRORE
-        // Frontend sends commissionLot but backend expects commission for PER_CRORE
-        console.log('[AdminSegmentSettings] Before mapping - plain data:', JSON.stringify(plain, null, 2));
-        for (const [segName, segData] of Object.entries(plain)) {
-          if (!segData || typeof segData !== 'object') continue;
-          console.log(`[AdminSegmentSettings] Processing ${segName}:`, {
-            cryptoStartTime: segData.cryptoStartTime,
-            cryptoClosingTime: segData.cryptoClosingTime
-          });
-          if (segData.commissionType === 'PER_CRORE') {
-            console.log('[AdminSegmentSettings] Mapping for', segName, '- commissionLot:', segData.commissionLot, 'commission:', segData.commission);
-            if (segData.commissionLot !== undefined && (segData.commission === undefined || segData.commission === 0)) {
-              segData.commission = segData.commissionLot;
-              console.log('[AdminSegmentSettings] Mapped commissionLot to commission for', segName, '- new commission:', segData.commission);
-            }
-          }
-        }
-        console.log('[AdminSegmentSettings] After mapping - plain data:', JSON.stringify(plain, null, 2));
-        
+        syncSegmentCommissionMap(plain);
         const aligned = alignSegmentDefaultsMap(plain);
 
         // Preserve new leverage and quantity limit fields that might be stripped by alignment
@@ -369,6 +411,24 @@ class AdminSegmentSettingsController {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].cryptoClosingTime = segData.cryptoClosingTime;
           }
+          if (currentAdmin.role === 'SUPER_ADMIN') {
+            if (segData.mcxStartTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].mcxStartTime = segData.mcxStartTime;
+            }
+            if (segData.mcxClosingTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].mcxClosingTime = segData.mcxClosingTime;
+            }
+            if (segData.closingTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].closingTime = segData.closingTime;
+            }
+            if (segData.startTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].startTime = segData.startTime;
+            }
+          }
           if (segData.cryptoSpreadInr !== undefined) {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].cryptoSpreadInr = segData.cryptoSpreadInr;
@@ -389,6 +449,14 @@ class AdminSegmentSettingsController {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].cryptoLotSizeQuantity = segData.cryptoLotSizeQuantity;
           }
+          if (segData.optionBuy !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].optionBuy = segData.optionBuy;
+          }
+          if (segData.optionSell !== undefined) {
+            aligned[segName] = aligned[segName] || {};
+            aligned[segName].optionSell = segData.optionSell;
+          }
         }
 
         updateFields.segmentPermissions = aligned;
@@ -400,7 +468,11 @@ class AdminSegmentSettingsController {
 
       if (segmentExplicitKeys !== undefined) {
         const { sanitizeSegmentExplicitKeysForSave } = await import('../utils/commissionTypeUnit.js');
-        const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+        let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+        if (currentAdmin.role !== 'SUPER_ADMIN' && sanitized) {
+          const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
+          sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
+        }
         if (sanitized !== undefined) {
           updateFields.segmentExplicitKeys = sanitized;
         }
@@ -494,6 +566,53 @@ class AdminSegmentSettingsController {
           currentAdmin.markModified('segmentPermissions');
           await currentAdmin.save();
           console.log('[AdminSegmentSettings] Updated Super Admin CRYPTOFUT timing');
+        }
+
+        const mcxFutData = updateFields.segmentPermissions.MCXFUT || updateFields.segmentPermissions.MCX;
+        if (
+          mcxFutData &&
+          (mcxFutData.mcxStartTime !== undefined ||
+            mcxFutData.mcxClosingTime !== undefined ||
+            mcxFutData.startTime !== undefined ||
+            mcxFutData.closingTime !== undefined)
+        ) {
+          const mcxStart =
+            mcxFutData.mcxStartTime !== undefined ? mcxFutData.mcxStartTime : mcxFutData.startTime;
+          const mcxClose =
+            mcxFutData.mcxClosingTime !== undefined ? mcxFutData.mcxClosingTime : mcxFutData.closingTime;
+          console.log(
+            `[AdminSegmentSettings] Super Admin updating MCXFUT timing: start=${mcxStart}, close=${mcxClose}`
+          );
+
+          const SystemSettings = (await import('../models/SystemSettings.js')).default;
+          const settings = await SystemSettings.findOne({ settingsType: 'global' });
+
+          if (settings && settings.adminSegmentDefaults) {
+            const updateMcxTiming = (segMap, segName) => {
+              if (segMap instanceof Map) {
+                const seg = segMap.get(segName) || {};
+                if (mcxStart !== undefined) seg.mcxStartTime = mcxStart;
+                if (mcxClose !== undefined) {
+                  seg.mcxClosingTime = mcxClose;
+                  seg.closingTime = mcxClose;
+                }
+                segMap.set(segName, seg);
+              } else if (segMap && typeof segMap === 'object') {
+                segMap[segName] = segMap[segName] || {};
+                if (mcxStart !== undefined) segMap[segName].mcxStartTime = mcxStart;
+                if (mcxClose !== undefined) {
+                  segMap[segName].mcxClosingTime = mcxClose;
+                  segMap[segName].closingTime = mcxClose;
+                }
+              }
+            };
+
+            updateMcxTiming(settings.adminSegmentDefaults, 'MCXFUT');
+            updateMcxTiming(settings.adminSegmentDefaults, 'MCX');
+            settings.markModified('adminSegmentDefaults');
+            await settings.save();
+            console.log('[AdminSegmentSettings] Updated SystemSettings MCXFUT timing');
+          }
         }
       }
 

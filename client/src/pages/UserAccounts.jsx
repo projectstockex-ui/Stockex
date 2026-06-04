@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import {
-  Wallet, Plus, Minus, RefreshCw, IndianRupee, MoreHorizontal, X, ArrowRight, ArrowLeftRight, Gem, Gamepad2,
+  Wallet, Plus, Minus, RefreshCw, IndianRupee, MoreHorizontal, X, ArrowRight,   ArrowLeftRight, Gem, Gamepad2,
+  Send,
   History,
   Bitcoin,
   ClipboardList,
@@ -16,6 +17,12 @@ import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGame
 import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
 import { fmtTransferInr, validateTransferAmount } from '../lib/walletTransferLimits.js';
 import { getTradeQtyLotsDisplay } from '../utils/tradeQtyLotsDisplay.js';
+import { resolveMainWalletBalance } from '../utils/resolveMainWalletBalance.js';
+import {
+  sanitizeWalletDisplayInr,
+  MAX_SANE_WALLET_DISPLAY_INR,
+} from '../utils/walletDisplaySanity.js';
+import PeerTransferModal from '../components/PeerTransferModal.jsx';
 
 /** MCX-only wallet row (commodity), excluding crypto/forex. */
 function isMcxWalletTrade(row) {
@@ -74,6 +81,10 @@ const UserAccounts = () => {
   const [showWalletTransferModal, setShowWalletTransferModal] = useState(false);
   const [walletTransferSource, setWalletTransferSource] = useState('');
   const [walletTransferTarget, setWalletTransferTarget] = useState('');
+  const [showPeerTransferModal, setShowPeerTransferModal] = useState(false);
+  const [showPeerTransferHistory, setShowPeerTransferHistory] = useState(false);
+  const [peerTransferHistory, setPeerTransferHistory] = useState([]);
+  const [peerTransferHistoryLoading, setPeerTransferHistoryLoading] = useState(false);
 
   const fetchNseBseWallet = useCallback(async () => {
     if (!user?.token) return;
@@ -151,10 +162,30 @@ const UserAccounts = () => {
     setShowTransferModal(true);
   };
 
+  const fetchPeerTransferHistory = useCallback(async () => {
+    if (!user?.token) return;
+    setPeerTransferHistoryLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/peer-transfer/history', {
+        params: { limit: 50 },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setPeerTransferHistory(Array.isArray(data.history) ? data.history : []);
+    } catch (e) {
+      console.error('Peer transfer history:', e);
+      setPeerTransferHistory([]);
+    } finally {
+      setPeerTransferHistoryLoading(false);
+    }
+  }, [user?.token]);
+
   // Main wallet balance (for deposit/withdraw with admin)
   // API returns data at top level and also in wallet object
-  const mainWalletBalance = walletData?.cashBalance || walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0;
-  const nseBseBalance = nseBseWalletSnapshot?.balance ?? 0;
+  const mainWalletBalance = resolveMainWalletBalance(walletData, nseBseWalletSnapshot);
+  const nseBseBalance = sanitizeWalletDisplayInr(nseBseWalletSnapshot?.balance ?? 0);
+  const nseBseBalanceCorrupted =
+    Number(nseBseWalletSnapshot?.balance) > MAX_SANE_WALLET_DISPLAY_INR ||
+    !!nseBseWalletSnapshot?.balanceRepaired;
   const usedMargin = nseBseWalletSnapshot?.usedMargin ?? 0;
   const availableNseBseBalance = nseBseBalance - usedMargin;
   
@@ -258,10 +289,35 @@ const UserAccounts = () => {
     }
   };
 
+  const isSubwalletTradeLedgerRow = (row) =>
+    row?.kind === 'trade_pnl' || row?.kind === 'trade_brokerage' || row?.kind === 'trade_autosquare';
+
+  const subwalletTradeLedgerTextClass = (row) => {
+    if (row?.kind === 'trade_brokerage') return 'text-red-300';
+    if (row?.kind === 'trade_autosquare') return 'text-purple-300';
+    if (row?.isAutoSquare) return 'text-orange-400';
+    return 'text-cyan-300';
+  };
+
+  const sumBrokerageFromLedger = (entries) =>
+    (entries || [])
+      .filter((r) => r.kind === 'trade_brokerage' && Number(r.amount) > 0)
+      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+
   const fetchCryptoTransferLedger = useCallback(async () => {
     if (!user?.token) return;
     setCryptoTransferLedgerLoading(true);
     try {
+      if ((Number(cryptoBalance) || 0) < 1 && (Number(walletData?.cryptoWallet?.usedMargin) || 0) < 1) {
+        try {
+          await axios.post('/api/user/funds/repair-crypto-wallet', null, {
+            headers: { Authorization: `Bearer ${user.token}` },
+          });
+          await fetchWallet();
+        } catch {
+          /* repair is best-effort */
+        }
+      }
       const { data } = await axios.get('/api/user/funds/subwallet-transfer-ledger', {
         params: { wallet: 'crypto', limit: 50 },
         headers: { Authorization: `Bearer ${user.token}` },
@@ -273,7 +329,7 @@ const UserAccounts = () => {
     } finally {
       setCryptoTransferLedgerLoading(false);
     }
-  }, [user?.token]);
+  }, [user?.token, cryptoBalance, walletData?.cryptoWallet?.usedMargin, fetchWallet]);
 
   const fetchForexTransferLedger = useCallback(async () => {
     if (!user?.token) return;
@@ -309,29 +365,71 @@ const UserAccounts = () => {
     }
   }, [user?.token]);
 
+  const mapTradingSubwalletEntry = (row) => {
+    if (row.kind === 'trade_brokerage') {
+      const leg = row.leg || 'OPEN+CLOSE';
+      return {
+        _id: row.id,
+        createdAt: row.at,
+        reason: 'BROKERAGE',
+        meta: { leg },
+        description: row.description,
+        type: 'DEBIT',
+        amount: row.amount,
+      };
+    }
+    if (row.kind === 'trade_pnl' || row.kind === 'trade_autosquare') {
+      return {
+        _id: row.id,
+        createdAt: row.at,
+        reason: 'TRADE_PNL',
+        description: row.description,
+        type: row.type || 'CREDIT',
+        amount: row.amount,
+        isAutoSquare: row.isAutoSquare || row.kind === 'trade_autosquare',
+      };
+    }
+    if (row.kind === 'wallet_transfer') {
+      return {
+        _id: row.id,
+        createdAt: row.at,
+        reason: row.reason || 'WALLET_TRANSFER',
+        description: row.description,
+        type: row.type,
+        amount: row.amount,
+      };
+    }
+    if (row.kind === 'between_wallets') {
+      return {
+        _id: row.id,
+        createdAt: row.at,
+        reason: 'WALLET_TRANSFER',
+        description: row.description || `${row.sourceLabel} → ${row.targetLabel}`,
+        type: 'DEBIT',
+        amount: row.amount,
+      };
+    }
+    return null;
+  };
+
   const fetchTradingWalletLedger = useCallback(async () => {
     if (!user?.token) return;
     setTradingWalletLedgerLoading(true);
     try {
-      const { data } = await axios.get('/api/user/wallet-ledger?limit=50', {
+      const { data } = await axios.get('/api/user/funds/subwallet-transfer-ledger', {
+        params: { wallet: 'trading', limit: 50 },
         headers: { Authorization: `Bearer ${user.token}` },
       });
-      // Filter to show only NSE/BSE transactions (exclude crypto, mcx, forex)
-      const filtered = Array.isArray(data) ? data.filter(row => {
-        const isCrypto = row.isCrypto || row.reason?.toLowerCase().includes('crypto') || row.reason?.toLowerCase().includes('btc') || row.reason?.toLowerCase().includes('bitcoin') || row.reason?.toLowerCase().includes('eth') || row.reason?.toLowerCase().includes('binance');
-        const isMcx = row.isMcx || row.reason?.toLowerCase().includes('mcx') || row.reason?.toLowerCase().includes('commodity') || row.reason?.toLowerCase().includes('gold') || row.reason?.toLowerCase().includes('silver') || row.reason?.toLowerCase().includes('crude');
-        const isForex = row.isForex || row.reason?.toLowerCase().includes('forex') || row.reason?.toLowerCase().includes('eur') || row.reason?.toLowerCase().includes('usd') || row.reason?.toLowerCase().includes('gbp');
-        const isGames = row.isGames || row.reason?.toLowerCase().includes('games') || row.reason?.toLowerCase().includes('fantasy');
-        return !isCrypto && !isMcx && !isForex && !isGames;
-      }) : [];
-      setTradingWalletLedger(filtered);
+      const entries = Array.isArray(data?.entries) ? data.entries : [];
+      setTradingWalletLedger(entries.map(mapTradingSubwalletEntry).filter(Boolean));
+      await fetchNseBseWallet();
     } catch (e) {
       console.error('Trading wallet ledger:', e);
       setTradingWalletLedger([]);
     } finally {
       setTradingWalletLedgerLoading(false);
     }
-  }, [user?.token]);
+  }, [user?.token, fetchNseBseWallet]);
 
   const fetchMcxTransferLedger = useCallback(async () => {
     if (!user?.token) return;
@@ -504,6 +602,11 @@ const UserAccounts = () => {
             <div className="text-4xl font-bold mb-1">
               ₹{nseBseBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
+            {nseBseBalanceCorrupted && (
+              <p className="text-xs text-amber-400 mt-1">
+                Balance was corrupted by a bad autosquare — refreshed from ledger. Tap refresh if it still looks wrong.
+              </p>
+            )}
             <div className="text-sm text-gray-500">NSE & BSE only</div>
             {usedMargin > 0 && (
               <div className="text-xs text-yellow-400 mt-1">
@@ -516,7 +619,10 @@ const UserAccounts = () => {
               onClick={() => {
                 setShowTradingWalletLedger((prev) => {
                   const next = !prev;
-                  if (next) fetchTradingWalletLedger();
+                  if (next) {
+                    fetchTradingWalletLedger();
+                    fetchNseBseWallet();
+                  }
                   return next;
                 });
               }}
@@ -550,6 +656,12 @@ const UserAccounts = () => {
                     No transactions yet.
                   </div>
                 ) : (
+                  <>
+                  {tradingWalletLedger.some((r) => r.reason === 'BROKERAGE') && (
+                    <p className="px-3 py-2 text-[10px] text-gray-500 border-b border-dark-600">
+                      Brokerage rows show open-leg charges (OPEN+CLOSE for FUT). P&L is separate.
+                    </p>
+                  )}
                   <table className="w-full text-left text-[11px]">
                     <thead className="sticky top-0 bg-dark-800 text-gray-500">
                       <tr>
@@ -606,6 +718,7 @@ const UserAccounts = () => {
                       })}
                     </tbody>
                   </table>
+                  </>
                 )}
               </div>
             )}
@@ -956,6 +1069,16 @@ const UserAccounts = () => {
                     No entries yet. Main ↔ MCX moves, trade P&L, and brokerage (red) appear here when you open a trade.
                   </p>
                 ) : (
+                  <>
+                    {sumBrokerageFromLedger(mcxTransferLedger) > 0 && (
+                      <p className="text-[10px] text-amber-300/90 px-2 pt-2 border-b border-dark-700/80">
+                        Total brokerage (shown below): ₹
+                        {sumBrokerageFromLedger(mcxTransferLedger).toLocaleString('en-IN', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </p>
+                    )}
                   <table className="w-full text-[11px]">
                     <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
                       <tr>
@@ -976,19 +1099,9 @@ const UserAccounts = () => {
                             })}
                           </td>
                           <td className="p-2 align-top text-gray-300 leading-snug">
-                            {row.kind === 'trade_pnl' || row.kind === 'trade_brokerage' || row.kind === 'trade_autosquare' ? (
+                            {isSubwalletTradeLedgerRow(row) ? (
                               <div>
-                                <span
-                                  className={
-                                    row.kind === 'trade_brokerage'
-                                      ? 'text-red-300'
-                                      : row.kind === 'trade_autosquare'
-                                        ? 'text-purple-300'
-                                        : 'text-cyan-300'
-                                  }
-                                >
-                                  {row.description}
-                                </span>
+                                <span className={subwalletTradeLedgerTextClass(row)}>{row.description}</span>
                               </div>
                             ) : (
                               <>
@@ -1002,6 +1115,7 @@ const UserAccounts = () => {
                       ))}
                     </tbody>
                   </table>
+                  </>
                 )}
               </div>
             )}
@@ -1446,45 +1560,60 @@ const UserAccounts = () => {
                   <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
                 ) : cryptoTransferLedger.length === 0 ? (
                   <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
-                    No transfers yet. Deposits/withdrawals between Main and this account, and transfers through Transfer, appear here with time and amount.
+                    No entries yet. Main ↔ Crypto transfers, trade P&L (cyan), and brokerage (red) appear here.
                   </p>
                 ) : (
-                  <table className="w-full text-[11px]">
-                    <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
-                      <tr>
-                        <th className="text-left p-2 font-medium">When (IST)</th>
-                        <th className="text-right p-2 font-medium">Amount</th>
-                        <th className="text-left p-2 font-medium">From → To</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cryptoTransferLedger.map((row) => (
-                        <tr key={row.id} className="border-t border-dark-700/80">
-                          <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
-                          <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                            ₹
-                            {Number(row.amount || 0).toLocaleString('en-IN', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </td>
-                          <td className="p-2 align-top text-gray-300 leading-snug">
-                            {row.kind === 'trade_pnl' ? (
-                              <div>
-                                <span className="text-cyan-300">{row.description}</span>
-                              </div>
-                            ) : (
-                              <>
-                                <span className="text-orange-300/90">{row.sourceLabel}</span>
-                                <span className="text-gray-600 mx-1">→</span>
-                                <span className="text-emerald-300/90">{row.targetLabel}</span>
-                              </>
-                            )}
-                          </td>
+                  <>
+                    {sumBrokerageFromLedger(cryptoTransferLedger) > 0 && (
+                      <p className="text-[10px] text-amber-300/90 px-2 pt-2 border-b border-dark-700/80">
+                        Brokerage in this list (latest {cryptoTransferLedger.length} rows): ₹
+                        {sumBrokerageFromLedger(cryptoTransferLedger).toLocaleString('en-IN', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </p>
+                    )}
+                    <table className="w-full text-[11px]">
+                      <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
+                        <tr>
+                          <th className="text-left p-2 font-medium">When (IST)</th>
+                          <th className="text-right p-2 font-medium">Amount</th>
+                          <th className="text-left p-2 font-medium">From → To</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {cryptoTransferLedger.map((row) => (
+                          <tr key={row.id} className="border-t border-dark-700/80">
+                            <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
+                            <td
+                              className={`p-2 align-top text-right font-mono tabular-nums ${
+                                row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
+                              }`}
+                            >
+                              ₹
+                              {Number(row.amount || 0).toLocaleString('en-IN', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="p-2 align-top text-gray-300 leading-snug">
+                              {isSubwalletTradeLedgerRow(row) ? (
+                                <div>
+                                  <span className={subwalletTradeLedgerTextClass(row)}>{row.description}</span>
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="text-orange-300/90">{row.sourceLabel}</span>
+                                  <span className="text-gray-600 mx-1">→</span>
+                                  <span className="text-emerald-300/90">{row.targetLabel}</span>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
                 )}
               </div>
             )}
@@ -1636,45 +1765,60 @@ const UserAccounts = () => {
                     <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
                   ) : forexTransferLedger.length === 0 ? (
                     <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
-                      No transfers yet. Deposits/withdrawals between Main and this account, and transfers through Transfer, appear here with time and amount.
+                      No entries yet. Main ↔ Forex transfers, trade P&L (cyan), and brokerage (red) appear here.
                     </p>
                   ) : (
-                    <table className="w-full text-[11px]">
-                      <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
-                        <tr>
-                          <th className="text-left p-2 font-medium">When (IST)</th>
-                          <th className="text-right p-2 font-medium">Amount</th>
-                          <th className="text-left p-2 font-medium">From → To</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {forexTransferLedger.map((row) => (
-                          <tr key={row.id} className="border-t border-dark-700/80">
-                            <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
-                            <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                              ₹
-                              {Number(row.amount || 0).toLocaleString('en-IN', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
-                            </td>
-                            <td className="p-2 align-top text-gray-300 leading-snug">
-                              {row.kind === 'trade_pnl' ? (
-                                <div>
-                                  <span className={row.isAutoSquare ? 'text-orange-400' : 'text-cyan-300'}>{row.description}</span>
-                                </div>
-                              ) : (
-                                <>
-                                  <span className="text-cyan-300/90">{row.sourceLabel}</span>
-                                  <span className="text-gray-600 mx-1">→</span>
-                                  <span className="text-teal-300/90">{row.targetLabel}</span>
-                                </>
-                              )}
-                            </td>
+                    <>
+                      {sumBrokerageFromLedger(forexTransferLedger) > 0 && (
+                        <p className="text-[10px] text-amber-300/90 px-2 pt-2 border-b border-dark-700/80">
+                          Total brokerage (shown below): ₹
+                          {sumBrokerageFromLedger(forexTransferLedger).toLocaleString('en-IN', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </p>
+                      )}
+                      <table className="w-full text-[11px]">
+                        <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
+                          <tr>
+                            <th className="text-left p-2 font-medium">When (IST)</th>
+                            <th className="text-right p-2 font-medium">Amount</th>
+                            <th className="text-left p-2 font-medium">From → To</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {forexTransferLedger.map((row) => (
+                            <tr key={row.id} className="border-t border-dark-700/80">
+                              <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
+                              <td
+                                className={`p-2 align-top text-right font-mono tabular-nums ${
+                                  row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
+                                }`}
+                              >
+                                ₹
+                                {Number(row.amount || 0).toLocaleString('en-IN', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </td>
+                              <td className="p-2 align-top text-gray-300 leading-snug">
+                                {isSubwalletTradeLedgerRow(row) ? (
+                                  <div>
+                                    <span className={subwalletTradeLedgerTextClass(row)}>{row.description}</span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <span className="text-cyan-300/90">{row.sourceLabel}</span>
+                                    <span className="text-gray-600 mx-1">→</span>
+                                    <span className="text-teal-300/90">{row.targetLabel}</span>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
                   )}
                 </div>
               )}
@@ -1764,8 +1908,113 @@ const UserAccounts = () => {
 
       </div>
 
+      {/* Wallet section — Main balance + send to client */}
+      <div className="mt-8 bg-dark-800 rounded-xl border border-blue-500/20 overflow-hidden">
+        <div className="p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Wallet className="text-blue-400" size={22} />
+              Wallet
+            </h2>
+            <p className="text-sm text-gray-400 mt-1">Main Wallet (cash)</p>
+            <p className="text-2xl font-bold text-blue-400 tabular-nums mt-1">
+              ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Deposit / withdraw with admin · send to clients in your hierarchy
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowPeerTransferModal(true)}
+            className="px-5 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shrink-0"
+          >
+            <Send size={18} />
+            Send to Client
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setShowPeerTransferHistory((prev) => {
+              const next = !prev;
+              if (next) fetchPeerTransferHistory();
+              return next;
+            });
+          }}
+          className="w-full py-2.5 text-sm text-blue-300/90 border-t border-dark-600 hover:bg-blue-500/5 flex items-center justify-center gap-2"
+        >
+          <History size={16} />
+          Client transfer history
+          {showPeerTransferHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {showPeerTransferHistory && (
+          <div className="border-t border-dark-600 max-h-56 overflow-y-auto">
+            {peerTransferHistoryLoading ? (
+              <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
+            ) : peerTransferHistory.length === 0 ? (
+              <p className="text-center text-xs text-gray-500 py-4 px-3">
+                No client transfers yet.
+              </p>
+            ) : (
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-dark-800 text-gray-400 border-b border-dark-600">
+                  <tr>
+                    <th className="text-left p-2 font-medium">When</th>
+                    <th className="text-left p-2 font-medium">Type</th>
+                    <th className="text-left p-2 font-medium">Name · User ID</th>
+                    <th className="text-right p-2 font-medium">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dark-700">
+                  {peerTransferHistory.map((row) => (
+                    <tr key={row.id} className="hover:bg-dark-700/40">
+                      <td className="p-2 text-gray-400 whitespace-nowrap">
+                        {row.createdAt
+                          ? new Date(row.createdAt).toLocaleString('en-IN', {
+                              day: '2-digit',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : '—'}
+                      </td>
+                      <td className="p-2">
+                        <span
+                          className={
+                            row.direction === 'sent' ? 'text-orange-300' : 'text-green-400'
+                          }
+                        >
+                          {row.direction === 'sent' ? 'Sent' : 'Received'}
+                        </span>
+                      </td>
+                      <td className="p-2 text-gray-300">
+                        {row.counterpartyName && (
+                          <div className="text-white text-xs">{row.counterpartyName}</div>
+                        )}
+                        <div className="font-mono text-[10px] text-amber-300/90">
+                          {row.counterpartyUserId || '—'}
+                        </div>
+                      </td>
+                      <td className="p-2 text-right tabular-nums">
+                        <span className={row.direction === 'sent' ? 'text-red-400' : 'text-green-400'}>
+                          {row.direction === 'sent' ? '−' : '+'}₹
+                          {Number(row.amount || 0).toLocaleString('en-IN', {
+                            minimumFractionDigits: 2,
+                          })}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Account Summary */}
-      <div className="mt-8 bg-dark-800 rounded-xl p-6">
+      <div className="mt-6 bg-dark-800 rounded-xl p-6">
         <h2 className="text-lg font-semibold mb-4">Account Summary</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8 gap-4 sm:gap-6">
           <div>
@@ -1894,6 +2143,20 @@ const UserAccounts = () => {
             fetchWallet();
             setShowForexTransferModal(false);
             fetchForexTransferLedger();
+          }}
+        />
+      )}
+
+      {showPeerTransferModal && (
+        <PeerTransferModal
+          token={user?.token}
+          walletData={walletData}
+          nseBseSnapshot={nseBseWalletSnapshot}
+          onClose={() => setShowPeerTransferModal(false)}
+          onSuccess={() => {
+            fetchWallet();
+            fetchPeerTransferHistory();
+            setShowPeerTransferHistory(true);
           }}
         />
       )}

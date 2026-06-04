@@ -1,5 +1,11 @@
 import express from 'express';
 import axios from 'axios';
+import { getCryptoData } from '../services/binanceWebSocket.js';
+import {
+  getCryptoSessionStatus,
+  refreshCryptoSessionTimingCache,
+  isCryptoSessionLiveSync,
+} from '../services/cryptoSessionCloseService.js';
 
 const router = express.Router();
 
@@ -48,8 +54,25 @@ function tickerRow(ticker) {
   };
 }
 
+router.get('/session-status', async (req, res) => {
+  try {
+    await refreshCryptoSessionTimingCache();
+    res.json(getCryptoSessionStatus());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 router.get('/prices', async (req, res) => {
   try {
+    await refreshCryptoSessionTimingCache();
+    const cached = getCryptoData();
+    if (cached && Object.keys(cached).length > 0) {
+      return res.json(cached);
+    }
+    if (!isCryptoSessionLiveSync()) {
+      return res.json(cached || {});
+    }
     let rows = [];
     try {
       const response = await binanceAxios.get('/ticker/24hr', {
@@ -93,7 +116,17 @@ router.get('/price/:symbol', async (req, res) => {
   const { symbol } = req.params;
 
   try {
+    await refreshCryptoSessionTimingCache();
     const pair = resolveBinanceSpotKlineSymbol(symbol);
+    const cached = getCryptoData();
+    const hit =
+      cached[pair] ||
+      cached[symbol?.toUpperCase?.()] ||
+      cached[`${String(symbol).toUpperCase()}USDT`];
+    if (hit) return res.json(hit);
+    if (!isCryptoSessionLiveSync()) {
+      return res.status(503).json({ message: 'Crypto session closed — prices frozen' });
+    }
 
     const response = await binanceAxios.get('/ticker/24hr', {
       params: { symbol: pair },

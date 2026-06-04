@@ -5,6 +5,11 @@ import WalletService from './walletService.js';
 import WalletLedger from '../models/WalletLedger.js';
 import { getLTPMapForTrades, cacheKeyForTrade } from './ltpResolutionService.js';
 import { runMarginAwareCloses } from './eodAutoSquareOffService.js';
+import {
+  alignCryptoExitToEntryUnit,
+  computeAdminBookPoolForPatti,
+  roundMoney,
+} from '../utils/bookPnL.js';
 
 /**
  * TradePro Trading Engine - Stop-Out Service
@@ -202,20 +207,14 @@ class StopOutService {
       if (exitPriceOverride != null && Number(exitPriceOverride) > 0) {
         closePrice = Number(exitPriceOverride);
       }
-      const contractSize = position.contractSize || position.lotSize || 1;
+      closePrice = alignCryptoExitToEntryUnit(position, closePrice);
       const quantity = position.quantity || 0;
-      
-      // Calculate realized PnL
-      let realizedPnL;
-      if (position.side === 'BUY') {
-        realizedPnL = (closePrice - position.entryPrice) * quantity * contractSize;
-      } else {
-        realizedPnL = (position.entryPrice - closePrice) * quantity * contractSize;
-      }
-      
+      const mult = position.side === 'BUY' ? 1 : -1;
+      const realizedPnL = roundMoney((closePrice - position.entryPrice) * mult * quantity);
+
       // Deduct any charges
       const charges = position.charges?.total || position.totalCharges || 0;
-      const netPnL = realizedPnL - charges;
+      const netPnL = roundMoney(realizedPnL - charges);
       
       const closeReason = closedBy === 'EOD_SQUAREOFF' ? 'TIME_BASED' : 'RMS';
       const allowedClosedBy = new Set([
@@ -244,7 +243,17 @@ class StopOutService {
             pnl: realizedPnL,
             netPnL: netPnL,
             unrealizedPnL: 0,
-            adminPnL: position.bookType === 'B_BOOK' ? -netPnL : 0
+            adminPnL:
+              position.bookType === 'B_BOOK'
+                ? computeAdminBookPoolForPatti({
+                    ...position,
+                    exitPrice: closePrice,
+                    effectiveExitPrice: closePrice,
+                    status: 'CLOSED',
+                    realizedPnL,
+                    netPnL,
+                  })
+                : 0
           }
         }
       );

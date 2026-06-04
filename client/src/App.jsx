@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import UserAutoRefresh from './components/UserAutoRefresh';
+import TradingSoundAlerts from './components/TradingSoundAlerts';
 import { ThemeProvider } from './context/ThemeContext';
 // Legacy Admin Login (redirects based on role)
 import AdminLoginLegacy from './pages/AdminLogin';
@@ -121,6 +122,7 @@ function App() {
         <AuthProvider>
           <Router>
           <UserAutoRefresh />
+          <TradingSoundAlerts />
           <Routes>
             <Route path="/" element={<LandingPageNew />} />
             <Route path="/about" element={<About />} />

@@ -78,6 +78,32 @@ import brokerageRestrictionRoutes from './brokerageRestrictionRoutes.js';
 
 import referralEligibilityRoutes from './referralEligibilityRoutes.js';
 
+import segmentGroupingRoutes from './segmentGroupingRoutes.js';
+
+import {
+  normalizeIndividualPattiSegments,
+  normalizeBrokerPattiSegments,
+} from '../constants/pattiSharingSegments.js';
+import {
+  isIndividualPattiSharingEnabled,
+  disableFranchiseForPattiAdmin,
+  PATTI_FRANCHISE_CONFLICT_MSG,
+} from '../utils/pattiFranchiseExclusion.js';
+import { isAdminInActivePattiSubtree, findPattiSubtreeRootAdmin } from '../utils/pattiSubtree.js';
+import {
+  applyPattiSubtreeFromAdminRoot,
+  applyPattiOnDirectChild,
+} from '../utils/pattiSubtree.js';
+import {
+  assertCanManagePattiSharing,
+  buildMaxPctHints,
+  validateChildSegmentsAgainstParentCap,
+} from '../utils/pattiHierarchy.js';
+import {
+  getTradeCloseBreakdown,
+  assertAdminCanViewTradeBreakdown,
+} from '../utils/tradeCloseBreakdown.js';
+
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 
 import GameTransactionSlip from '../models/GameTransactionSlip.js';
@@ -117,8 +143,10 @@ import { matchAdminLedgerGameKey, WALLET_LEDGER_GAME_OPTIONS } from '../utils/wa
 import {
 
   resolveGameProfitSharePercent,
+  resolveLedgerSharePercent,
 
   displaySharePercentString,
+  enrichWalletLedgerEntryForDisplay,
 
 } from '../utils/resolveGameProfitSharePercent.js';
 
@@ -133,6 +161,16 @@ import {
   resolveNiftyJackpotSpotPrice,
 
 } from '../utils/niftyJackpotRank.js';
+
+import { getNiftyUpDownWindowState } from '../../lib/niftyUpDownWindows.js';
+
+import { getBtcUpDownWindowState, currentTotalSecondsIST } from '../../lib/btcUpDownWindows.js';
+
+import { ZerodhaPriceResolver } from '../services/zerodha/ZerodhaPriceResolver.js';
+
+import { getLiveBtcSpotForJackpot } from '../utils/btcJackpotSpot.js';
+
+import { getTodayISTString } from '../utils/istDate.js';
 
 import {
 
@@ -345,6 +383,106 @@ function resolveOfficePartnerType(adminDoc) {
 
 }
 
+/** Debit franchise / extra-charge brokerage from admin main wallet only (never temporaryWallet). */
+async function takeBrokerageFromAdminMainWallet(targetAdmin, superAdmin, amount, description, options = {}) {
+  const amt = Math.round(Number(amount) * 100) / 100;
+  if (!Number.isFinite(amt) || amt <= 0) {
+    const err = new Error('Please enter a valid amount');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const mainBal = Number(targetAdmin.wallet?.balance) || 0;
+  if (mainBal < amt) {
+    const err = new Error(
+      `Insufficient main wallet balance. Available: ₹${mainBal.toLocaleString('en-IN')} (temporary wallet is not used for this charge)`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  targetAdmin.wallet.balance = Math.round((mainBal - amt) * 100) / 100;
+  await targetAdmin.save();
+
+  const debitDesc =
+    description ||
+    (options.franchiseCharge
+      ? 'Franchise brokerage charge — debited from admin main wallet'
+      : 'Brokerage taken by Super Admin — admin main wallet');
+
+  await new WalletLedger({
+    ownerId: targetAdmin._id,
+    ownerType: 'ADMIN',
+    adminCode: targetAdmin.adminCode,
+    type: 'DEBIT',
+    reason: 'ADJUSTMENT',
+    amount: amt,
+    balanceAfter: targetAdmin.wallet.balance,
+    description: debitDesc,
+    category: 'EXTRA_CHARGE',
+    relatedTo: superAdmin._id,
+    relatedToType: 'ADMIN',
+    performedBy: superAdmin._id,
+    meta: { walletSource: 'main', franchiseCharge: !!options.franchiseCharge },
+  }).save();
+
+  superAdmin.wallet.balance = Math.round(((Number(superAdmin.wallet?.balance) || 0) + amt) * 100) / 100;
+  await superAdmin.save();
+
+  await new WalletLedger({
+    ownerId: superAdmin._id,
+    ownerType: 'ADMIN',
+    adminCode: superAdmin.adminCode,
+    type: 'CREDIT',
+    reason: 'ADJUSTMENT',
+    amount: amt,
+    balanceAfter: superAdmin.wallet.balance,
+    description: `Brokerage received from ${targetAdmin.name || targetAdmin.username} (main wallet)`,
+    category: 'EXTRA_CHARGE',
+    relatedTo: targetAdmin._id,
+    relatedToType: 'ADMIN',
+    performedBy: superAdmin._id,
+    meta: { walletSource: 'main', franchiseCharge: !!options.franchiseCharge },
+  }).save();
+
+  return { amount: amt, adminMainBalance: targetAdmin.wallet.balance };
+}
+
+/** True if target or any ancestor is a franchise root admin. */
+async function isInFranchiseSubtree(targetAdmin) {
+  const { isAdminInActiveFranchiseSubtree } = await import('../utils/franchiseBrokerage.js');
+  return isAdminInActiveFranchiseSubtree(targetAdmin);
+}
+
+function isUnderCallerHierarchy(caller, target) {
+  if (!caller || !target) return false;
+  if (caller.role === 'SUPER_ADMIN') return true;
+  if (target.parentId?.toString() === caller._id.toString()) return true;
+  return (target.hierarchyPath || []).some((id) => id.toString() === caller._id.toString());
+}
+
+/** Who may set brokerageChargePerCrore on whom (franchise downstream). */
+function canCallerSetFranchiseChargeOn(callerRole, targetRole) {
+  if (callerRole === 'SUPER_ADMIN') return ['ADMIN', 'BROKER', 'SUB_BROKER'].includes(targetRole);
+  if (callerRole === 'ADMIN') return ['BROKER', 'SUB_BROKER'].includes(targetRole);
+  if (callerRole === 'BROKER') return targetRole === 'SUB_BROKER';
+  return false;
+}
+
+function isUserUnderCaller(caller, user) {
+  if (!caller || !user) return false;
+  if (caller.role === 'SUPER_ADMIN') return true;
+  const direct = user.admin?.toString?.() === caller._id.toString() || user.admin?.toString() === caller._id.toString();
+  if (direct) return true;
+  return (user.hierarchyPath || []).some((id) => id.toString() === caller._id.toString());
+}
+
+/** User's admin chain includes a franchise root. */
+async function isUserInFranchiseSubtree(user) {
+  const { isUserInActiveFranchiseSubtree } = await import('../utils/franchiseBrokerage.js');
+  return isUserInActiveFranchiseSubtree(user);
+}
+
 
 
 // Generate JWT token (for internal use)
@@ -380,6 +518,10 @@ function normalizeRestrictionsPayload(body, callerRole) {
   const restrictions = { ...body };
 
   restrictions.instrumentDenylist = sanitizeInstrumentDenylist(body.instrumentDenylist);
+
+  if (body.allowWithinLowHigh !== undefined) {
+    restrictions.allowWithinLowHigh = Boolean(body.allowWithinLowHigh);
+  }
 
   // Game denylist functionality removed - only superadmin can enable/disable games via GameSettings
   delete restrictions.gameDenylist;
@@ -494,9 +636,17 @@ router.get('/admins', ...adminAuth, async (req, res) => {
 
         const activeUsers = await User.countDocuments({ admin: admin._id, isActive: true });
 
+        const { isAdminInActiveFranchiseSubtree } = await import('../utils/franchiseBrokerage.js');
+        const { isAdminInActivePattiSubtree } = await import('../utils/pattiSubtree.js');
+        const franchiseSubtreeActive = await isAdminInActiveFranchiseSubtree(admin);
+        const pattiSubtreeActive = await isAdminInActivePattiSubtree(admin);
+
         return {
 
           ...admin.toObject(),
+
+          franchiseSubtreeActive,
+          pattiSubtreeActive,
 
           stats: {
 
@@ -517,6 +667,9 @@ router.get('/admins', ...adminAuth, async (req, res) => {
         return {
 
           ...admin.toObject(),
+
+          franchiseSubtreeActive: false,
+          pattiSubtreeActive: false,
 
           stats: {
 
@@ -2196,10 +2349,6 @@ router.get('/admins/:id/segment-settings', protectAdmin, (req, res, next) => {
 }, adminSegmentSettingsController.getSegmentSettings.bind(adminSegmentSettingsController));
 
 
-const INDIVIDUAL_PATTI_SEGMENT_KEYS = ['EQUITY', 'FNO', 'MCX', 'CURRENCY', 'FOREX'];
-
-
-
 function clampSharePct(n, fallback = 50) {
 
   const x = Number(n);
@@ -2207,44 +2356,6 @@ function clampSharePct(n, fallback = 50) {
   if (!Number.isFinite(x)) return fallback;
 
   return Math.min(100, Math.max(0, Math.round(x)));
-
-}
-
-
-
-function normalizeIndividualPattiSegments(rawSegments) {
-
-  const out = {};
-
-  for (const key of INDIVIDUAL_PATTI_SEGMENT_KEYS) {
-
-    const raw = rawSegments?.[key] || {};
-
-    const enabled = raw.enabled !== false;
-
-    let adminPct = Number(raw.adminPercentage);
-
-    if (!Number.isFinite(adminPct)) {
-
-      const legacyParent = Number(raw.parentPercentage);
-
-      adminPct = Number.isFinite(legacyParent)
-
-        ? clampSharePct(100 - legacyParent)
-
-        : 50;
-
-    } else {
-
-      adminPct = clampSharePct(adminPct);
-
-    }
-
-    out[key] = { enabled, adminPercentage: adminPct };
-
-  }
-
-  return out;
 
 }
 
@@ -2295,107 +2406,137 @@ function verifyAdminHierarchyForChild(parentAdmin, childAdmin) {
 
 
 router.get('/admins/:id/patti-sharing', protectAdmin, async (req, res) => {
-
   try {
-
     const targetAdmin = await Admin.findById(req.params.id).select(
-
-      'pattiSharing name adminCode role hierarchyPath parentId'
-
+      'pattiSharing name adminCode role hierarchyPath parentId referralDistributionEnabled'
     );
-
     if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
 
-    if (!verifyAdminHierarchyForChild(req.admin, targetAdmin)) {
+    await assertCanManagePattiSharing(req.admin, targetAdmin);
 
-      return res.status(403).json({ message: 'Access denied' });
-
-    }
+    const parentAdmin =
+      targetAdmin.parentId && targetAdmin.role !== 'SUPER_ADMIN'
+        ? await Admin.findById(targetAdmin.parentId).select('pattiSharing role name username')
+        : null;
 
     const raw = targetAdmin.pattiSharing || {};
-
     const segments = normalizeIndividualPattiSegments(raw.segments || {});
+    const maxPctBySegment = parentAdmin ? buildMaxPctHints(parentAdmin, null) : {};
+    const capValues = Object.values(maxPctBySegment).filter((n) => Number.isFinite(n));
+    const defaultMaxPct = capValues.length ? Math.min(...capValues) : 100;
 
     res.json({
-
       enabled: !!raw.enabled,
-
       appliedTo: raw.appliedTo || 'ALL_TRADES',
-
       segments,
-
       notes: raw.notes || '',
-
+      referralDistributionEnabled: (await import('../utils/referralDistributionHelper.js')).referralDistributionForResponse(
+        targetAdmin
+      ),
+      parentAdmin: parentAdmin
+        ? {
+            _id: parentAdmin._id,
+            name: parentAdmin.name || parentAdmin.username,
+            role: parentAdmin.role,
+          }
+        : null,
+      maxPctBySegment,
+      defaultMaxPct,
+      targetRole: targetAdmin.role,
     });
-
   } catch (error) {
-
-    res.status(500).json({ message: error.message });
-
+    const status = error.status || 500;
+    res.status(status).json({ message: error.message });
   }
-
 });
 
-
-
 router.put('/admins/:id/patti-sharing', protectAdmin, async (req, res) => {
-
   try {
-
     const childAdmin = await Admin.findById(req.params.id);
-
     if (!childAdmin) return res.status(404).json({ message: 'Admin not found' });
 
-    if (!verifyAdminHierarchyForChild(req.admin, childAdmin)) {
+    const manage = await assertCanManagePattiSharing(req.admin, childAdmin);
+    const { enabled, appliedTo, segments, notes, referralDistributionEnabled } = req.body || {};
 
-      return res.status(403).json({ message: 'Access denied' });
+    const parentAdmin =
+      childAdmin.parentId && childAdmin.role !== 'SUPER_ADMIN'
+        ? await Admin.findById(childAdmin.parentId).select('pattiSharing role')
+        : null;
 
+    if (segments && parentAdmin && manage.mode === 'parent_child') {
+      const { normalized, errors } = validateChildSegmentsAgainstParentCap(
+        parentAdmin,
+        segments,
+        null
+      );
+      if (errors.length > 0) {
+        const first = errors[0];
+        return res.status(400).json({
+          message: `Patti % cannot exceed your share (${first.max}%) for segment ${first.segKey}.`,
+          errors,
+        });
+      }
+      if (normalized) {
+        req.body.segments = normalized;
+      }
     }
 
-    const { enabled, appliedTo, segments, notes } = req.body || {};
+    let franchiseCleared = null;
+    let message = 'Patti sharing updated';
 
-    childAdmin.pattiSharing = childAdmin.pattiSharing || {};
-
-    if (typeof enabled === 'boolean') childAdmin.pattiSharing.enabled = enabled;
-
-    if (appliedTo === 'ALL_TRADES' || appliedTo === 'SPECIFIC_CLIENTS') {
-
-      childAdmin.pattiSharing.appliedTo = appliedTo;
-
+    if (manage.mode === 'sa_admin_root' && childAdmin.role === 'ADMIN') {
+      const result = await applyPattiSubtreeFromAdminRoot(childAdmin, {
+        enabled,
+        appliedTo,
+        segments: req.body.segments || segments,
+        notes,
+      });
+      franchiseCleared = result.franchiseCleared;
+      if (franchiseCleared) {
+        message =
+          'Patti sharing updated. Franchise root was turned off (mutually exclusive). Downline can set broker/sub-broker patti within caps.';
+      } else if (childAdmin.pattiSharing.enabled) {
+        message = `Patti sharing enabled for ${childAdmin.name || childAdmin.username}. Set broker/sub-broker patti from their parent accounts.`;
+      } else {
+        message = 'Patti sharing disabled for this admin.';
+      }
+    } else {
+      await applyPattiOnDirectChild(childAdmin, {
+        enabled,
+        appliedTo,
+        segments: req.body.segments || segments,
+        notes,
+      });
+      message = `Patti sharing saved for ${childAdmin.name || childAdmin.username}.`;
     }
 
-    if (segments && typeof segments === 'object') {
-
-      childAdmin.pattiSharing.segments = normalizeIndividualPattiSegments(segments);
-
+    if (
+      childAdmin.role === 'ADMIN' &&
+      manage.mode === 'sa_admin_root' &&
+      referralDistributionEnabled &&
+      typeof referralDistributionEnabled === 'object'
+    ) {
+      const { applyReferralDistributionPatch } = await import('../utils/referralDistributionHelper.js');
+      applyReferralDistributionPatch(childAdmin, referralDistributionEnabled);
+      await childAdmin.save();
     }
-
-    if (typeof notes === 'string') childAdmin.pattiSharing.notes = notes;
-
-    await childAdmin.save();
 
     const segmentsOut = normalizeIndividualPattiSegments(childAdmin.pattiSharing.segments || {});
+    const { referralDistributionForResponse } = await import('../utils/referralDistributionHelper.js');
 
     res.json({
-
-      message: 'Patti sharing updated',
-
+      message,
       enabled: !!childAdmin.pattiSharing.enabled,
-
       appliedTo: childAdmin.pattiSharing.appliedTo || 'ALL_TRADES',
-
       segments: segmentsOut,
-
       notes: childAdmin.pattiSharing.notes || '',
-
+      referralDistributionEnabled: referralDistributionForResponse(childAdmin),
+      franchiseDisabled: !!franchiseCleared,
     });
-
   } catch (error) {
-
-    res.status(500).json({ message: error.message });
-
+    const status = error.status || 500;
+    res.status(status).json({ message: error.message });
   }
-
 });
 
 
@@ -2747,6 +2888,16 @@ router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
       adminCode: targetAdminCode,
 
       admin: targetAdmin?._id || null,
+
+      createdBy: targetAdmin?._id || req.admin._id,
+
+      creatorRole: targetAdmin?.role || req.admin.role,
+
+      hierarchyPath: targetAdmin?.hierarchyPath
+        ? [...targetAdmin.hierarchyPath, targetAdmin._id]
+        : targetAdmin
+          ? [targetAdmin._id]
+          : [],
 
       wallet: {
 
@@ -4181,8 +4332,16 @@ router.get('/users', protectAdmin, async (req, res) => {
     const query = applyAdminFilter(req);
 
     const users = await User.find(query).select('-password').sort({ createdAt: -1 });
+    const { isUserInActiveFranchiseSubtree } = await import('../utils/franchiseBrokerage.js');
 
-    res.json(users);
+    const payload = await Promise.all(
+      users.map(async (u) => ({
+        ...u.toObject(),
+        franchiseActive: await isUserInActiveFranchiseSubtree(u),
+      }))
+    );
+
+    res.json(payload);
 
   } catch (error) {
 
@@ -4560,6 +4719,11 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
 
         segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
 
+      {
+        const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+        plain = stripMcxSessionTimingFromSegmentMap(plain);
+      }
+
       if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
 
         const existingSeg =
@@ -4573,6 +4737,9 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
         plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
 
       }
+
+      const { syncSegmentCommissionMap } = await import('../utils/commissionTypeUnit.js');
+      syncSegmentCommissionMap(plain);
 
       // Convert to Map for database storage
       updateFields.segmentPermissions = new Map(Object.entries(plain));
@@ -6700,8 +6867,12 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
       }
 
-      // For brokerage entries, fetch user details from meta.relatedUserId
-      if (entry.reason === 'BROKERAGE' && entry.meta?.relatedUserId && !userName) {
+      // For brokerage / trading P&L entries, fetch user details from meta.relatedUserId
+      if (
+        (entry.reason === 'BROKERAGE' || entry.reason === 'TRADE_PNL') &&
+        entry.meta?.relatedUserId &&
+        !userName
+      ) {
 
         try {
 
@@ -6717,10 +6888,14 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
         } catch (error) {
 
-          console.warn('Failed to fetch user name for brokerage entry:', error);
+          console.warn('Failed to fetch user name for ledger entry:', error);
 
         }
 
+      }
+
+      if (!userName && entry.meta?.userName) {
+        userName = entry.meta.userName;
       }
 
 
@@ -6735,7 +6910,7 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
       const meta = obj.meta || {};
 
-      const sharePct = resolveGameProfitSharePercent(obj);
+      const sharePct = resolveLedgerSharePercent(obj);
 
       const displaySharePercent = displaySharePercentString(sharePct);
 
@@ -6823,6 +6998,24 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
   }
 
+});
+
+
+
+// Trade close — user gross/net, admin pool, patti split (ledger Info modal)
+router.get('/trades/:tradeId/close-breakdown', protectAdmin, async (req, res) => {
+  try {
+    const tradeId = req.params.tradeId;
+    if (!mongoose.Types.ObjectId.isValid(String(tradeId))) {
+      return res.status(400).json({ message: 'Invalid trade id' });
+    }
+    await assertAdminCanViewTradeBreakdown(req.admin, tradeId);
+    const breakdown = await getTradeCloseBreakdown(tradeId);
+    res.json(breakdown);
+  } catch (error) {
+    const code = error.statusCode || 500;
+    res.status(code).json({ message: error.message });
+  }
 });
 
 
@@ -7471,13 +7664,15 @@ router.get('/all-transactions', protectAdmin, superAdminOnly, async (req, res) =
 
 
 
+    const enrichedTransactions = transactions.map(enrichWalletLedgerEntryForDisplay);
+
     if (wantSummary) {
 
-      return res.json({ transactions, summary });
+      return res.json({ transactions: enrichedTransactions, summary });
 
     }
 
-    res.json(transactions);
+    res.json(enrichedTransactions);
 
   } catch (error) {
 
@@ -8357,6 +8552,31 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
 
 
+    // Hide franchise clients' trading lines from SA global feed (see franchise-client-wallet-feed / franchise-earnings-wallet).
+    try {
+      const { getAllFranchiseSubtreeUserIds } = await import('../utils/franchiseBrokerage.js');
+      const franchiseUserIds = await getAllFranchiseSubtreeUserIds();
+      if (franchiseUserIds.length > 0) {
+        const franchiseTradingExclude = {
+          $or: [
+            { reason: { $nin: ['TRADE_PNL', 'BROKERAGE'] } },
+            { ownerId: { $nin: franchiseUserIds } },
+          ],
+        };
+        if (finalQuery.$and) {
+          finalQuery = { $and: [...finalQuery.$and, franchiseTradingExclude] };
+        } else if (Object.keys(finalQuery).length > 0) {
+          finalQuery = { $and: [finalQuery, franchiseTradingExclude] };
+        } else {
+          finalQuery = franchiseTradingExclude;
+        }
+      }
+    } catch (franchiseExcludeErr) {
+      console.warn('[client-wallet-feed] franchise exclude:', franchiseExcludeErr?.message || franchiseExcludeErr);
+    }
+
+
+
     const effectiveLimit = Math.min(
 
       Math.max(parseInt(String(limit ?? lim), 10) || lim, 1),
@@ -8477,6 +8697,313 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
   }
 
+});
+
+
+
+/**
+ * Franchise root — trading wallet lines for all clients in subtree (book perspective).
+ * Games are excluded (Super Admin pool / games ledger unchanged).
+ */
+router.get('/franchise-client-wallet-feed', protectAdmin, async (req, res) => {
+  try {
+    const caller = req.admin;
+    let franchiseRoot = caller;
+
+    if (caller.role === 'SUPER_ADMIN') {
+      const fid = req.query.franchiseAdminId;
+      if (!fid || !mongoose.Types.ObjectId.isValid(String(fid))) {
+        return res.status(400).json({ message: 'franchiseAdminId query is required for Super Admin' });
+      }
+      franchiseRoot = await Admin.findById(fid);
+    } else if (caller.isFranchiseRoot !== true) {
+      return res.status(403).json({ message: 'Franchise root access required' });
+    }
+
+    if (!franchiseRoot || franchiseRoot.isFranchiseRoot !== true) {
+      return res.status(403).json({ message: 'Target is not a franchise root admin' });
+    }
+
+    const { getFranchiseSubtreeUserIds } = await import('../utils/franchiseBrokerage.js');
+    const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
+    const wantSummary = req.query.includeSummary === '1' || req.query.includeSummary === 'true';
+    const pRaw = String(req.query.perspective || 'franchise').toLowerCase().replace(/-/g, '');
+    const perspectiveFranchise = pRaw !== 'client';
+
+    const userIds = await getFranchiseSubtreeUserIds(franchiseRoot._id);
+    const emptySummary = { credits: 0, debits: 0, creditCount: 0, debitCount: 0, net: 0 };
+
+    if (!userIds.length) {
+      return res.json({
+        transactions: [],
+        summary: wantSummary ? emptySummary : null,
+        scope: 'main',
+        franchiseRootId: franchiseRoot._id,
+      });
+    }
+
+    const { type, userSearch, dateFrom, dateTo } = req.query;
+    const query = {
+      ownerType: 'USER',
+      ownerId: { $in: userIds },
+      reason: { $in: ['TRADE_PNL', 'BROKERAGE'] },
+    };
+
+    const tUpper = type != null ? String(type).toUpperCase() : '';
+    const effType =
+      perspectiveFranchise && (tUpper === 'CREDIT' || tUpper === 'DEBIT')
+        ? tUpper === 'DEBIT'
+          ? 'CREDIT'
+          : 'DEBIT'
+        : tUpper;
+    if (effType === 'CREDIT' || effType === 'DEBIT') query.type = effType;
+
+    if (userSearch && String(userSearch).trim()) {
+      const uq = new RegExp(escapeRegExpForQuery(String(userSearch).trim()), 'i');
+      const users = await User.find({
+        _id: { $in: userIds },
+        $or: [{ username: uq }, { fullName: uq }, { email: uq }],
+      })
+        .select('_id')
+        .limit(200)
+        .lean();
+      const ids = users.map((u) => u._id);
+      query.ownerId = ids.length ? { $in: ids } : { $in: [] };
+    }
+
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(String(dateFrom));
+      if (dateTo) query.createdAt.$lte = new Date(String(dateTo));
+    }
+
+    const dateFilter =
+      dateFrom || dateTo
+        ? {
+            ...(dateFrom ? { $gte: new Date(String(dateFrom)) } : {}),
+            ...(dateTo ? { $lte: new Date(String(dateTo)) } : {}),
+          }
+        : null;
+
+    let summary = null;
+    if (wantSummary) {
+      const agg = await WalletLedger.aggregate([
+        { $match: query },
+        { $group: { _id: '$type', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]);
+      summary = { ...emptySummary };
+      for (const row of agg) {
+        if (row._id === 'CREDIT') {
+          summary.credits = row.total || 0;
+          summary.creditCount = row.count || 0;
+        } else if (row._id === 'DEBIT') {
+          summary.debits = row.total || 0;
+          summary.debitCount = row.count || 0;
+        }
+      }
+      summary.net = (summary.credits || 0) - (summary.debits || 0);
+    }
+
+    const rawTx = await WalletLedger.find(query).sort({ createdAt: -1 }).limit(lim).lean();
+
+    const ownerIds = [...new Set(rawTx.map((t) => String(t.ownerId)))].filter((id) =>
+      mongoose.Types.ObjectId.isValid(id)
+    );
+    const oidList = ownerIds.map((id) => new mongoose.Types.ObjectId(id));
+    const users =
+      oidList.length > 0
+        ? await User.find({ _id: { $in: oidList } }).select('username fullName adminCode').lean()
+        : [];
+    const uMap = new Map(users.map((u) => [String(u._id), u]));
+
+    const clientRows = rawTx.map((t) => {
+      const u = uMap.get(String(t.ownerId));
+      return {
+        ...t,
+        ownerUsername: u?.username || '',
+        ownerFullName: u?.fullName || '',
+        adminCode: u?.adminCode || t.adminCode || '',
+        franchiseClientLine: true,
+      };
+    });
+
+    const adminBookQuery = {
+      ownerType: 'ADMIN',
+      ownerId: franchiseRoot._id,
+      $or: [
+        { 'meta.profitKind': 'FRANCHISE_BOOK' },
+        { reason: 'TRADE_PNL', description: /^Franchise book/i },
+      ],
+    };
+    if (dateFilter) adminBookQuery.createdAt = dateFilter;
+
+    const bookRows = await WalletLedger.find(adminBookQuery).sort({ createdAt: -1 }).limit(lim).lean();
+    const bookMapped = bookRows.map((row) => ({
+      ...row,
+      ownerUsername: '',
+      ownerFullName: '',
+      adminCode: franchiseRoot.adminCode || '',
+      franchiseBookDirect: true,
+    }));
+
+    const transactions = [...clientRows, ...bookMapped]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, lim);
+
+    return res.json({
+      transactions,
+      summary,
+      scope: 'main',
+      franchiseRootId: franchiseRoot._id,
+    });
+  } catch (error) {
+    console.error('franchise-client-wallet-feed:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+
+/**
+ * Super Admin — credits received from franchise roots (platform % on trading P&L + brokerage).
+ */
+router.get('/franchise-earnings-wallet', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const sa = req.admin;
+    const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
+    const wantSummary = req.query.includeSummary === '1' || req.query.includeSummary === 'true';
+    const { dateFrom, dateTo, franchiseAdminId } = req.query;
+
+    const filter = {
+      ownerType: 'ADMIN',
+      ownerId: sa._id,
+      type: 'CREDIT',
+      $or: [
+        { 'meta.profitKind': 'FRANCHISE_PLATFORM_CHARGE' },
+        { description: { $regex: /^Franchise platform charge/i } },
+        { description: { $regex: /^Platform charges \(\d+% from franchise root\)/i } },
+      ],
+    };
+
+    if (franchiseAdminId && mongoose.Types.ObjectId.isValid(String(franchiseAdminId))) {
+      filter['meta.franchiseRootId'] = new mongoose.Types.ObjectId(String(franchiseAdminId));
+    }
+
+    if (dateFrom || dateTo) {
+      filter.createdAt = {};
+      if (dateFrom) filter.createdAt.$gte = new Date(String(dateFrom));
+      if (dateTo) filter.createdAt.$lte = new Date(String(dateTo));
+    }
+
+    let summary = null;
+    if (wantSummary) {
+      const agg = await WalletLedger.aggregate([
+        { $match: filter },
+        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]);
+      const byRoot = await WalletLedger.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: '$meta.franchiseRootId',
+            total: { $sum: '$amount' },
+            count: { $sum: 1 },
+            name: { $first: '$meta.franchiseRootName' },
+            adminCode: { $first: '$meta.franchiseRootAdminCode' },
+          },
+        },
+        { $sort: { total: -1 } },
+      ]);
+      summary = {
+        totalCredits: agg[0]?.total || 0,
+        creditCount: agg[0]?.count || 0,
+        walletBalance: sa.wallet?.balance ?? 0,
+        byFranchiseRoot: byRoot.map((r) => ({
+          franchiseRootId: r._id,
+          name: r.name || 'Unknown franchise',
+          adminCode: r.adminCode || '',
+          total: r.total || 0,
+          count: r.count || 0,
+        })),
+      };
+    }
+
+    const rows = await WalletLedger.find(filter).sort({ createdAt: -1 }).limit(lim).lean();
+
+    const relUserIds = [
+      ...new Set(rows.map((r) => r.meta?.relatedUserId).filter(Boolean).map(String)),
+    ].filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const users =
+      relUserIds.length > 0
+        ? await User.find({ _id: { $in: relUserIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+            .select('username fullName')
+            .lean()
+        : [];
+    const uMap = new Map(users.map((u) => [String(u._id), u]));
+
+    const missingRootIds = [
+      ...new Set(
+        rows
+          .filter((r) => r.meta?.franchiseRootId && !r.meta?.franchiseRootName)
+          .map((r) => String(r.meta.franchiseRootId))
+      ),
+    ].filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const rootAdmins =
+      missingRootIds.length > 0
+        ? await Admin.find({ _id: { $in: missingRootIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+            .select('name username adminCode platformChargesPercentage')
+            .lean()
+        : [];
+    const rootMap = new Map(rootAdmins.map((a) => [String(a._id), a]));
+
+    const transactions = rows.map((row) => {
+      const u = row.meta?.relatedUserId ? uMap.get(String(row.meta.relatedUserId)) : null;
+      const rootId = row.meta?.franchiseRootId ? String(row.meta.franchiseRootId) : '';
+      const rootDoc = rootId ? rootMap.get(rootId) : null;
+      const pct = row.meta?.platformPct != null ? Number(row.meta.platformPct) : null;
+      const base = row.meta?.baseAmount != null ? Number(row.meta.baseAmount) : null;
+      const chargeKind = row.meta?.chargeKind || (row.description?.includes('Platform charges') ? 'BROKERAGE' : 'TRADING_PNL');
+      const franchiseName =
+        row.meta?.franchiseRootName || rootDoc?.name || rootDoc?.username || 'Franchise admin';
+      const franchiseCode = row.meta?.franchiseRootAdminCode || rootDoc?.adminCode || '';
+      let why = row.description || '';
+      if (pct != null && base != null) {
+        if (chargeKind === 'BROKERAGE') {
+          why = `${pct}% platform charge on ₹${base.toLocaleString('en-IN')} diverted brokerage from ${franchiseName}`;
+        } else {
+          why = `${pct}% platform charge on ₹${base.toLocaleString('en-IN')} franchise book P&L`;
+        }
+      }
+      return {
+        _id: row._id,
+        createdAt: row.createdAt,
+        amount: row.amount,
+        balanceAfter: row.balanceAfter,
+        reason: row.reason,
+        description: row.description,
+        chargeKind,
+        platformPct: pct,
+        baseAmount: base,
+        why,
+        franchiseRoot: {
+          _id: row.meta?.franchiseRootId || null,
+          name: franchiseName,
+          adminCode: franchiseCode,
+        },
+        client: {
+          username: u?.username || '',
+          fullName: u?.fullName || '',
+        },
+        meta: row.meta,
+        reference: row.reference,
+      };
+    });
+
+    return res.json({ transactions, summary });
+  } catch (error) {
+    console.error('franchise-earnings-wallet:', error);
+    res.status(500).json({ message: error.message });
+  }
 });
 
 
@@ -9212,8 +9739,7 @@ router.put('/admins/bulk/restrict-mode', protectAdmin, superAdminOnly, async (re
  * PUT /admins/:id/franchise-root
 
  * Toggle franchise isolation for an admin (Super Admin only).
-
- * When true: subtree profit/loss settles internally; Super Admin gets only platform charges.
+ * When true: subtree profit/loss settles internally and brokerage-per-crore is used for franchise flow.
 
  */
 
@@ -9221,7 +9747,7 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
   try {
 
-    const { isFranchiseRoot, platformChargesPercentage } = req.body;
+    const { isFranchiseRoot, brokerageChargePerCrore, referralDistributionEnabled } = req.body;
 
     if (typeof isFranchiseRoot !== 'boolean') {
 
@@ -9237,21 +9763,54 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
     if (admin.role === 'SUPER_ADMIN') return res.status(403).json({ message: 'Cannot set franchise root on Super Admin' });
 
+    if (isFranchiseRoot && isIndividualPattiSharingEnabled(admin)) {
+      return res.status(400).json({ message: PATTI_FRANCHISE_CONFLICT_MSG });
+    }
+
     
 
     admin.isFranchiseRoot = isFranchiseRoot;
+    // Franchise root no longer uses configurable platform percentage.
+    // Keep it fixed at 0 so only brokerage-per-crore logic applies.
+    if (isFranchiseRoot) admin.platformChargesPercentage = 0;
 
-    if (isFranchiseRoot && platformChargesPercentage !== undefined) {
-      admin.platformChargesPercentage = platformChargesPercentage;
+    if (
+      isFranchiseRoot &&
+      typeof brokerageChargePerCrore === 'number' &&
+      Number.isFinite(brokerageChargePerCrore) &&
+      brokerageChargePerCrore >= 0
+    ) {
+      if (!admin.restrictMode) admin.restrictMode = {};
+      admin.restrictMode.brokerageChargePerCrore = brokerageChargePerCrore;
+      admin.markModified('restrictMode');
+    }
+
+    let cleared = null;
+    if (!isFranchiseRoot) {
+      const { clearFranchiseSubtreeRates } = await import('../utils/franchiseBrokerage.js');
+      cleared = await clearFranchiseSubtreeRates(admin._id);
+      if (admin.restrictMode) {
+        admin.restrictMode.brokerageChargePerCrore = 0;
+        admin.markModified('restrictMode');
+      }
+      admin.platformChargesPercentage = 0;
+    }
+
+    if (referralDistributionEnabled && typeof referralDistributionEnabled === 'object') {
+      const { applyReferralDistributionPatch } = await import('../utils/referralDistributionHelper.js');
+      applyReferralDistributionPatch(admin, referralDistributionEnabled);
     }
 
     await admin.save();
 
-    
+    const { referralDistributionForResponse } = await import('../utils/referralDistributionHelper.js');
 
     res.json({
 
-      message: `Franchise root ${isFranchiseRoot ? 'enabled' : 'disabled'} for ${admin.name || admin.username}`,
+      message: isFranchiseRoot
+        ? `Franchise root enabled for ${admin.name || admin.username}`
+        : `Franchise root disabled for ${admin.name || admin.username}. Downline franchise rates cleared.`,
+      clearedDownline: cleared,
 
       admin: {
 
@@ -9263,6 +9822,10 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
         platformChargesPercentage: admin.platformChargesPercentage,
 
+        brokerageChargePerCrore: admin.restrictMode?.brokerageChargePerCrore ?? 0,
+
+        referralDistributionEnabled: referralDistributionForResponse(admin),
+
       }
 
     });
@@ -9273,6 +9836,209 @@ router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (re
 
   }
 
+});
+
+
+/**
+ * PUT /admins/:id/franchise-charge
+ * Set brokerage per crore for admin / broker / sub-broker in franchise hierarchy.
+ * Super Admin: any downline role. Franchise admin: brokers & sub-brokers. Broker: sub-brokers only.
+ */
+router.put('/admins/:id/franchise-charge', protectAdmin, async (req, res) => {
+  try {
+    const { brokerageChargePerCrore } = req.body;
+    if (
+      typeof brokerageChargePerCrore !== 'number' ||
+      !Number.isFinite(brokerageChargePerCrore) ||
+      brokerageChargePerCrore < 0
+    ) {
+      return res.status(400).json({ message: 'Valid brokerageChargePerCrore (>= 0) is required' });
+    }
+
+    const target = await Admin.findById(req.params.id);
+    if (!target) return res.status(404).json({ message: 'Admin not found' });
+    if (target.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Cannot set franchise charge on Super Admin' });
+    }
+
+    if (isIndividualPattiSharingEnabled(target)) {
+      return res.status(400).json({
+        message:
+          'Franchise charge cannot be set: this admin is under an active Patti Sharing subtree.',
+      });
+    }
+
+    const underPatti = await isAdminInActivePattiSubtree(target);
+    if (underPatti) {
+      return res.status(400).json({
+        message:
+          'Franchise charge cannot be set: Patti Sharing is active on the parent ADMIN subtree.',
+      });
+    }
+
+    const caller = req.admin;
+    if (!canCallerSetFranchiseChargeOn(caller.role, target.role)) {
+      return res.status(403).json({
+        message: 'You cannot set franchise charge for this role',
+      });
+    }
+
+    if (!isUnderCallerHierarchy(caller, target)) {
+      return res.status(403).json({ message: 'This account is not under your management' });
+    }
+
+    const underFranchise = await isInFranchiseSubtree(target);
+    if (!underFranchise) {
+      return res.status(403).json({
+        message:
+          'Franchise is disabled for this hierarchy. Super Admin must enable Franchise root on the parent ADMIN first.',
+      });
+    }
+
+    if (caller.role !== 'SUPER_ADMIN') {
+      const callerIsFranchiseRoot = caller.isFranchiseRoot === true;
+      if (!callerIsFranchiseRoot && !underFranchise) {
+        return res.status(403).json({
+          message:
+            'Franchise brokerage can only be set under an active franchise root hierarchy.',
+        });
+      }
+    }
+
+    if (!target.restrictMode) target.restrictMode = {};
+    const { validateAdminFranchiseRate } = await import('../utils/franchiseBrokerage.js');
+    const rateCheck = await validateAdminFranchiseRate(target, brokerageChargePerCrore);
+    if (!rateCheck.ok) {
+      return res.status(400).json({ message: rateCheck.message });
+    }
+
+    target.restrictMode.brokerageChargePerCrore = brokerageChargePerCrore;
+    target.markModified('restrictMode');
+    await target.save();
+
+    res.json({
+      message: `Franchise charge ₹${brokerageChargePerCrore.toLocaleString('en-IN')}/crore set for ${target.name || target.username}`,
+      admin: {
+        _id: target._id,
+        username: target.username,
+        name: target.name,
+        role: target.role,
+        brokerageChargePerCrore: target.restrictMode.brokerageChargePerCrore,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+/**
+ * PUT /users/:id/franchise-charge
+ * Set franchise brokerage per crore on a client (user).
+ */
+router.put('/users/:id/franchise-charge', protectAdmin, async (req, res) => {
+  try {
+    const { franchiseChargePerCrore } = req.body;
+    if (
+      typeof franchiseChargePerCrore !== 'number' ||
+      !Number.isFinite(franchiseChargePerCrore) ||
+      franchiseChargePerCrore < 0
+    ) {
+      return res.status(400).json({ message: 'Valid franchiseChargePerCrore (>= 0) is required' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const caller = req.admin;
+    const managerRoles = ['SUPER_ADMIN', 'ADMIN', 'BROKER', 'SUB_BROKER'];
+    if (!managerRoles.includes(caller.role)) {
+      return res.status(403).json({ message: 'Not allowed to set franchise charge' });
+    }
+
+    if (!isUserUnderCaller(caller, user)) {
+      return res.status(403).json({ message: 'This user is not under your management' });
+    }
+
+    const underFranchise = await isUserInFranchiseSubtree(user);
+    if (!underFranchise) {
+      return res.status(403).json({
+        message:
+          'Franchise is disabled for this client\'s hierarchy. Enable Franchise root on the parent ADMIN first.',
+      });
+    }
+
+    if (caller.role !== 'SUPER_ADMIN' && caller.isFranchiseRoot !== true && !underFranchise) {
+      return res.status(403).json({
+        message: 'Franchise client charge can only be set under an active franchise root hierarchy.',
+      });
+    }
+
+    const { validateUserFranchiseRate } = await import('../utils/franchiseBrokerage.js');
+    const rateCheck = await validateUserFranchiseRate(user, franchiseChargePerCrore);
+    if (!rateCheck.ok) {
+      return res.status(400).json({ message: rateCheck.message });
+    }
+
+    user.franchiseChargePerCrore = franchiseChargePerCrore;
+    await user.save();
+
+    res.json({
+      message: `Franchise charge ₹${franchiseChargePerCrore.toLocaleString('en-IN')}/crore set for ${user.fullName || user.username}`,
+      user: {
+        _id: user._id,
+        username: user.username,
+        fullName: user.fullName,
+        franchiseChargePerCrore: user.franchiseChargePerCrore,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+/**
+ * POST /trades/:tradeId/retry-franchise-brokerage
+ * Resume / complete franchise brokerage cascade for a trade (fixes partial distributions).
+ */
+router.post('/trades/:tradeId/retry-franchise-brokerage', protectAdmin, async (req, res) => {
+  try {
+    const trade = await Trade.findById(req.params.tradeId);
+    if (!trade) return res.status(404).json({ message: 'Trade not found' });
+
+    const user = await User.findById(trade.user).select(
+      'franchiseChargePerCrore admin createdBy adminCode isDemo userId username fullName hierarchyPath'
+    );
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const { resolveUserDirectAdmin } = await import('../utils/franchiseBrokerage.js');
+    const { default: TradeService } = await import('../services/tradeService.js');
+    const directAdmin = await resolveUserDirectAdmin(user);
+    if (!directAdmin) {
+      return res.status(400).json({ message: 'User has no direct admin for brokerage cascade' });
+    }
+
+    const brk = Number(trade.commission) || 0;
+    if (brk <= 0) {
+      return res.status(400).json({ message: 'Trade has no brokerage to distribute' });
+    }
+
+    const leg = trade.brokeragePrepaidRoundTrip ? 'OPEN+CLOSE' : 'OPEN';
+    await TradeService.distributeBrokerage(trade, brk, directAdmin, user, leg);
+
+    const progress = await TradeService.getFranchiseBrokerageProgress(trade._id, leg.toUpperCase());
+
+    res.json({
+      message: 'Franchise brokerage distribution retried',
+      tradeId: trade._id,
+      totalBrokerage: brk,
+      totalDistributed: progress.totalDistributed,
+      shortfall: Math.round((brk - progress.totalDistributed) * 100) / 100,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 
@@ -12693,6 +13459,248 @@ router.delete('/broker-certificates/:brokerId/landing-page', protectAdmin, super
 
 
 
+/**
+ * Super Admin — patti parent-share credits (brokerage pool + trading P&L split with subtree ADMIN).
+ */
+router.get('/patti-sharing/earnings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const sa = req.admin;
+    const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
+    const wantSummary = req.query.includeSummary === '1' || req.query.includeSummary === 'true';
+    const { dateFrom, dateTo, pattiAdminId } = req.query;
+
+    const filter = {
+      ownerType: 'ADMIN',
+      ownerId: sa._id,
+      $or: [
+        { 'meta.pattiSharing': true, 'meta.pattiSource': 'individual_patti_parent' },
+        { description: { $regex: /Patti\s+\d+(\.\d+)?%\s+parent/i } },
+      ],
+    };
+
+    if (pattiAdminId && mongoose.Types.ObjectId.isValid(String(pattiAdminId))) {
+      filter['meta.pattiRootAdminId'] = new mongoose.Types.ObjectId(String(pattiAdminId));
+    }
+
+    if (dateFrom || dateTo) {
+      filter.createdAt = {};
+      if (dateFrom) filter.createdAt.$gte = new Date(String(dateFrom));
+      if (dateTo) filter.createdAt.$lte = new Date(String(dateTo));
+    }
+
+    let summary = null;
+    if (wantSummary) {
+      const agg = await WalletLedger.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            totalCredits: {
+              $sum: { $cond: [{ $eq: ['$type', 'CREDIT'] }, '$amount', 0] },
+            },
+            totalDebits: {
+              $sum: { $cond: [{ $eq: ['$type', 'DEBIT'] }, '$amount', 0] },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+      const byRoot = await WalletLedger.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: '$meta.pattiRootAdminId',
+            totalCredits: {
+              $sum: { $cond: [{ $eq: ['$type', 'CREDIT'] }, '$amount', 0] },
+            },
+            totalDebits: {
+              $sum: { $cond: [{ $eq: ['$type', 'DEBIT'] }, '$amount', 0] },
+            },
+            count: { $sum: 1 },
+            name: { $first: '$meta.pattiRootAdminName' },
+            adminCode: { $first: '$meta.pattiRootAdminCode' },
+          },
+        },
+        { $sort: { totalCredits: -1 } },
+      ]);
+
+      const configuredAdmins = await Admin.find({
+        role: 'ADMIN',
+        'pattiSharing.enabled': true,
+      })
+        .select('name username adminCode pattiSharing.enabled pattiSharing.segments')
+        .lean();
+
+      const totalCredits = agg[0]?.totalCredits || 0;
+      const totalDebits = agg[0]?.totalDebits || 0;
+
+      summary = {
+        totalCredits,
+        totalDebits,
+        netEarnings: Math.round((totalCredits - totalDebits) * 100) / 100,
+        transactionCount: agg[0]?.count || 0,
+        walletBalance: sa.wallet?.balance ?? 0,
+        byPattiAdmin: byRoot.map((r) => ({
+          pattiAdminId: r._id,
+          name: r.name || 'Unknown admin',
+          adminCode: r.adminCode || '',
+          totalCredits: r.totalCredits || 0,
+          totalDebits: r.totalDebits || 0,
+          net: Math.round(((r.totalCredits || 0) - (r.totalDebits || 0)) * 100) / 100,
+          count: r.count || 0,
+        })),
+        configuredAdmins: configuredAdmins.map((a) => ({
+          _id: a._id,
+          name: a.name || a.username,
+          adminCode: a.adminCode,
+          enabled: a.pattiSharing?.enabled === true,
+        })),
+      };
+    }
+
+    const rows = await WalletLedger.find(filter).sort({ createdAt: -1 }).limit(lim).lean();
+
+    const relUserIds = [
+      ...new Set(rows.map((r) => r.meta?.relatedUserId).filter(Boolean).map(String)),
+    ].filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const users =
+      relUserIds.length > 0
+        ? await User.find({ _id: { $in: relUserIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+            .select('username fullName')
+            .lean()
+        : [];
+    const uMap = new Map(users.map((u) => [String(u._id), u]));
+
+    const missingRootIds = [
+      ...new Set(
+        rows
+          .filter((r) => r.meta?.pattiRootAdminId && !r.meta?.pattiRootAdminName)
+          .map((r) => String(r.meta.pattiRootAdminId))
+      ),
+    ].filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const rootAdmins =
+      missingRootIds.length > 0
+        ? await Admin.find({ _id: { $in: missingRootIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+            .select('name username adminCode')
+            .lean()
+        : [];
+    const rootMap = new Map(rootAdmins.map((a) => [String(a._id), a]));
+
+    const rowsMissingRoot = rows.filter(
+      (r) => !r.meta?.pattiRootAdminId && r.meta?.relatedUserId
+    );
+    const missingPattiUserIds = [
+      ...new Set(rowsMissingRoot.map((r) => String(r.meta.relatedUserId))),
+    ].filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const pattiRootByUserId = new Map();
+    if (missingPattiUserIds.length > 0) {
+      const usersForPatti = await User.find({
+        _id: { $in: missingPattiUserIds.map((id) => new mongoose.Types.ObjectId(id)) },
+      })
+        .select('admin')
+        .populate('admin', 'name username adminCode role parentId status')
+        .lean();
+      for (const u of usersForPatti) {
+        if (!u?.admin) continue;
+        const root = await findPattiSubtreeRootAdmin(u.admin);
+        if (root) {
+          pattiRootByUserId.set(String(u._id), {
+            _id: root._id,
+            name: root.name || root.username || 'Patti admin',
+            adminCode: root.adminCode || '',
+          });
+        }
+      }
+    }
+
+    const transactions = rows.map((row) => {
+      const u = row.meta?.relatedUserId ? uMap.get(String(row.meta.relatedUserId)) : null;
+      const clientLabel = u?.username || u?.fullName || row.meta?.userName || '';
+      let rootId = row.meta?.pattiRootAdminId ? String(row.meta.pattiRootAdminId) : '';
+      let rootDoc = rootId ? rootMap.get(rootId) : null;
+      if (!rootId && row.meta?.relatedUserId) {
+        const inferred = pattiRootByUserId.get(String(row.meta.relatedUserId));
+        if (inferred) {
+          rootId = String(inferred._id);
+          rootDoc = inferred;
+        }
+      }
+      const pct = row.meta?.pattiChildPct != null ? Number(row.meta.pattiChildPct) : null;
+      const segKey = row.meta?.pattiSegmentKey || row.meta?.segment || '';
+      const chargeKind = row.meta?.chargeKind || (row.reason === 'BROKERAGE' ? 'BROKERAGE' : 'TRADING_PNL');
+      const pattiAdminName =
+        row.meta?.pattiRootAdminName || rootDoc?.name || rootDoc?.username || 'Unknown admin';
+      const pattiAdminCode = row.meta?.pattiRootAdminCode || rootDoc?.adminCode || '';
+      const signedAmount = row.type === 'DEBIT' ? -row.amount : row.amount;
+      let why = row.description || '';
+      if (pct != null && segKey) {
+        why = `${pct}% patti parent share on ${chargeKind === 'BROKERAGE' ? 'brokerage' : 'trading P&L'} [${segKey}] — from ADMIN ${pattiAdminName}${pattiAdminCode ? ` (${pattiAdminCode})` : ''}`;
+      }
+      if (clientLabel) {
+        why = `${why}${why ? ' · ' : ''}Client: ${clientLabel}`;
+      }
+      return {
+        _id: row._id,
+        createdAt: row.createdAt,
+        type: row.type,
+        amount: row.amount,
+        signedAmount,
+        balanceAfter: row.balanceAfter,
+        reason: row.reason,
+        description: row.description,
+        chargeKind,
+        pattiChildPct: pct,
+        pattiSegmentKey: segKey,
+        why,
+        pattiAdmin: {
+          _id: rootId || row.meta?.pattiRootAdminId || null,
+          name: pattiAdminName,
+          adminCode: pattiAdminCode,
+        },
+        client: {
+          username: u?.username || row.meta?.userName || '',
+          fullName: u?.fullName || '',
+        },
+        tradeSymbol: row.meta?.tradeSymbol || '',
+        meta: row.meta,
+        reference: row.reference,
+      };
+    });
+
+    if (wantSummary && summary && transactions.length > 0) {
+      const byAdminMap = new Map();
+      for (const tx of transactions) {
+        const id = tx.pattiAdmin?._id ? String(tx.pattiAdmin._id) : `name:${tx.pattiAdmin?.name || 'unknown'}`;
+        const cur = byAdminMap.get(id) || {
+          pattiAdminId: tx.pattiAdmin?._id || null,
+          name: tx.pattiAdmin?.name || 'Unknown admin',
+          adminCode: tx.pattiAdmin?.adminCode || '',
+          totalCredits: 0,
+          totalDebits: 0,
+          count: 0,
+        };
+        if (tx.type === 'CREDIT') cur.totalCredits += Number(tx.amount) || 0;
+        else cur.totalDebits += Number(tx.amount) || 0;
+        cur.count += 1;
+        byAdminMap.set(id, cur);
+      }
+      summary.byPattiAdmin = [...byAdminMap.values()]
+        .map((r) => ({
+          ...r,
+          net: Math.round((r.totalCredits - r.totalDebits) * 100) / 100,
+        }))
+        .sort((a, b) => b.net - a.net);
+    }
+
+    return res.json({ transactions, summary });
+  } catch (error) {
+    console.error('patti-sharing/earnings:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+
 // Get all patti sharing configurations
 
 router.get('/patti-sharing', protectAdmin, superAdminOnly, async (req, res) => {
@@ -12869,7 +13877,7 @@ router.post('/patti-sharing', protectAdmin, superAdminOnly, async (req, res) => 
 
       specificClients: specificClients || [],
 
-      segments: segments || {},
+      segments: normalizeBrokerPattiSegments(segments || {}),
 
       notes: notes || '',
 
@@ -12929,7 +13937,7 @@ router.put('/patti-sharing/:id', protectAdmin, superAdminOnly, async (req, res) 
 
     if (segments !== undefined) {
 
-      pattiSharing.segments = segments;
+      pattiSharing.segments = normalizeBrokerPattiSegments(segments);
 
     }
 
@@ -13149,6 +14157,115 @@ router.get('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
 
   }
 
+});
+
+function formatIstClockFromSec(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  const h = Math.floor(n / 3600) % 24;
+  const m = Math.floor((n % 3600) / 60);
+  const s = Math.floor(n % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} IST`;
+}
+
+function formatDecimalPickFromPrice(price) {
+  const part = closingPriceToDecimalPart(price);
+  if (part == null) return null;
+  return `.${String(part).padStart(2, '0')}`;
+}
+
+/** Super Admin — live window / LTP snapshot for each fantasy game (Game Settings screen). */
+router.get('/game-settings/live-details', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings();
+    const games = settings?.games || {};
+    const nowSec = currentTotalSecondsIST();
+    const istDate = getTodayISTString();
+
+    const priceResolver = new ZerodhaPriceResolver();
+    const niftyResolved = await priceResolver.resolveNiftyGamePrice('ltp');
+    const niftyLtp = Number(
+      niftyResolved?.ltpPrice ?? niftyResolved?.actualLtp ?? niftyResolved?.price
+    );
+    const niftySessionClearing = Number(
+      niftyResolved?.safeSessionClearing ?? niftyResolved?.sessionClearing
+    );
+    const niftyLtpOk = Number.isFinite(niftyLtp) && niftyLtp > 0;
+    const niftyClearingOk = Number.isFinite(niftySessionClearing) && niftySessionClearing > 0;
+
+    const btcSpot = await getLiveBtcSpotForJackpot();
+    const btcLtp = Number(btcSpot?.price);
+    const btcLtpOk = Number.isFinite(btcLtp) && btcLtp > 0;
+
+    const niftyUpDownCfg = games.niftyUpDown || {};
+    const niftyUpDownState = getNiftyUpDownWindowState(nowSec, niftyUpDownCfg);
+    const btcUpDownCfg = games.btcUpDown || {};
+    const btcUpDownState = getBtcUpDownWindowState(nowSec, btcUpDownCfg);
+
+    const md = getMarketData();
+    const niftyWs = md['256265'] || md[256265];
+    const zerodhaWsConnected = !!(niftyWs?.ltp && Number(niftyWs.ltp) > 0);
+
+    res.json({
+      updatedAt: new Date().toISOString(),
+      istDate,
+      zerodhaWsConnected,
+      niftyUpDown: {
+        enabled: niftyUpDownCfg.enabled !== false,
+        status: niftyUpDownState.status,
+        windowNumber: Number(niftyUpDownState.windowNumber) || 0,
+        windowStart: formatIstClockFromSec(niftyUpDownState.windowStartSec),
+        windowEnd: formatIstClockFromSec(niftyUpDownState.windowEndSec),
+        ltp: niftyLtpOk ? niftyLtp : null,
+        ltpSource: niftyResolved?.source || null,
+        message: niftyUpDownState.message || null,
+      },
+      btcUpDown: {
+        enabled: btcUpDownCfg.enabled !== false,
+        status: btcUpDownState.status,
+        windowNumber: Number(btcUpDownState.windowNumber) || 0,
+        windowStart: formatIstClockFromSec(btcUpDownState.windowStartSec),
+        windowEnd: formatIstClockFromSec(btcUpDownState.windowEndSec),
+        ltp: btcLtpOk ? btcLtp : null,
+        ltpSource: btcSpot?.source || null,
+        message: btcUpDownState.message || null,
+      },
+      niftyNumber: {
+        enabled: games.niftyNumber?.enabled !== false,
+        ltp: niftyLtpOk ? niftyLtp : null,
+        runningDecimal: niftyLtpOk ? formatDecimalPickFromPrice(niftyLtp) : null,
+        ltpSource: niftyResolved?.source || null,
+      },
+      niftyBracket: {
+        enabled: games.niftyBracket?.enabled !== false,
+        ltp: niftyLtpOk ? niftyLtp : null,
+        sessionClearing: niftyClearingOk ? niftySessionClearing : null,
+        displayPrice: niftyClearingOk ? niftySessionClearing : niftyLtpOk ? niftyLtp : null,
+        ltpSource: niftyResolved?.source || null,
+        marketOpen: !!niftyResolved?.marketOpen,
+      },
+      niftyJackpot: {
+        enabled: games.niftyJackpot?.enabled !== false,
+        livePrice: niftyLtpOk ? niftyLtp : null,
+        ltpSource: niftyResolved?.source || null,
+        streaming: zerodhaWsConnected || niftyLtpOk,
+      },
+      btcJackpot: {
+        enabled: games.btcJackpot?.enabled !== false,
+        livePrice: btcLtpOk ? btcLtp : null,
+        ltpSource: btcSpot?.source || null,
+        streaming: btcLtpOk,
+      },
+      btcNumber: {
+        enabled: games.btcNumber?.enabled !== false,
+        livePrice: btcLtpOk ? btcLtp : null,
+        runningDecimal: btcLtpOk ? formatDecimalPickFromPrice(btcLtp) : null,
+        ltpSource: btcSpot?.source || null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Failed to load game live details' });
+  }
 });
 
 
@@ -14480,115 +15597,33 @@ router.post('/admins/:id/take-brokerage', protectAdmin, superAdminOnly, async (r
 
     const { amount, description } = req.body;
 
-
-
-    if (!amount || amount <= 0) {
-
-      return res.status(400).json({ message: 'Please enter a valid amount' });
-
-    }
-
-
-
-    const targetBal = Number(targetAdmin.wallet?.balance) || 0;
-
-    if (targetBal < amount) {
-
-      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${targetBal}` });
-
-    }
-
-
-
-    targetAdmin.wallet.balance = targetBal - amount;
-
-    await targetAdmin.save();
-
-
-
-    const ledgerEntry = new WalletLedger({
-
-      ownerId: targetAdmin._id,
-
-      ownerType: 'ADMIN',
-
-      adminCode: targetAdmin.adminCode,
-
-      type: 'DEBIT',
-
-      reason: 'ADJUSTMENT',
-
-      amount: amount,
-
-      balanceAfter: targetAdmin.wallet.balance,
-
-      description: description || 'Brokerage taken by Super Admin',
-
-      category: 'EXTRA_CHARGE',
-
-      relatedTo: req.admin._id,
-
-      relatedToType: 'ADMIN',
-
-      performedBy: req.admin._id,
-
-    });
-
-    await ledgerEntry.save();
-
-
-
-    req.admin.wallet.balance = (Number(req.admin.wallet?.balance) || 0) + amount;
-
-    await req.admin.save();
-
-
-
-    const superAdminLedgerEntry = new WalletLedger({
-
-      ownerId: req.admin._id,
-
-      ownerType: 'ADMIN',
-
-      adminCode: req.admin.adminCode,
-
-      type: 'CREDIT',
-
-      reason: 'ADJUSTMENT',
-
-      amount: amount,
-
-      balanceAfter: req.admin.wallet.balance,
-
-      description: `Brokerage taken from ${targetAdmin.name || targetAdmin.username}`,
-
-      category: 'EXTRA_CHARGE',
-
-      relatedTo: targetAdmin._id,
-
-      relatedToType: 'ADMIN',
-
-      performedBy: req.admin._id,
-
-    });
-
-    await superAdminLedgerEntry.save();
+    const result = await takeBrokerageFromAdminMainWallet(
+      targetAdmin,
+      req.admin,
+      amount,
+      description,
+      { franchiseCharge: !!targetAdmin.isFranchiseRoot }
+    );
 
 
 
     res.json({
 
-      message: `Successfully took ₹${amount} brokerage from ${targetAdmin.name || targetAdmin.username}`,
+      message: `Successfully took ₹${result.amount} from ${targetAdmin.name || targetAdmin.username} main wallet`,
 
-      amount: amount,
+      amount: result.amount,
 
-      adminBalance: targetAdmin.wallet.balance
+      adminBalance: result.adminMainBalance,
+
+      walletSource: 'main',
 
     });
 
   } catch (error) {
 
-    res.status(500).json({ message: error.message });
+    const code = error.statusCode || 500;
+
+    res.status(code).json({ message: error.message });
 
   }
 
@@ -16101,6 +17136,10 @@ router.use('/brokerage-restriction', brokerageRestrictionRoutes);
 // Use referral eligibility routes
 
 router.use('/referral-eligibility', referralEligibilityRoutes);
+
+
+
+router.use('/segment-grouping', segmentGroupingRoutes);
 
 
 

@@ -5,7 +5,12 @@
 
 export function orderIsCrypto(o) {
   if (!o) return false;
-  return o.exchange === 'BINANCE' || o.isCrypto === true;
+  if (o.isCrypto === true || o.exchange === 'BINANCE') return true;
+  const seg = String(o.segment || o.displaySegment || '').toUpperCase();
+  if (seg === 'CRYPTOFUT' || seg === 'CRYPTOOPT' || seg === 'CRYPTO') return true;
+  const pair = String(o.pair || o.symbol || '').toUpperCase();
+  if (pair.endsWith('USDT')) return true;
+  return false;
 }
 
 export function orderIsForex(o) {
@@ -43,4 +48,21 @@ export function tradeIsForex(t) {
 export function tradeIsCryptoOnly(t) {
   if (!t) return false;
   return !!(t.isCrypto || orderIsCrypto(t)) && !tradeIsForex(t);
+}
+
+/** Upper/lower circuit rules apply only on NSE / BSE / MCX books — never crypto or forex. */
+export function tradeIsIndianMarket(t) {
+  if (!t) return false;
+  if (orderIsCrypto(t) || orderIsForex(t)) return false;
+  const ex = String(t.exchange || '').toUpperCase();
+  const seg = String(t.segment || t.displaySegment || '').toUpperCase();
+  if (['NSE', 'BSE', 'MCX', 'NFO', 'BFO'].includes(ex)) return true;
+  if (
+    ['NSE-EQ', 'NSEFUT', 'NSEOPT', 'BSE-FUT', 'BSE-OPT', 'MCXFUT', 'MCXOPT', 'EQUITY', 'FNO', 'MCX'].includes(
+      seg
+    )
+  ) {
+    return true;
+  }
+  return false;
 }

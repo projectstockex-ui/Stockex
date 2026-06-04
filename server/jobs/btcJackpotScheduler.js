@@ -5,9 +5,10 @@ import BtcJackpotBank from '../models/BtcJackpotBank.js';
 import BtcNumberBet from '../models/BtcNumberBet.js';
 import { btcJackpotDayFilter } from '../utils/btcJackpotDay.js';
 import { getLiveBtcSpotForJackpot } from '../utils/btcJackpotSpot.js';
+import { fetchBtcFifteenMinuteIstWindowOhlc, fetchBtcUsdt1mCloseAtIstRef } from '../utils/binanceBtcKline.js';
 import { declareBtcJackpotForDate } from '../services/btcJackpotDeclareService.js';
 import { declareBtcNumberResultForDate } from '../services/btcNumberDeclareService.js';
-import { getTodayISTString } from '../utils/istDate.js';
+import { getTodayISTString, istInstantMs } from '../utils/istDate.js';
 import { biddingEndInclusiveSecondsFromConfig } from '../utils/btcJackpotBiddingWindow.js';
 
 function istSecondsNow() {
@@ -45,19 +46,21 @@ export async function btcJackpotAutoTick() {
     const jackpotEndInc = jackpotOn
       ? biddingEndInclusiveSecondsFromConfig(gcJ?.biddingEndTime || '23:29')
       : Infinity;
-    const numberResultSec = numberOn
-      ? parseTimeToSecIST(gcN.resultTime || '23:30')
+    const numberLockSec = numberOn
+      ? parseTimeToSecIST(gcN.endTime || gcN.resultTime || '23:30')
       : Infinity;
     const jackpotShouldRun = jackpotOn && nowSec > jackpotEndInc;
-    const numberShouldRun = numberOn && nowSec >= numberResultSec;
+    const numberShouldRun = numberOn && nowSec >= numberLockSec;
     const shouldRun = jackpotShouldRun || numberShouldRun;
     const scheduleLabel = [
       jackpotShouldRun ? `jackpot end (${gcJ?.biddingEndTime || '23:29'} IST)` : '',
-      numberShouldRun ? `number result (${gcN?.resultTime || '23:30'} IST)` : '',
+      numberShouldRun ? `number lock (${gcN?.endTime || gcN?.resultTime || '23:30'} IST)` : '',
     ].filter(Boolean).join(' + ') || 'waiting';
     if (!shouldRun) return;
 
     const today = getTodayISTString();
+    const targetLockMs = numberShouldRun ? istInstantMs(today, numberLockSec) : null;
+    const lockAt = targetLockMs != null ? new Date(targetLockMs) : new Date();
     const pendingJ = jackpotOn
       ? await BtcJackpotBid.countDocuments({
           $and: [{ status: 'pending' }, btcJackpotDayFilter(today)],
@@ -68,13 +71,61 @@ export async function btcJackpotAutoTick() {
       : 0;
 
     let row = await BtcJackpotResult.findOne({ resultDate: today });
+    const currentLockMs =
+      row?.lockedAt != null && Number.isFinite(new Date(row.lockedAt).getTime())
+        ? new Date(row.lockedAt).getTime()
+        : null;
+    // Refresh only once for the configured lock second (or again only when admin changes the time).
+    const mustRefreshNumberLock =
+      numberShouldRun &&
+      numberOn &&
+      targetLockMs != null &&
+      currentLockMs !== targetLockMs;
+    const missingOrInvalidLock =
+      !row ||
+      row.lockedBtcPrice == null ||
+      !Number.isFinite(Number(row.lockedBtcPrice)) ||
+      Number(row.lockedBtcPrice) <= 0;
 
-    if (!row || row.lockedBtcPrice == null || !Number.isFinite(Number(row.lockedBtcPrice)) || Number(row.lockedBtcPrice) <= 0) {
-      if (pendingJ === 0 && pendingN === 0) return;
+    if (mustRefreshNumberLock || missingOrInvalidLock) {
+      // BTC Number must lock reference price at result time even when no bets exist.
+      // Keep old behavior for jackpot-only idle days.
+      if (pendingJ === 0 && pendingN === 0 && !numberShouldRun) return;
 
-      const spot = await getLiveBtcSpotForJackpot();
-      if (spot.price == null || !Number.isFinite(spot.price) || spot.price <= 0) {
-        console.warn('[btc22h] auto-lock: no BTC price available — retrying next tick');
+      let lockPrice = null;
+      let lockSource = null;
+      if (numberShouldRun && numberOn) {
+        // BTC Number reference must match chart's 15m close at lock second.
+        // Priority: 15m close -> 1m close -> live spot fallback.
+        const openRefSec = Math.max(0, numberLockSec - 900);
+        const ohlc15 = await fetchBtcFifteenMinuteIstWindowOhlc(today, openRefSec, numberLockSec);
+        if (ohlc15 && Number.isFinite(Number(ohlc15.close)) && Number(ohlc15.close) > 0) {
+          lockPrice = Number(ohlc15.close);
+          lockSource = 'binance_1m_15m_window';
+        }
+        if (lockPrice == null) {
+          lockPrice = await fetchBtcUsdt1mCloseAtIstRef(today, numberLockSec);
+          if (lockPrice != null && Number.isFinite(Number(lockPrice)) && Number(lockPrice) > 0) {
+            lockSource = 'binance_rest';
+          }
+        }
+        if (lockPrice == null) {
+          const live = await getLiveBtcSpotForJackpot();
+          if (live.price != null && Number.isFinite(live.price) && live.price > 0) {
+            lockPrice = Number(live.price);
+            lockSource = live.source || 'binance_rest';
+          }
+        }
+      }
+      if (lockPrice == null) {
+        const spot = await getLiveBtcSpotForJackpot();
+        if (spot.price != null && Number.isFinite(spot.price) && spot.price > 0) {
+          lockPrice = Number(spot.price);
+          lockSource = spot.source || 'binance_rest';
+        }
+      }
+      if (lockPrice == null || !Number.isFinite(lockPrice) || lockPrice <= 0) {
+        console.warn('[btc22h] auto-lock: no BTC price available at result time/live — retrying next tick');
         return;
       }
 
@@ -82,11 +133,11 @@ export async function btcJackpotAutoTick() {
         row = await BtcJackpotResult.findOneAndUpdate(
           { resultDate: today },
           {
-            $setOnInsert: {
-              resultDate: today,
-              lockedBtcPrice: Number(spot.price),
-              lockedAt: new Date(),
-              lockedSource: spot.source || 'binance_rest',
+            $setOnInsert: { resultDate: today },
+            $set: {
+              lockedBtcPrice: Number(lockPrice),
+              lockedAt: lockAt,
+              lockedSource: lockSource || 'binance_rest',
             },
           },
           { upsert: true, new: true }
@@ -96,13 +147,13 @@ export async function btcJackpotAutoTick() {
           { betDate: today },
           {
             $setOnInsert: { betDate: today },
-            $set: { lockedBtcPrice: Number(spot.price), lockedAt: new Date() },
+            $set: { lockedBtcPrice: Number(lockPrice), lockedAt: lockAt },
           },
           { upsert: true, new: true }
         );
 
         console.log(
-          `[btc22h] auto-locked @ $${Number(spot.price).toFixed(2)} for ${today} (${scheduleLabel}, source=${spot.source})`
+          `[btc22h] auto-locked @ $${Number(lockPrice).toFixed(2)} for ${today} (${scheduleLabel}, source=${lockSource}, forceRefresh=${mustRefreshNumberLock})`
         );
       } catch (e) {
         if (e?.code !== 11000) console.warn('[btc22h] auto-lock:', e?.message || e);

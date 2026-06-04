@@ -1,11 +1,21 @@
 import axios from 'axios';
+import { getRuntimeApiBase, isMobileEmbed } from '../lib/runtimeApiUrl.js';
 
-// Prefer explicit VITE_API_URL when the API is on another origin (e.g. staging).
-// Otherwise use same-origin requests: Vite proxies /api in dev; in production nginx serves /api.
-// Never default production to http://localhost:5001 — that targets the visitor's machine, not your server.
-const API_URL = import.meta.env.VITE_API_URL ?? '';
+function resolveBaseUrl() {
+  const base = getRuntimeApiBase();
+  if (base) return base;
+  if (typeof window !== 'undefined' && isMobileEmbed() && window.location?.origin) {
+    return window.location.origin;
+  }
+  return '';
+}
 
-axios.defaults.baseURL = API_URL;
+axios.defaults.baseURL = resolveBaseUrl();
 axios.defaults.headers.common['Content-Type'] = 'application/json';
+
+axios.interceptors.request.use((config) => {
+  config.baseURL = resolveBaseUrl();
+  return config;
+});
 
 export default axios;

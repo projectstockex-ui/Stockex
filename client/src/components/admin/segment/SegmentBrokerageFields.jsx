@@ -30,7 +30,22 @@ export default function SegmentBrokerageFields({
     : 'w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm';
   const labelCls = 'block text-xs text-gray-400 mb-1';
 
-  const patch = (fields) => onChange({ ...slice, ...fields });
+  const patch = (fields) => {
+    const next = { ...slice, ...fields };
+    const ct = resolveSegmentCommissionType(next.commissionType, base.commissionType);
+    if (ct === 'PER_CRORE' || ct === 'PER_TRADE') {
+      if (Object.prototype.hasOwnProperty.call(fields, 'commission')) {
+        const n = Number(fields.commission);
+        next.commissionLot = Number.isFinite(n) ? Math.max(0, n) : 0;
+      }
+    } else if (ct === 'PER_LOT' || ct === 'PER_QUANTITY') {
+      if (Object.prototype.hasOwnProperty.call(fields, 'commissionLot')) {
+        const n = Number(fields.commissionLot);
+        next.commission = Number.isFinite(n) ? Math.max(0, n) : 0;
+      }
+    }
+    onChange(next);
+  };
 
   return (
     <>

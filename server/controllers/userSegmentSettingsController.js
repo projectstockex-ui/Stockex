@@ -152,6 +152,11 @@ class UserSegmentSettingsController {
           segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions
         );
 
+        {
+          const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+          plain = stripMcxSessionTimingFromSegmentMap(plain);
+        }
+
         console.log('[UserSegmentSettings] Plain data before validation:', JSON.stringify(plain, null, 2));
 
         // Validate segment permissions against parent admin's limits
@@ -342,20 +347,8 @@ class UserSegmentSettingsController {
           }
         }
 
-        // Map commissionLot to commission when commissionType is PER_CRORE
-        // Frontend sends commissionLot but backend expects commission for PER_CRORE
-        console.log('[UserSegmentSettings] Before mapping - plain data:', JSON.stringify(plain, null, 2));
-        for (const [segName, segData] of Object.entries(plain)) {
-          if (!segData || typeof segData !== 'object') continue;
-          if (segData.commissionType === 'PER_CRORE') {
-            console.log('[UserSegmentSettings] Mapping for', segName, '- commissionLot:', segData.commissionLot, 'commission:', segData.commission);
-            if (segData.commissionLot !== undefined && (segData.commission === undefined || segData.commission === 0)) {
-              segData.commission = segData.commissionLot;
-              console.log('[UserSegmentSettings] Mapped commissionLot to commission for', segName, '- new commission:', segData.commission);
-            }
-          }
-        }
-        console.log('[UserSegmentSettings] After mapping - plain data:', JSON.stringify(plain, null, 2));
+        const { syncSegmentCommissionMap } = await import('../utils/commissionTypeUnit.js');
+        syncSegmentCommissionMap(plain);
 
         // For user segment settings, save directly without alignSegmentDefaultsMap to preserve custom values
         // alignSegmentDefaultsMap is only for admin settings where defaults need to be aligned
@@ -370,7 +363,11 @@ class UserSegmentSettingsController {
 
       if (segmentExplicitKeys !== undefined) {
         const { sanitizeSegmentExplicitKeysForSave } = await import('../utils/commissionTypeUnit.js');
-        const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+        let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+        if (sanitized) {
+          const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
+          sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
+        }
         if (sanitized !== undefined) {
           updateFields.segmentExplicitKeys = sanitized;
         }

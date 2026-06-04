@@ -4,8 +4,9 @@ import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
 import { normalizeMongoMapOfObjects, isCryptoQtyOnlySegment } from '../utils';
 import { computeSegmentExplicitKeys } from '../../../../utils/segmentExplicitKeys';
-import { canManageLimitPendingSegmentGate, LIMIT_PENDING_HELP_TEXT } from '../../../../lib/adminSegmentRoleGates';
+import { canManageLimitPendingSegmentGate, canEditMcxSessionTiming, LIMIT_PENDING_HELP_TEXT } from '../../../../lib/adminSegmentRoleGates';
 import CryptoSegmentAdminExtras from '../ui/CryptoSegmentAdminExtras';
+import McxSegmentAdminExtras from '../ui/McxSegmentAdminExtras';
 import SegmentBrokerageFields from '../../segment/SegmentBrokerageFields.jsx';
 import { normalizeSegmentCommissionFields } from '../../../../utils/segmentCommissionType.js';
 import { numInputValue, parseNumInput } from '../../../../utils/segmentFormValues.js';
@@ -102,7 +103,7 @@ const MySegmentSettings = () => {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const segmentExplicitKeys = computeSegmentExplicitKeys(segmentPermissions, systemSegBaseline);
+      const segmentExplicitKeys = computeSegmentExplicitKeys(segmentPermissions, systemSegBaseline, admin?.role);
       await axios.put('/api/admin/my-settings', {
         segmentPermissions,
         scriptSettings,
@@ -269,6 +270,17 @@ const MySegmentSettings = () => {
                         <CryptoSegmentAdminExtras
                           segmentKey={segment}
                           slice={segmentPermissions[segment]}
+                          onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
+                        />
+                      </div>
+                    )}
+
+                    {['MCXFUT', 'MCXOPT', 'MCX'].includes(segment) && (
+                      <div className="col-span-2 md:col-span-4">
+                        <McxSegmentAdminExtras
+                          segmentKey={segment}
+                          slice={segmentPermissions[segment]}
+                          canEdit={canEditMcxSessionTiming(admin?.role)}
                           onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
                         />
                       </div>

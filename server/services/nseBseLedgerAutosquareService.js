@@ -1,8 +1,7 @@
 /**
  * NSE/BSE ledger autosquare:
- * - Real balance = wallet cash + MTM on open positions
- * - When real balance <= reference × (100 − ledgerClose%) / 100 → square ALL positions to nil
- * - Market closed: MTM uses bid (BUY) / ask (SELL); EOD carry-forward uses total real balance
+ * - When available margin <= 0 → square ALL positions to nil
+ * - Market closed: MTM uses bid (BUY) / ask (SELL)
  */
 
 import User from '../models/User.js';
@@ -15,6 +14,23 @@ import WalletLedger from '../models/WalletLedger.js';
 import { getLTP } from './ltpResolutionService.js';
 import { getNseBseBalance, readNseBseWalletFromDb } from '../utils/nseBseWallet.js';
 import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
+import {
+  computeAvailableMarginForWallet,
+  getWalletLedgerReferenceBalance,
+  shouldTriggerLedgerAutosquare,
+} from './ledgerAutosquareService.js';
+import {
+  evaluateIntradayAutosquareTrigger,
+  resolveAutosquarePercentFromSettings,
+  resolveCashLedgerAutosquareMetrics,
+} from '../utils/autosquareThreshold.js';
+import {
+  isPlausibleNseBseMarkPrice,
+  resolveSafeNseBseMarkPrice,
+  sanitizeInrWalletAmount,
+  isAbsurdOpenQuantity,
+  resolveSafeOpenQuantity,
+} from '../utils/walletBalanceSanity.js';
 
 let io = null;
 
@@ -124,19 +140,30 @@ export async function getMarkPricesForTrades(trades, { preferBidAsk = false } = 
     if (preferBidAsk) {
       markPrice = tr.side === 'BUY' ? bid || ltp : ask || ltp;
     }
+    if (markPrice > 0) {
+      markPrice = resolveSafeNseBseMarkPrice(tr, markPrice);
+    }
     out.set(String(tr._id), {
       ltp,
       bid,
       ask,
       markPrice: markPrice > 0 ? markPrice : tr.entryPrice,
+      markRejected: markPrice > 0 && !isPlausibleNseBseMarkPrice(tr, ltp),
     });
   }
   return out;
 }
 
-export async function computeNseBseRealBalance(userId, { preferBidAsk = false } = {}) {
+export async function computeNseBseRealBalance(userId, { preferBidAsk = false, segment = null, autosquarePercent: autosquarePercentOverride = null } = {}) {
   const live = await readNseBseWalletFromDb(userId);
-  const user = await User.findById(userId).select('settings nseBseWallet').lean();
+  const user = await User.findById(userId)
+    .select('settings nseBseWallet segmentPermissions')
+    .populate('admin', 'segmentPermissions')
+    .lean();
+  if (user?.admin?.segmentPermissions) {
+    user.parentSegmentPermissions = user.admin.segmentPermissions;
+  }
+
   const positions = await Trade.find({
     user: userId,
     status: 'OPEN',
@@ -147,43 +174,79 @@ export async function computeNseBseRealBalance(userId, { preferBidAsk = false } 
   let totalMtm = 0;
   for (const p of positions) {
     const mp = priceMap.get(String(p._id))?.markPrice ?? p.currentPrice ?? p.entryPrice;
-    totalMtm += WalletService.calculatePositionPnL(p, mp);
+    let pnl = WalletService.calculatePositionPnL(p, mp);
+    if (isAbsurdOpenQuantity(p)) {
+      const safeQ = resolveSafeOpenQuantity(p);
+      pnl = WalletService.calculatePositionPnL({ ...p, quantity: safeQ }, mp);
+    }
+    totalMtm += pnl;
   }
+  totalMtm = sanitizeInrWalletAmount(totalMtm, {
+    field: 'nseBseTotalMtm',
+    userId: String(userId),
+  });
 
   const cashBalance = live.balance;
-  const realBalance = Math.round((cashBalance + totalMtm) * 100) / 100;
-  const closePct = ledgerClosePercent(user);
-  const referenceBalance = await getLedgerReferenceBalance(userId);
-  const minFloor = minEquityFloor(referenceBalance, closePct);
+  const usedMargin = Math.max(0, Number(live.usedMargin) || 0);
+  const walletUser = { ...user, nseBseWallet: { ...user?.nseBseWallet, balance: cashBalance, usedMargin } };
+  const referenceBalance = await getWalletLedgerReferenceBalance(userId, 'nseBseWallet', cashBalance);
+  const { equityBasis, realBalance: realBal } = resolveCashLedgerAutosquareMetrics({
+    cashBalance,
+    referenceBalance,
+    totalMtm,
+  });
+  const realBalance = sanitizeInrWalletAmount(realBal, {
+    field: 'nseBseRealBalance',
+    userId: String(userId),
+  });
+  const segHint = segment || positions[0]?.segment || null;
+  const availableMargin = await computeAvailableMarginForWallet(walletUser, 'nseBseWallet', totalMtm, {
+    segment: segHint,
+  });
+  const marginCushion = Math.round((cashBalance - usedMargin) * 100) / 100;
+
+  let autosquarePercent = autosquarePercentOverride;
+  if (autosquarePercent == null || !Number.isFinite(Number(autosquarePercent))) {
+    if (segHint) {
+      try {
+        const TradeService = (await import('./tradeService.js')).default;
+        const segmentSettings = await TradeService.getUserSegmentSettings(user, segHint);
+        autosquarePercent = resolveAutosquarePercentFromSettings(segmentSettings, user);
+      } catch {
+        autosquarePercent = resolveAutosquarePercentFromSettings(null, user);
+      }
+    } else {
+      autosquarePercent = resolveAutosquarePercentFromSettings(null, user);
+    }
+  }
+
+  const triggerEval = evaluateIntradayAutosquareTrigger({
+    equityBasis,
+    realBalance,
+    autosquarePercent,
+  });
 
   return {
     cashBalance,
+    usedMargin,
+    marginCushion,
+    equityBasis,
     totalMtm: Math.round(totalMtm * 100) / 100,
     realBalance,
-    referenceBalance,
-    ledgerClosePercent: closePct,
-    minEquityFloor: minFloor,
-    lossPercent:
-      referenceBalance > 0
-        ? Math.round(((referenceBalance - realBalance) / referenceBalance) * 10000) / 100
-        : 0,
-    shouldTrigger: shouldTriggerLedgerAutosquare(realBalance, referenceBalance, closePct),
+    availableMargin,
+    autosquarePercent: triggerEval.autosquarePercent,
+    lossPercent: triggerEval.lossPercent,
+    shouldTrigger: triggerEval.trigger,
+    triggerReason: triggerEval.reason,
     openPositions: positions.length,
     priceMap,
   };
 }
 
-export function shouldTriggerLedgerAutosquare(realBalance, referenceBalance, closePercent) {
-  const ref = Number(referenceBalance) || 0;
-  if (ref <= 0) return false;
-  const floor = minEquityFloor(ref, closePercent);
-  return Number(realBalance) <= floor + 0.01;
-}
-
 /**
  * Square ALL NSE/BSE open positions (nil). Uses bid/ask for exit prices.
  */
-export async function executeLedgerAutosquareNil(userId, { reason = 'LEDGER_BALANCE', force = false } = {}) {
+export async function executeLedgerAutosquareNil(userId, { reason = 'INTRADAY_AUTOSQUARE', force = false, snapshot: snapshotHint = null } = {}) {
   const user = await User.findById(userId).select('userId adminCode nseBseWallet settings').lean();
   if (!user) return { success: false, message: 'User not found' };
 
@@ -225,8 +288,18 @@ export async function executeLedgerAutosquareNil(userId, { reason = 'LEDGER_BALA
     }
   }
 
-  const snapshot = await computeNseBseRealBalance(userId, { preferBidAsk: true });
+  const snapshot = snapshotHint || (await computeNseBseRealBalance(userId, { preferBidAsk: true }));
   const finalBal = Math.max(0, snapshot.realBalance);
+  const threshold = snapshot?.autosquarePercent;
+  const loss = snapshot?.lossPercent;
+  const notifySubject =
+    reason?.startsWith('INTRADAY_AUTOSQUARE_') || reason === 'EQUITY_DEPLETED'
+      ? `NSE/BSE auto-square — ${threshold}% loss threshold reached`
+      : 'All NSE/BSE positions closed (auto-square)';
+  const notifyDesc =
+    reason?.startsWith('INTRADAY_AUTOSQUARE_') || reason === 'EQUITY_DEPLETED'
+      ? `Equity loss reached ${loss}% (autosquare limit ${threshold}%). ${closed} position(s) were squared off at market.`
+      : `${closed} position(s) were squared off at market.`;
 
   await User.updateOne(
     { _id: userId },
@@ -252,20 +325,18 @@ export async function executeLedgerAutosquareNil(userId, { reason = 'LEDGER_BALA
       reason: 'TRADE_PNL',
       amount: 0,
       balanceAfter: finalBal,
-      description: `NSE/BSE ledger autosquare (${ledgerClosePercent(user)}% loss limit) — ${closed} position(s) closed (NSE/BSE)`,
+      description: `NSE/BSE intraday autosquare (${threshold}% threshold, loss ${loss}%) — ${closed} position(s) closed`,
       isAutoSquare: true,
-      meta: { segment: 'NSE/BSE', reason, positionsClosed: closed },
+      meta: { segment: 'NSE/BSE', reason, positionsClosed: closed, lossPercent: loss, autosquarePercent: threshold },
     });
   } catch {
     /* ledger note optional */
   }
 
   await Notification.create({
-    title: 'Ledger Auto-Square',
-    subject: `All NSE/BSE positions closed (${ledgerClosePercent(user)}% balance loss)`,
-    description:
-      `Your account equity fell to ₹${finalBal.toLocaleString('en-IN')} (limit ₹${snapshot.minEquityFloor.toLocaleString('en-IN')} on reference ₹${snapshot.referenceBalance.toLocaleString('en-IN')}). ` +
-      `${closed} position(s) were squared off.`,
+    title: 'Auto-Square',
+    subject: notifySubject,
+    description: notifyDesc,
     senderType: 'SYSTEM',
     targetType: 'SINGLE_USER',
     targetUserId: userId,
@@ -277,9 +348,7 @@ export async function executeLedgerAutosquareNil(userId, { reason = 'LEDGER_BALA
       reason,
       positionsClosed: closed,
       realBalance: finalBal,
-      referenceBalance: snapshot.referenceBalance,
-      minEquityFloor: snapshot.minEquityFloor,
-      ledgerClosePercent: snapshot.ledgerClosePercent,
+      availableMargin: snapshot.availableMargin,
       timestamp: new Date(),
     });
   }
@@ -291,26 +360,55 @@ export async function executeLedgerAutosquareNil(userId, { reason = 'LEDGER_BALA
   return { success: true, closed, finalBalance: finalBal, errors };
 }
 
-export async function checkAndRunLedgerAutosquare(userId, { preferBidAsk = false } = {}) {
+export async function checkAndRunLedgerAutosquare(userId, { preferBidAsk = false, segment = null, autosquarePercent = null } = {}) {
   const user = await User.findById(userId).select('settings nseBseWallet rmsSettings').lean();
   if (!user) return null;
-  if (user.nseBseWallet?.ledgerAutosquareActive) return null;
   if (user.rmsSettings?.tradingBlocked) return null;
 
-  const snapshot = await computeNseBseRealBalance(userId, { preferBidAsk });
+  if (user.nseBseWallet?.ledgerAutosquareActive) {
+    const stillOpen = await Trade.exists({ user: userId, status: 'OPEN', ...NSE_BSE_SEGMENT_QUERY });
+    if (!stillOpen) return null;
+    await User.updateOne({ _id: userId }, { $set: { 'nseBseWallet.ledgerAutosquareActive': false } });
+  }
+
+  const snapshot = await computeNseBseRealBalance(userId, { preferBidAsk, segment, autosquarePercent });
   if (!snapshot.openPositions) return null;
 
   if (!snapshot.shouldTrigger) return { triggered: false, snapshot };
 
-  const result = await executeLedgerAutosquareNil(userId, { reason: 'LEDGER_BALANCE' });
+  const reason = snapshot.triggerReason || `INTRADAY_AUTOSQUARE_${snapshot.autosquarePercent}%`;
+  console.log(
+    `[LedgerAutosquare NSE/BSE] TRIGGER user=${userId}: loss=${snapshot.lossPercent}% ` +
+      `threshold=${snapshot.autosquarePercent}% reason=${reason}`
+  );
+
+  const result = await executeLedgerAutosquareNil(userId, { reason, snapshot });
   return { triggered: true, snapshot, result };
 }
 
 export async function getLedgerStatusForApi(userId) {
   const user = await User.findById(userId).select('settings nseBseWallet').lean();
   const snapshot = await computeNseBseRealBalance(userId, { preferBidAsk: false });
+  if (!snapshot) {
+    return {
+      cashBalance: 0,
+      usedMargin: 0,
+      marginCushion: 0,
+      equityBasis: 0,
+      totalMtm: 0,
+      realBalance: 0,
+      availableMargin: 0,
+      autosquarePercent: 90,
+      lossPercent: 0,
+      shouldTrigger: false,
+      openPositions: 0,
+      ledgerAutosquareActive: !!user?.nseBseWallet?.ledgerAutosquareActive,
+      ledgerAutosquaredAt: user?.nseBseWallet?.ledgerAutosquaredAt || null,
+    };
+  }
+  const { priceMap: _priceMap, ...safe } = snapshot;
   return {
-    ...snapshot,
+    ...safe,
     ledgerAutosquareActive: !!user?.nseBseWallet?.ledgerAutosquareActive,
     ledgerAutosquaredAt: user?.nseBseWallet?.ledgerAutosquaredAt || null,
   };

@@ -726,13 +726,19 @@ router.put('/admin/trade/:id', protectAdmin, async (req, res) => {
       const currentPrice = trade.currentPrice || trade.entryPrice;
       trade.unrealizedPnL = (currentPrice - trade.entryPrice) * multiplier * trade.quantity;
     } else if (trade.status === 'CLOSED') {
-      if (exitPrice !== undefined) trade.exitPrice = exitPrice;
+      const { alignCryptoExitToEntryUnit, computeAdminBookPoolForPatti, roundMoney } =
+        await import('../utils/bookPnL.js');
+      if (exitPrice !== undefined) {
+        trade.exitPrice = alignCryptoExitToEntryUnit(trade, exitPrice);
+      }
       const multiplier = trade.side === 'BUY' ? 1 : -1;
-      const grossPnL = (trade.exitPrice - trade.entryPrice) * multiplier * trade.quantity;
+      const grossPnL = roundMoney(
+        (trade.exitPrice - trade.entryPrice) * multiplier * trade.quantity
+      );
       trade.realizedPnL = grossPnL;
       trade.pnl = grossPnL;
-      trade.netPnL = grossPnL - (trade.charges?.total || 0);
-      trade.adminPnL = trade.bookType === 'B_BOOK' ? -trade.netPnL : 0;
+      trade.netPnL = roundMoney(grossPnL - (trade.charges?.total || 0));
+      trade.adminPnL = trade.bookType === 'B_BOOK' ? computeAdminBookPoolForPatti(trade) : 0;
     }
     
     await trade.save();

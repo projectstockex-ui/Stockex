@@ -453,6 +453,8 @@ const systemSettingsSchema = new mongoose.Schema({
       cryptoStartTime: { type: String, default: '' },
       /** IST session close hint (HH:mm or HH:mm:ss) - for crypto segments */
       cryptoClosingTime: { type: String, default: '' },
+      mcxStartTime: { type: String, default: '' },
+      mcxClosingTime: { type: String, default: '' },
       /** IST session close time (HH:mm or HH:mm:ss) - generic closing time for all segments (NSE, MCX, BSE, etc.) */
       closingTime: { type: String, default: '' },
       cryptoReferenceSymbol: { type: String, default: '' },

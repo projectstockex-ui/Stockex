@@ -11,6 +11,13 @@ import SegmentNumberInput from './SegmentNumberInput.jsx';
 
 export const OPTION_LEVERAGE_SEGMENT_KEYS = ['NSEOPT', 'MCXOPT', 'CRYPTOOPT'];
 
+/** OPT segments: hierarchy hides segment lot/qty + segment brokerage; Option Buy/Sell keeps per-lot brokerage. */
+export const SIMPLIFIED_HIERARCHY_OPT_SEGMENTS = OPTION_LEVERAGE_SEGMENT_KEYS;
+
+export function isSimplifiedHierarchyOptSegment(segmentKey) {
+  return SIMPLIFIED_HIERARCHY_OPT_SEGMENTS.includes(String(segmentKey || '').toUpperCase());
+}
+
 export function segmentHasOptionLeverageFields(segmentKey) {
   return OPTION_LEVERAGE_SEGMENT_KEYS.includes(String(segmentKey || '').toUpperCase());
 }
@@ -36,7 +43,7 @@ export default function OptionBuySellFields({
     <div className={compact ? 'bg-dark-800 rounded-lg p-3' : 'bg-dark-700 rounded-lg p-4'}>
       <div className="flex items-center justify-between mb-2">
         <h5 className={`font-semibold ${compact ? 'text-xs' : 'text-sm text-purple-400'}`}>
-          {optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}
+          {optType === 'optionBuy' ? 'Option Buy (Premium)' : 'Option Sell (Strike Price)'}
         </h5>
         <button
           type="button"

@@ -14,7 +14,7 @@
  */
 
 import express from 'express';
-import { protectUser, protectAdmin, generateToken, generateSessionToken } from '../middleware/auth.js';
+import { protectUser, protectAdmin, generateToken } from '../middleware/auth.js';
 import {
   validateUserRegistration,
   validateUserLogin,
@@ -168,6 +168,7 @@ import BtcNumberBet from '../models/BtcNumberBet.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
+import BtcJackpotResult from '../models/BtcJackpotResult.js';
 import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import UpDownWindowSettlement from '../models/UpDownWindowSettlement.js';
 import WalletLedger from '../models/WalletLedger.js';
@@ -185,6 +186,7 @@ import {
   fetchNifty50LastPriceFromKite,
   fetchNifty50SessionClearing15mCached,
 } from '../utils/kiteNiftyQuote.js';
+import { closingPriceToLeftTwoDigits } from '../utils/niftyNumberResult.js';
 import {
   niftyResultSecForWindow,
 } from '../../lib/niftyUpDownWindows.js';
@@ -695,19 +697,12 @@ router.post('/login-legacy', async (req, res) => {
     }
 
     if (await user.comparePassword(password)) {
-      // Generate unique session token for single device login
-      // This will invalidate any previous session (force logout from other devices)
-      const sessionToken = generateSessionToken();
-      
-      // Get device info from user agent
       const userAgent = req.headers['user-agent'] || 'Unknown device';
       const deviceType = userAgent.includes('Mobile') ? 'Mobile' : 'Desktop';
-      
-      // Update user with new session token and login info
+
       await User.updateOne(
         { _id: user._id },
-        { 
-          activeSessionToken: sessionToken,
+        {
           isLogin: true,
           lastLoginAt: new Date(),
           lastLoginDevice: deviceType
@@ -736,7 +731,7 @@ router.post('/login-legacy', async (req, res) => {
         demoExpiresAt: user.demoExpiresAt,
         createdAt: user.createdAt,
         parentAdmin: parentAdmin,
-        token: generateToken(user._id, sessionToken)
+        token: generateToken(user._id)
       });
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
@@ -788,10 +783,7 @@ router.post('/logout', protectUser, async (req, res) => {
   try {
     await User.updateOne(
       { _id: req.user._id },
-      { 
-        activeSessionToken: null,
-        isLogin: false
-      }
+      { isLogin: false }
     );
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
@@ -1033,6 +1025,56 @@ router.get('/wallet-transfer-history', protectUser, async (req, res) => {
   }
 });
 
+// Client → client main wallet transfer (same ADMIN hierarchy)
+router.get('/peer-transfer/clients', protectUser, async (req, res) => {
+  try {
+    const { listEligibleClients } = await import('../services/clientPeerTransferService.js');
+    const result = await listEligibleClients(req.user._id, {
+      search: req.query.search || req.query.q || '',
+      limit: req.query.limit,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message });
+  }
+});
+
+router.get('/peer-transfer/lookup', protectUser, async (req, res) => {
+  try {
+    const recipientUserId = req.query.recipientUserId || req.query.userId;
+    const { lookupRecipient } = await import('../services/clientPeerTransferService.js');
+    const result = await lookupRecipient(req.user._id, recipientUserId);
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/peer-transfer', protectUser, async (req, res) => {
+  try {
+    const { recipientUserId, amount, remarks } = req.body;
+    const { executePeerTransfer } = await import('../services/clientPeerTransferService.js');
+    const result = await executePeerTransfer(req.user._id, {
+      recipientUserId,
+      amount,
+      remarks,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.get('/peer-transfer/history', protectUser, async (req, res) => {
+  try {
+    const { getPeerTransferHistory } = await import('../services/clientPeerTransferService.js');
+    const history = await getPeerTransferHistory(req.user._id, { limit: req.query.limit });
+    res.json({ history });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Normalize ?gameId= (Express may give a string[] if the key is repeated).
 function parseLedgerGameIdQuery(raw) {
   if (typeof raw === 'string' && raw.trim() !== '') return raw.trim();
@@ -1131,7 +1173,11 @@ router.get('/wallet-ledger', protectUser, async (req, res) => {
       
       // Exclude crypto, forex, MCX, games transactions
       const isCrypto = reason.includes('crypto') || description.includes('crypto') || description.includes('btc') || description.includes('bitcoin') || description.includes('eth') || description.includes('binance') || segment === 'crypto';
-      const isForex = reason.includes('forex') || description.includes('forex') || description.includes('eur') || description.includes('usd') || description.includes('gbp') || segment === 'forex';
+      const isForex =
+        reason.includes('forex') ||
+        description.includes('(forex)') ||
+        description.includes('(Forex)') ||
+        segment === 'forex';
       const isMcx = reason.includes('mcx') || description.includes('mcx') || description.includes('commodity') || description.includes('gold') || description.includes('silver') || description.includes('crude') || segment === 'mcx';
       const isGames = reason.includes('games') || description.includes('games') || description.includes('fantasy') || segment === 'games';
       
@@ -1589,7 +1635,16 @@ router.get('/games/live-activity', protectUser, async (req, res) => {
         dayEnd,
         'BTC Number.*\\bbet\\b'
       );
-      games.btcNumber = { enabled: true, status: 'open', istDate: dayKey, ...pool };
+      const nowSecBtcNum = currentTotalSecondsIST();
+      const endSecInclusive = endInclusiveSecondsFromConfig(
+        bnCfg.endTime || bnCfg.resultTime || bnCfg.biddingEndTime || '23:30'
+      );
+      games.btcNumber = {
+        enabled: true,
+        status: nowSecBtcNum > endSecInclusive ? 'closed' : 'open',
+        istDate: dayKey,
+        ...pool,
+      };
     }
 
     const nbCfg = settings?.games?.niftyBracket || {};
@@ -1680,7 +1735,7 @@ router.get('/games/recent-winners', protectUser, async (req, res) => {
 router.get('/settings', protectUser, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('userId marginSettings rmsSettings settings segmentPermissions segmentExplicitKeys')
+      .select('userId marginSettings rmsSettings settings segmentPermissions segmentExplicitKeys hierarchyPath admin')
       .populate({ path: 'admin', select: 'segmentPermissions segmentExplicitKeys' })
       .lean();
 
@@ -1713,6 +1768,9 @@ router.get('/settings', protectUser, async (req, res) => {
       cryptoSpreadUsdPerSide: 0,
       cryptoStartTime: '',
       cryptoClosingTime: '',
+      mcxStartTime: '',
+      mcxClosingTime: '',
+      closingTime: '',
       cryptoReferenceSymbol: '',
       cryptoPricePerLotInr: 0,
       cryptoLotSizeLots: 1,
@@ -1791,12 +1849,31 @@ router.get('/settings', protectUser, async (req, res) => {
         enabled: merged.enabled,
         cryptoStartTime: merged.cryptoStartTime,
         cryptoClosingTime: merged.cryptoClosingTime,
+        mcxStartTime: merged.mcxStartTime,
+        mcxClosingTime: merged.mcxClosingTime,
         commission: merged.commission
       });
     }
 
+    // Ensure MCX session timing reaches user UI even if populate/merge missed parent admin slice
+    try {
+      const { resolveMcxTimingFromAdminChain } = await import('../utils/mcxSessionTiming.js');
+      const chainMcx = await resolveMcxTimingFromAdminChain(user);
+      for (const mcxSeg of ['MCXFUT', 'MCXOPT']) {
+        if (!segmentPermissions[mcxSeg]) continue;
+        if (chainMcx.mcxStartTime) segmentPermissions[mcxSeg].mcxStartTime = chainMcx.mcxStartTime;
+        if (chainMcx.mcxClosingTime) {
+          segmentPermissions[mcxSeg].mcxClosingTime = chainMcx.mcxClosingTime;
+          segmentPermissions[mcxSeg].closingTime = chainMcx.mcxClosingTime;
+        }
+      }
+    } catch (mcxOverlayErr) {
+      console.warn('[user/settings] MCX timing overlay failed:', mcxOverlayErr?.message);
+    }
+
     console.log('[user/settings] Final segmentPermissions keys:', Object.keys(segmentPermissions));
     console.log('[user/settings] CRYPTOFUT settings:', segmentPermissions.CRYPTOFUT);
+    console.log('[user/settings] MCXFUT settings:', segmentPermissions.MCXFUT);
 
     res.json({
       marginSettings: user.marginSettings || {},
@@ -3710,6 +3787,20 @@ function getTodayIST() {
   return getTodayISTString(new Date());
 }
 
+function parseClockToSecondsIST(raw, fallback = '00:00') {
+  const s = String(raw || fallback).trim();
+  const [hh = '0', mm = '0', ss = '0'] = s.split(':');
+  return (parseInt(hh, 10) || 0) * 3600 + (parseInt(mm, 10) || 0) * 60 + (parseInt(ss, 10) || 0);
+}
+
+function endInclusiveSecondsFromConfig(rawEnd, fallback = '23:24') {
+  const s = String(rawEnd || fallback).trim();
+  const parts = s.split(':').filter(Boolean);
+  const base = parseClockToSecondsIST(s, fallback);
+  if (parts.length >= 3) return base;
+  return Math.floor(base / 60) * 60 + 59;
+}
+
 // Nifty Number: bets cannot be deleted after placement (use PUT to adjust pending stake only).
 router.delete('/nifty-number/bet/:id', protectUser, async (req, res) => {
   return res.status(400).json({
@@ -4076,7 +4167,10 @@ router.get('/nifty-number/daily-result', protectUser, async (req, res) => {
       declared: true,
       betDate: date,
       resultNumber: row.resultNumber,
-      closingPrice: row.closingPrice ?? null,
+      closingPrice:
+        Number.isFinite(Number(row.closingPrice)) && Number(row.closingPrice) > 0
+          ? Number(row.closingPrice)
+          : null,
       resultDeclaredAt: row.resultDeclaredAt ?? null,
     });
   } catch (error) {
@@ -4122,6 +4216,17 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
     if (!gameConfig?.enabled) {
       return res.status(400).json({ message: 'BTC Number game is currently disabled' });
     }
+    const nowSec = currentTotalSecondsIST();
+    const bidStartSec = parseClockToSecondsIST(gameConfig.biddingStartTime || '00:00');
+    const bidEndSecInclusive = endInclusiveSecondsFromConfig(
+      gameConfig.endTime || gameConfig.maxBidTime || gameConfig.biddingEndTime || '23:24'
+    );
+    if (nowSec < bidStartSec || nowSec > bidEndSecInclusive) {
+      const bidEndLabel = gameConfig.endTime || gameConfig.maxBidTime || gameConfig.biddingEndTime || '23:24';
+      return res.status(400).json({
+        message: `Betting is only allowed from ${gameConfig.biddingStartTime || '00:00'} to ${bidEndLabel} IST.`,
+      });
+    }
 
     if (await rejectIfHierarchyGameDenied(res, userId, 'btcNumber')) return;
 
@@ -4156,7 +4261,7 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
 
     const existingBets = await BtcNumberBet.find({ user: userId, betDate: today, selectedNumber: { $in: numbers } });
     if (existingBets.length > 0) {
-      const dupes = existingBets.map((b) => `.${b.selectedNumber.toString().padStart(2, '0')}`).join(', ');
+      const dupes = existingBets.map((b) => b.selectedNumber.toString().padStart(2, '0')).join(', ');
       return res.status(400).json({ message: `You already bet on ${dupes} today` });
     }
 
@@ -4397,7 +4502,21 @@ router.get('/btc-number/history', protectUser, async (req, res) => {
 router.get('/btc-number/daily-result', protectUser, async (req, res) => {
   try {
     const date = typeof req.query.date === 'string' && req.query.date.trim() ? req.query.date.trim() : getTodayIST();
-    const row = await BtcNumberBet.findOne({
+    const settings = await GameSettings.getSettings();
+    const bnCfg = settings?.games?.btcNumber || {};
+    const isTodayQuery = date === getTodayIST();
+    if (isTodayQuery) {
+      const nowSec = currentTotalSecondsIST();
+      const endSecInclusive = endInclusiveSecondsFromConfig(
+        bnCfg.endTime || bnCfg.maxBidTime || bnCfg.biddingEndTime || '23:24'
+      );
+      // Until current configured endTime arrives, today's lock/result should be treated as not declared.
+      if (nowSec < endSecInclusive) {
+        return res.json({ declared: false, betDate: date });
+      }
+    }
+
+    const settledBetRow = await BtcNumberBet.findOne({
       betDate: date,
       resultNumber: { $ne: null },
     })
@@ -4405,17 +4524,115 @@ router.get('/btc-number/daily-result', protectUser, async (req, res) => {
       .select('resultNumber closingPrice resultDeclaredAt betDate')
       .lean();
 
-    if (!row || row.resultNumber == null) {
-      return res.json({ declared: false, betDate: date });
+    if (settledBetRow && settledBetRow.resultNumber != null) {
+      return res.json({
+        declared: true,
+        betDate: date,
+        resultNumber: settledBetRow.resultNumber,
+        closingPrice:
+          Number.isFinite(Number(settledBetRow.closingPrice)) && Number(settledBetRow.closingPrice) > 0
+            ? Number(settledBetRow.closingPrice)
+            : null,
+        resultDeclaredAt: settledBetRow.resultDeclaredAt ?? null,
+      });
     }
 
-    res.json({
-      declared: true,
+    // Fallback: show lock-based BTC Number result even when no bets were settled.
+    const lockRow = await BtcJackpotResult.findOne({ resultDate: date })
+      .select('resultDate lockedBtcPrice lockedAt')
+      .lean();
+    const lockPrice = Number(lockRow?.lockedBtcPrice);
+    if (Number.isFinite(lockPrice) && lockPrice > 0) {
+      const derived = closingPriceToLeftTwoDigits(lockPrice);
+      if (derived != null) {
+        return res.json({
+          declared: true,
+          betDate: date,
+          resultNumber: derived,
+          closingPrice: lockPrice,
+          resultDeclaredAt: lockRow?.lockedAt || null,
+          source: 'lock_price',
+        });
+      }
+    }
+
+    return res.json({ declared: false, betDate: date });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/btc-number/reference-price', protectUser, async (req, res) => {
+  try {
+    const date = typeof req.query.date === 'string' && req.query.date.trim() ? req.query.date.trim() : getTodayIST();
+    const settings = await GameSettings.getSettings();
+    const bnCfg = settings?.games?.btcNumber || {};
+    const isTodayQuery = date === getTodayIST();
+    if (isTodayQuery) {
+      const nowSec = currentTotalSecondsIST();
+      const endSecInclusive = endInclusiveSecondsFromConfig(
+        bnCfg.endTime || bnCfg.maxBidTime || bnCfg.biddingEndTime || '23:24'
+      );
+      // If admin moved endTime ahead, keep today's reference in live mode until that new endTime hits.
+      if (nowSec < endSecInclusive) {
+        return res.json({ locked: false, betDate: date, referencePrice: null, lockedAt: null });
+      }
+    }
+
+    const row = await BtcJackpotResult.findOne({ resultDate: date })
+      .select('resultDate lockedBtcPrice lockedAt')
+      .lean();
+
+    if (!row || !Number.isFinite(Number(row.lockedBtcPrice)) || Number(row.lockedBtcPrice) <= 0) {
+      return res.json({ locked: false, betDate: date, referencePrice: null, lockedAt: null });
+    }
+
+    return res.json({
+      locked: true,
       betDate: date,
-      resultNumber: row.resultNumber,
-      closingPrice: row.closingPrice ?? null,
-      resultDeclaredAt: row.resultDeclaredAt ?? null,
+      referencePrice: Number(row.lockedBtcPrice),
+      lockedAt: row.lockedAt || null,
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/btc-number/last-5-days-results', protectUser, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings();
+    const bnCfg = settings?.games?.btcNumber || {};
+    const today = getTodayIST();
+    const nowSec = currentTotalSecondsIST();
+    const todayEndInclusive = endInclusiveSecondsFromConfig(
+      bnCfg.endTime || bnCfg.maxBidTime || bnCfg.biddingEndTime || '23:24'
+    );
+
+    const lockRows = await BtcJackpotResult.find({
+      lockedBtcPrice: { $gt: 0 },
+    })
+      .sort({ resultDate: -1, lockedAt: -1 })
+      .select('resultDate lockedBtcPrice lockedAt')
+      .limit(20)
+      .lean();
+
+    const out = [];
+    for (const r of lockRows) {
+      // Don't show today's old lock while current configured endTime has not arrived yet.
+      if (r.resultDate === today && nowSec < todayEndInclusive) continue;
+      const closingPrice = Number(r?.lockedBtcPrice);
+      const resultNumber = closingPriceToLeftTwoDigits(closingPrice);
+      if (!Number.isFinite(closingPrice) || closingPrice <= 0 || resultNumber == null) continue;
+      out.push({
+        betDate: r.resultDate,
+        resultNumber,
+        closingPrice,
+        resultDeclaredAt: r.lockedAt || null,
+      });
+      if (out.length >= 5) break;
+    }
+
+    return res.json(out);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

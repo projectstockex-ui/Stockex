@@ -168,7 +168,7 @@ const AdminManagement = () => {
   const handleToggleFranchiseRoot = async (targetAdmin) => {
     const newValue = !targetAdmin.isFranchiseRoot;
     const action = newValue ? 'enable' : 'disable';
-    if (!confirm(`Franchise Root: ${action} for "${targetAdmin.name || targetAdmin.username}"?\n\nWhen ENABLED:\n• This admin's subtree forms an isolated unit\n• Trading profit/loss settles within subtree only\n• Super Admin gets only platform charges from these users\n\nContinue?`)) return;
+    if (!confirm(`Franchise Root: ${action} for "${targetAdmin.name || targetAdmin.username}"?\n\nWhen ENABLED:\n• This admin's subtree forms an isolated unit\n• Trading profit/loss settles within subtree only\n• Brokerage-per-crore flow applies for this franchise hierarchy\n\nContinue?`)) return;
 
     try {
       await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/franchise-root`, {
@@ -415,7 +415,7 @@ const AdminManagement = () => {
     const settings = adm.referralDistributionEnabled;
     if (!settings) return false;
     if (typeof settings === 'boolean') return !settings;
-    return !settings.games || !settings.mcx || !settings.crypto || !settings.forex;
+    return !settings.games || !settings.trading || !settings.mcx || !settings.crypto || !settings.forex;
   };
 
   return (
@@ -679,13 +679,18 @@ const AdminManagement = () => {
                       <Shield size={16} /> Permissions
                     </button>
                   )}
+                  {adm.role === 'ADMIN' && (
                   <button
+                    type="button"
                     onClick={() => { setSelectedAdmin(adm); setShowIndividualPattiModal(true); }}
-                    className="px-3 py-2 bg-pink-600 hover:bg-pink-700 rounded text-sm flex items-center gap-1"
-                    title="Individual Patti Sharing"
+                    className={`px-3 py-2 rounded text-sm flex items-center gap-1 ${
+                      adm.pattiSharing?.enabled ? 'bg-pink-700 ring-1 ring-pink-400' : 'bg-pink-600 hover:bg-pink-700'
+                    }`}
+                    title="Patti sharing on ADMIN (downline brokers set by their parent)"
                   >
-                    <ArrowRightLeft size={16} /> Patti
+                    <ArrowRightLeft size={16} /> Patti{adm.pattiSharing?.enabled ? ' ON' : ''}
                   </button>
+                  )}
                   <button
                     onClick={() => { setSelectedAdmin(adm); setShowPasswordModal(true); }}
                     className="px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-sm flex items-center gap-1"
@@ -1020,6 +1025,26 @@ const AdminManagement = () => {
                     }`}
                   >
                     {showReferralSettingsModal.referralDistributionEnabled?.games !== false ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <TrendingUp size={20} className="text-cyan-400" />
+                    <div>
+                      <div className="font-semibold">Trading (all)</div>
+                      <div className="text-xs text-gray-400">NSE, MCX, crypto, forex — master switch</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleReferralDistribution(showReferralSettingsModal._id, 'trading')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                      showReferralSettingsModal.referralDistributionEnabled?.trading !== false
+                        ? 'bg-emerald-600 hover:bg-emerald-700'
+                        : 'bg-gray-600 hover:bg-gray-700'
+                    }`}
+                  >
+                    {showReferralSettingsModal.referralDistributionEnabled?.trading !== false ? 'ON' : 'OFF'}
                   </button>
                 </div>
 

@@ -77,6 +77,12 @@ const userSchema = new mongoose.Schema({
     enum: ['SUPER_ADMIN', 'ADMIN', 'BROKER', 'SUB_BROKER'],
     default: 'ADMIN'
   },
+
+  /** Franchise brokerage charge per crore turnover (set by parent admin/broker/sub-broker). */
+  franchiseChargePerCrore: {
+    type: Number,
+    default: 0,
+  },
   
   // Hierarchy path - array of all ancestor admin IDs (for efficient queries)
   // e.g., [superAdminId, adminId, brokerId] for a user created by broker
@@ -331,7 +337,11 @@ const userSchema = new mongoose.Schema({
     lastUpdatedAt: {
       type: Date,
       default: Date.now
-    }
+    },
+    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    ledgerReferenceBalance: { type: Number, default: 0 },
+    ledgerAutosquareActive: { type: Boolean, default: false },
+    ledgerAutosquaredAt: { type: Date, default: null },
   },
 
   // Synthetic forex wallet (INR) — same economics pattern as cryptoWallet
@@ -350,7 +360,11 @@ const userSchema = new mongoose.Schema({
     realizedPnL: { type: Number, default: 0 },
     unrealizedPnL: { type: Number, default: 0 },
     todayRealizedPnL: { type: Number, default: 0 },
-    lastUpdatedAt: { type: Date, default: Date.now }
+    lastUpdatedAt: { type: Date, default: Date.now },
+    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    ledgerReferenceBalance: { type: Number, default: 0 },
+    ledgerAutosquareActive: { type: Boolean, default: false },
+    ledgerAutosquaredAt: { type: Date, default: null },
   },
   
   // Delivery Pledge - Margin from delivery (CNC) trades
@@ -469,7 +483,11 @@ const userSchema = new mongoose.Schema({
     lastUpdatedAt: {
       type: Date,
       default: Date.now
-    }
+    },
+    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    ledgerReferenceBalance: { type: Number, default: 0 },
+    ledgerAutosquareActive: { type: Boolean, default: false },
+    ledgerAutosquaredAt: { type: Date, default: null },
   },
 
   // NSE & BSE only — cash for NSE/BSE/NFO equity & derivatives (not main deposit wallet)

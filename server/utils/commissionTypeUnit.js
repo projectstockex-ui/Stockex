@@ -102,16 +102,100 @@ export function sanitizeSegmentExplicitKeysForSave(raw) {
   return out;
 }
 
-/** Align every segment slice in a defaults map (plain object). */
+/** PER_CRORE / PER_TRADE use `commission`; PER_LOT / PER_QUANTITY use `commissionLot`. Keep both in sync — 0 is valid. */
+export function syncSegmentCommissionFields(segData) {
+  if (!segData || typeof segData !== 'object') return segData;
+  const type = segData.commissionType;
+  const hasLot = Object.prototype.hasOwnProperty.call(segData, 'commissionLot');
+  const hasComm = Object.prototype.hasOwnProperty.call(segData, 'commission');
+
+  const readNum = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
+  };
+
+  if (type === 'PER_CRORE' || type === 'PER_TRADE') {
+    // UI edits `commission` for these types — prefer it over stale `commissionLot`.
+    if (hasComm) {
+      const n = readNum(segData.commission);
+      segData.commission = n;
+      segData.commissionLot = n;
+    } else if (hasLot) {
+      const n = readNum(segData.commissionLot);
+      segData.commission = n;
+      segData.commissionLot = n;
+    }
+  } else if (type === 'PER_LOT' || type === 'PER_QUANTITY') {
+    if (hasLot) {
+      const n = readNum(segData.commissionLot);
+      segData.commissionLot = n;
+      segData.commission = n;
+    } else if (hasComm) {
+      const n = readNum(segData.commission);
+      segData.commission = n;
+      segData.commissionLot = n;
+    }
+  }
+  return segData;
+}
+
+export function syncSegmentCommissionMap(plain) {
+  if (!plain || typeof plain !== 'object') return plain;
+  for (const segData of Object.values(plain)) {
+    syncSegmentCommissionFields(segData);
+  }
+  return plain;
+}
+
+/** True when explicit keys list includes brokerage fields (user/admin intentionally set them). */
+export function explicitKeysTouchCommission(explicitKeysMaybe) {
+  return (
+    Array.isArray(explicitKeysMaybe) &&
+    (explicitKeysMaybe.includes('commission') ||
+      explicitKeysMaybe.includes('commissionLot') ||
+      explicitKeysMaybe.includes('commissionType'))
+  );
+}
+
+/**
+ * Walk segment map and sync commission fields before persistence.
+ */
 export function alignSegmentDefaultsMap(segmentDefaults) {
   if (!segmentDefaults || typeof segmentDefaults !== 'object') return segmentDefaults;
   const out = { ...segmentDefaults };
   for (const k of Object.keys(out)) {
     if (out[k] && typeof out[k] === 'object') {
-      out[k] = withAlignedSegmentCommissionUnit(normalizeLegacySystemSegmentDefaultsSlice(k, out[k]));
+      out[k] = syncSegmentCommissionFields(
+        withAlignedSegmentCommissionUnit(normalizeLegacySystemSegmentDefaultsSlice(k, out[k]))
+      );
     }
   }
   return out;
+}
+
+const SESSION_TIMING_KEYS = [
+  'cryptoStartTime',
+  'cryptoClosingTime',
+  'mcxStartTime',
+  'mcxClosingTime',
+  'startTime',
+  'closingTime',
+];
+
+/** alignSegmentDefaultsMap + re-apply session timing fields from raw payload (never drop on save). */
+export function alignSegmentDefaultsMapPreservingSessionTiming(plain) {
+  const aligned = alignSegmentDefaultsMap(plain);
+  if (!plain || typeof plain !== 'object') return aligned;
+  for (const [segName, segData] of Object.entries(plain)) {
+    if (!segData || typeof segData !== 'object') continue;
+    for (const tk of SESSION_TIMING_KEYS) {
+      if (segData[tk] !== undefined) {
+        aligned[segName] = aligned[segName] || {};
+        aligned[segName][tk] = segData[tk];
+      }
+    }
+  }
+  return aligned;
 }
 
 /**

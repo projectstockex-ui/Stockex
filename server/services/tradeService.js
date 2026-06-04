@@ -15,25 +15,45 @@ import {
   adminReceivesHierarchyBrokerage,
   resolveHierarchyBrokerageRecipient,
 } from '../utils/adminBrokerageEligibility.js';
-import { resolvePattiSplitForTrade, splitByChildPercent } from './pattiTradeSettlement.js';
+import {
+  resolvePattiCascadeCredits,
+  resolvePattiAdminSaBrokerageContext,
+  splitByChildPercent,
+  roundMoney,
+} from './pattiTradeSettlement.js';
 import { 
   trackHierarchyEarnings 
 } from './superAdminEarningsService.js';
 import brokerageHierarchySharingService from './brokerageHierarchySharingService.js';
 import { resolveSegmentCommissionType } from '../utils/segmentCommissionType.js';
-
-/**
- * Checks if any admin in the hierarchy chain is marked as a franchise root.
- * Returns the franchise root admin if found, null otherwise.
- */
-function findFranchiseRootInChain(hierarchyChain) {
-  for (const { admin } of hierarchyChain) {
-    if (admin.isFranchiseRoot === true) {
-      return admin;
-    }
-  }
-  return null;
-}
+import { explicitKeysTouchCommission } from '../utils/commissionTypeUnit.js';
+import { resolveContractLotSize } from '../utils/lotSizeResolver.js';
+import {
+  resolveFranchiseTradingContext,
+  computeFranchiseUserOneWayBrokerage,
+  buildFranchiseAdminInrLevels,
+  computeFranchiseCascadeShares,
+  sumFranchiseCascadeCredits,
+  resolveFranchiseLegMultiplier,
+  computeFranchiseUserTotalBrokerage,
+  getUserFranchiseRatePerCrore,
+  findFranchiseRootInChain,
+  perCroreRateToInr,
+  refreshFranchiseHierarchyChain,
+  splitFranchiseBookPnL,
+  resolveUserDirectAdmin,
+  resolveBrokerageCascadeStartAdmin,
+  resolveSuperAdminAdmin,
+  ensureSuperAdminInChain,
+  buildAdminHierarchyChain,
+} from '../utils/franchiseBrokerage.js';
+import { isAdminInActivePattiSubtree } from '../utils/pattiSubtree.js';
+import { chainHasDownlinePattiEdges } from '../utils/pattiHierarchy.js';
+import {
+  buildMlmAdminInrLevels,
+  computeMlmLevelShareAmount,
+  resolveMlmChainCommissionMeta,
+} from '../utils/mlmBrokerage.js';
 
 class TradeService {
   
@@ -302,7 +322,12 @@ class TradeService {
       return notionalValue; // Full amount for delivery
     }
 
-    const margin = notionalValue / leverage;
+    const lev = Number(leverage);
+    const levSafe = Number.isFinite(lev) && lev > 0 ? lev : 1;
+    // Leverage semantics:
+    // - lev >= 1  => classic X leverage (margin = notional / lev)
+    // - 0 < lev < 1 => margin rate (e.g. 0.04 means 4% margin = notional * 0.04)
+    const margin = levSafe >= 1 ? (notionalValue / levSafe) : (notionalValue * levSafe);
     console.log(`[calculateMargin] calculated margin: ${margin}`);
     return margin;
   }
@@ -449,7 +474,7 @@ class TradeService {
     for (const v of candidates) {
       if (v == null) continue;
       const n = Number(v);
-      if (!Number.isFinite(n) || n <= 1) continue;
+      if (!Number.isFinite(n) || n <= 0) continue;
       if (optLev != null && n === Number(optLev)) {
         exposure = n;
         break;
@@ -462,7 +487,7 @@ class TradeService {
       const qtyLev = isIntraday
         ? ss.quantityModeSettings.intradayLeverage
         : ss.quantityModeSettings.carryForwardLeverage;
-      if (Number(qtyLev) > 1) exposure = Number(qtyLev);
+      if (Number(qtyLev) > 0) exposure = Number(qtyLev);
     }
 
     return exposure;
@@ -478,13 +503,9 @@ class TradeService {
     );
   }
 
-  /** Exchange contract lot (e.g. NIFTY 25) — not the qty-mode trading unit of 1. */
+  /** Exchange contract lot (e.g. CRUDEOIL 100, NIFTY 25) — not a placeholder 1 from sync. */
   static getContractLotSize(instrument, orderData) {
-    const segU = String(orderData?.segment || '').toUpperCase();
-    if (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT') return 1;
-    if (instrument?.lotSize > 0) return Number(instrument.lotSize);
-    if (orderData?.lotSize > 0) return Number(orderData.lotSize);
-    return 1;
+    return resolveContractLotSize(instrument, orderData);
   }
 
   /** Map trade segment + instrument type → Hierarchy / Default-settings segment key. */
@@ -551,7 +572,7 @@ class TradeService {
 
   static _sliceFromHierarchy(user, segmentKey, segmentOriginal) {
     let parentSegmentPerms = user.parentSegmentPermissions || user.admin?.segmentPermissions;
-    console.log(`[_sliceFromHierarchy] segmentKey: ${segmentKey}, parentSegmentPerms:`, parentSegmentPerms ? 'exists' : 'null');
+    parentSegmentPerms = TradeService._segmentMapPlain(parentSegmentPerms);
     if (parentSegmentPerms && typeof parentSegmentPerms.toObject === 'function') {
       parentSegmentPerms = parentSegmentPerms.toObject();
     }
@@ -613,6 +634,9 @@ static _SEGMENT_MERGE_FALLBACK = {
   cryptoSpreadUsdPerSide: 0,
   cryptoStartTime: '',
   cryptoClosingTime: '',
+  mcxStartTime: '',
+  mcxClosingTime: '',
+  closingTime: '',
   cryptoReferenceSymbol: '',
   cryptoPricePerLotInr: 0,
   cryptoLotSizeLots: 1,
@@ -698,7 +722,12 @@ static _SEGMENT_MERGE_FALLBACK = {
       for (const k of keysToVisit) {
         if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
         const vv = o[k];
-        if (k === 'cryptoStartTime' || k === 'cryptoClosingTime') {
+        if (
+          k === 'cryptoStartTime' ||
+          k === 'cryptoClosingTime' ||
+          k === 'mcxStartTime' ||
+          k === 'mcxClosingTime'
+        ) {
           console.log(`[_mergeSegmentStack] Processing ${k}:`, vv, 'type:', typeof vv);
           // Don't overwrite with empty strings - keep existing value from hierarchy
           if (vv === '' || vv === undefined || vv === null) {
@@ -757,13 +786,39 @@ static _SEGMENT_MERGE_FALLBACK = {
       systemSlicePlain?.commissionType
     );
     if (commType) m.commissionType = commType;
+
+    const userCommissionExplicit = explicitKeysTouchCommission(userExplicitKeysMaybe);
+    const hierCommissionExplicit = explicitKeysTouchCommission(hierExplicitKeysMaybe);
+    const userSetCommission =
+      userPlain && Object.prototype.hasOwnProperty.call(userPlain, 'commission');
+    const hierSetCommission =
+      hierPlain && Object.prototype.hasOwnProperty.call(hierPlain, 'commission');
+    const userSetCommissionLot =
+      userPlain && Object.prototype.hasOwnProperty.call(userPlain, 'commissionLot');
+    const hierSetCommissionLot =
+      hierPlain && Object.prototype.hasOwnProperty.call(hierPlain, 'commissionLot');
+
     if (commType === 'PER_CRORE' || commType === 'PER_TRADE') {
-      if (m.commission === 0 && hierPlain?.commission > 0) {
+      if (
+        !userCommissionExplicit &&
+        !hierCommissionExplicit &&
+        !userSetCommission &&
+        !hierSetCommission &&
+        (m.commission == null || m.commission === undefined) &&
+        hierPlain?.commission > 0
+      ) {
         m.commission = hierPlain.commission;
         console.log('[_mergeSegmentStack] Inherited admin commission:', m.commission, 'for type:', commType);
       }
-    } else if (commType === 'PER_LOT') {
-      if (m.commissionLot === 0 && hierPlain?.commissionLot > 0) {
+    } else if (commType === 'PER_LOT' || commType === 'PER_QUANTITY') {
+      if (
+        !userCommissionExplicit &&
+        !hierCommissionExplicit &&
+        !userSetCommissionLot &&
+        !hierSetCommissionLot &&
+        (m.commissionLot == null || m.commissionLot === undefined) &&
+        hierPlain?.commissionLot > 0
+      ) {
         m.commissionLot = hierPlain.commissionLot;
         console.log('[_mergeSegmentStack] Inherited admin commissionLot:', m.commissionLot, 'for type:', commType);
       }
@@ -810,7 +865,10 @@ static _SEGMENT_MERGE_FALLBACK = {
 
     // Fallback: if result is empty or disabled, ensure SystemSettings defaults are applied
     // This is the proper dynamic fallback (not hardcoded values)
-    if (!result || (!result.enabled && !result.commission && !result.commissionLot)) {
+    const hasBrokerage =
+      (result?.commission != null && result.commission !== '') ||
+      (result?.commissionLot != null && result.commissionLot !== '');
+    if (!result || (!result.enabled && !hasBrokerage)) {
       if (systemSlicePlain) {
         result = { ...systemSlicePlain, ...result };
         console.log('[getUserSegmentSettings] Using SystemSettings defaults as fallback for segment:', segmentKey, 'systemSlicePlain:', systemSlicePlain);
@@ -830,23 +888,70 @@ static _SEGMENT_MERGE_FALLBACK = {
       console.log(`[getUserSegmentSettings] Crypto timing override from SystemSettings CRYPTOFUT: start=${sysStart}, close=${sysClose}`);
     }
 
-    // Inherit commission fields from SystemSettings when hierarchy/user left them empty
+    // MCX: always inherit session timing from parent admin MCXFUT (Ram → users), not blocked by segmentExplicitKeys
+    const segUpper = String(segmentKey || '').toUpperCase();
+    if (segUpper === 'MCXFUT' || segUpper === 'MCXOPT' || segUpper === 'MCX') {
+      const mcxFutSystem = TradeService._normalizeSegmentSlice(adm.MCXFUT || adm.MCX);
+      const hierMcx =
+        TradeService._sliceFromHierarchy(user, 'MCXFUT', segment) ||
+        TradeService._sliceFromHierarchy(user, 'MCX', segment);
+      let start = String(
+        hierMcx?.mcxStartTime ||
+          hierMcx?.startTime ||
+          mcxFutSystem?.mcxStartTime ||
+          mcxFutSystem?.startTime ||
+          ''
+      ).trim();
+      let close = String(
+        hierMcx?.mcxClosingTime ||
+          hierMcx?.closingTime ||
+          mcxFutSystem?.mcxClosingTime ||
+          mcxFutSystem?.closingTime ||
+          ''
+      ).trim();
+
+      if (!start || !close) {
+        const { resolveMcxTimingFromAdminChain } = await import('../utils/mcxSessionTiming.js');
+        const chainTiming = await resolveMcxTimingFromAdminChain(user);
+        if (!start) start = chainTiming.mcxStartTime || '';
+        if (!close) close = chainTiming.mcxClosingTime || '';
+      }
+
+      if (start) result.mcxStartTime = start;
+      if (close) {
+        result.mcxClosingTime = close;
+        if (!String(result.closingTime || '').trim()) result.closingTime = close;
+      }
+      console.log(
+        `[getUserSegmentSettings] MCX timing for ${segmentKey}: start=${start}, close=${close} (parent admin slice)`
+      );
+    }
+
+    // Inherit commission from SystemSettings only when user/admin did not explicitly set brokerage
     if (result && systemSlicePlain) {
       const commType = resolveSegmentCommissionType(
         result.commissionType,
         systemSlicePlain.commissionType
       );
       if (commType && !result.commissionType) result.commissionType = commType;
+
+      const userCommissionExplicit = explicitKeysTouchCommission(userExplicitArr);
+      const hierCommissionExplicit = explicitKeysTouchCommission(hierExplicitArr);
+
       if (
         (commType === 'PER_CRORE' || commType === 'PER_TRADE') &&
-        !result.commission &&
+        !userCommissionExplicit &&
+        !hierCommissionExplicit &&
+        (result.commission == null || result.commission === undefined) &&
         systemSlicePlain.commission > 0
       ) {
         result.commission = systemSlicePlain.commission;
       }
       if (
         (commType === 'PER_LOT' || commType === 'PER_QUANTITY' || !commType) &&
-        !result.commissionLot &&
+        !userCommissionExplicit &&
+        !hierCommissionExplicit &&
+        (result.commissionLot == null || result.commissionLot === undefined) &&
         systemSlicePlain.commissionLot > 0
       ) {
         result.commissionLot = systemSlicePlain.commissionLot;
@@ -1073,6 +1178,22 @@ static _SEGMENT_MERGE_FALLBACK = {
     const ptOn = !!ch.perTradeEnabled;
     const plOn = !!ch.perLotEnabled;
     const pcOn = !!ch.perCroreEnabled;
+    const anyToggleOn = ptOn || plOn || pcOn;
+    const hasPositiveConfiguredValue =
+      (Number.isFinite(pt) && pt > 0) ||
+      (Number.isFinite(pl) && pl > 0) ||
+      (Number.isFinite(pc) && pc > 0);
+
+    // Safety fallback:
+    // Some instrument rows carry numeric charge values but toggles are false/absent due to old UI saves.
+    // In that case, treat as legacy numeric config instead of silently returning 0.
+    if (!legacyMode && !anyToggleOn && hasPositiveConfiguredValue) {
+      let add = 0;
+      if (Number.isFinite(pt) && pt > 0) add += pt;
+      if (Number.isFinite(pl) && pl > 0) add += pl * nLots;
+      if (Number.isFinite(pc) && pc > 0 && T > 0) add += (T / 10_000_000) * pc;
+      return Math.round(add * 100) / 100;
+    }
 
     if (explicitLineUnits) {
       const ptU = ch.perTradeUnit === 'PERCENT' ? 'PERCENT' : 'INR';
@@ -1101,8 +1222,31 @@ static _SEGMENT_MERGE_FALLBACK = {
     return Math.round(add * 100) / 100;
   }
   
+  /** Turnover for PER_CRORE brokerage (price × qty). */
+  static tradeTurnoverForBrokerage(tradeData, lots) {
+    const price = Number(tradeData.price || tradeData.entryPrice) || 0;
+    const lotSize = Math.max(1, Number(tradeData.lotSize) || 1);
+    const orderQty =
+      tradeData.quantity != null && Number.isFinite(Number(tradeData.quantity)) && Number(tradeData.quantity) > 0
+        ? Number(tradeData.quantity)
+        : Math.max(0, Number(lots) || 0) * lotSize;
+    return price * orderQty;
+  }
+
   // Calculate brokerage based on user settings with caps enforcement
   static async calculateUserBrokerage(segmentSettings, scriptSettings, tradeData, lots, brokerageCaps = null) {
+    const franchiseRatePerCrore = Number(tradeData.franchiseRatePerCrore);
+    if (franchiseRatePerCrore > 0) {
+      const turnover = TradeService.tradeTurnoverForBrokerage(tradeData, lots);
+      const inr = perCroreRateToInr(franchiseRatePerCrore, turnover);
+      console.log('[calculateUserBrokerage] Franchise override PER_CRORE:', {
+        franchiseRatePerCrore,
+        turnover,
+        inr,
+      });
+      return inr;
+    }
+
     console.log('[calculateUserBrokerage] Raw tradeData:', {
       segment: tradeData.segment,
       exchange: tradeData.exchange,
@@ -1139,8 +1283,11 @@ static _SEGMENT_MERGE_FALLBACK = {
       brokerageCaps: brokerageCaps
     });
 
+    let hasBrokerageSetting =
+      (segmentSettings?.commission != null && segmentSettings.commission !== '') ||
+      (segmentSettings?.commissionLot != null && segmentSettings.commissionLot !== '');
     // Fallback: if segmentSettings is empty or has no commission, try SystemSettings
-    if (!segmentSettings || (!segmentSettings.enabled && !segmentSettings.commission && !segmentSettings.commissionLot)) {
+    if (!segmentSettings || (!segmentSettings.enabled && !hasBrokerageSetting)) {
       const sysRaw = await SystemSettings.getSettings();
       const admDefaults = TradeService._segmentMapPlain(sysRaw?.adminSegmentDefaults);
       const segmentKey = TradeService.resolveMarketWatchSegmentKey(tradeData.segment, tradeData.instrumentType);
@@ -1148,19 +1295,10 @@ static _SEGMENT_MERGE_FALLBACK = {
       if (sysSlice) {
         segmentSettings = { ...sysSlice, ...segmentSettings };
         console.log('[calculateUserBrokerage] Using SystemSettings defaults for segment:', segmentKey, 'sysSlice:', sysSlice);
+        hasBrokerageSetting =
+          (segmentSettings?.commission != null && segmentSettings.commission !== '') ||
+          (segmentSettings?.commissionLot != null && segmentSettings.commissionLot !== '');
       }
-    }
-
-    // Final fallback: if still no commission, use sensible defaults for crypto segments
-    const isCrypto = tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
-      ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(tradeData.segment || '').toUpperCase());
-    if (isCrypto && (!segmentSettings?.commission && !segmentSettings?.commissionLot)) {
-      console.log('[calculateUserBrokerage] Using final fallback defaults for crypto segment');
-      segmentSettings = segmentSettings || {};
-      segmentSettings.enabled = true;
-      segmentSettings.commission = 2000;
-      segmentSettings.commissionType = 'PER_CRORE';
-      segmentSettings.commissionUnit = null;
     }
 
     let brokerage = 0;
@@ -1197,35 +1335,46 @@ static _SEGMENT_MERGE_FALLBACK = {
       return commission * exchangeLots;
     };
     
-    // First check script-specific settings
-    if (scriptSettings?.brokerage) {
-      commissionType = 'PER_LOT'; // Script settings are per lot
+    // First check script-specific settings (only when explicitly > 0), else fall back to segment settings.
+    const scriptBr = scriptSettings?.brokerage;
+    let scriptLegBrokerage = 0;
+    if (scriptBr) {
       if (isOptionBuy) {
-        brokerage = isIntraday ? scriptSettings.brokerage.optionBuyIntraday : scriptSettings.brokerage.optionBuyCarry;
+        scriptLegBrokerage = Number(isIntraday ? scriptBr.optionBuyIntraday : scriptBr.optionBuyCarry) || 0;
       } else if (isOptionSell) {
-        brokerage = isIntraday ? scriptSettings.brokerage.optionSellIntraday : scriptSettings.brokerage.optionSellCarry;
+        scriptLegBrokerage = Number(isIntraday ? scriptBr.optionSellIntraday : scriptBr.optionSellCarry) || 0;
       } else {
-        brokerage = isIntraday ? scriptSettings.brokerage.intradayFuture : scriptSettings.brokerage.carryFuture;
+        scriptLegBrokerage = Number(isIntraday ? scriptBr.intradayFuture : scriptBr.carryFuture) || 0;
       }
-      brokerage = brokerage * exchangeLots;
+    }
+    if (scriptLegBrokerage > 0) {
+      commissionType = 'PER_LOT'; // Script settings are per lot
+      brokerage = scriptLegBrokerage * exchangeLots;
     } else {
       // Fall back to segment settings
       if (isOptionBuy && segmentSettings?.optionBuy) {
         const ob = segmentSettings.optionBuy;
         const commType = ob.commissionType || 'PER_LOT';
-        const commission = ob.commission || 0;
+        const commission =
+          commType === 'PER_CRORE' || commType === 'PER_TRADE'
+            ? Number(ob.commission ?? ob.commissionLot ?? 0)
+            : Number(ob.commissionLot ?? ob.commission ?? 0);
         brokerage = calcBrokerage(commType, commission);
       } else if (isOptionSell && segmentSettings?.optionSell) {
         const os = segmentSettings.optionSell;
         const commType = os.commissionType || 'PER_LOT';
-        const commission = os.commission || 0;
+        const commission =
+          commType === 'PER_CRORE' || commType === 'PER_TRADE'
+            ? Number(os.commission ?? os.commissionLot ?? 0)
+            : Number(os.commissionLot ?? os.commission ?? 0);
         brokerage = calcBrokerage(commType, commission);
       } else {
         const commType = segmentSettings?.commissionType || 'PER_LOT';
         // Use commission field for PER_CRORE, commissionLot for PER_LOT/PER_QUANTITY/PER_TRADE
-        const commission = commType === 'PER_CRORE' 
-          ? (segmentSettings?.commission || 0)
-          : (segmentSettings?.commissionLot || 0);
+        const commission =
+          commType === 'PER_CRORE' || commType === 'PER_TRADE'
+            ? Number(segmentSettings?.commission ?? segmentSettings?.commissionLot ?? 0)
+            : Number(segmentSettings?.commissionLot ?? segmentSettings?.commission ?? 0);
         brokerage = calcBrokerage(commType, commission);
       }
     }
@@ -1244,21 +1393,6 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
     }
 
-    // Defensive: ensure crypto segments always have brokerage (regardless of enabled flag)
-    if (isCrypto && brokerage === 0) {
-      console.log('[calculateUserBrokerage] Crypto brokerage is 0, forcing calculation with defaults');
-      const fallbackCommType = segmentSettings?.commissionType || 'PER_CRORE';
-      const fallbackComm = segmentSettings?.commission || 2000;
-      if (fallbackCommType === 'PER_CRORE') {
-        brokerage = (turnover / ONE_CRORE) * fallbackComm;
-        commissionType = 'PER_CRORE';
-      } else {
-        brokerage = fallbackComm * exchangeLots;
-        commissionType = 'PER_LOT';
-      }
-      console.log('[calculateUserBrokerage] Forced brokerage:', brokerage, 'commissionType:', commissionType);
-    }
-
     console.log('[calculateUserBrokerage] Output:', {
       finalBrokerage: brokerage,
       commissionType: commissionType,
@@ -1269,19 +1403,14 @@ static _SEGMENT_MERGE_FALLBACK = {
     return brokerage;
   }
   
-  // Calculate spread based on user settings
-  static calculateUserSpread(scriptSettings, side) {
-    if (!scriptSettings?.spread) return 0;
-    return side === 'BUY' ? (scriptSettings.spread.buy || 0) : (scriptSettings.spread.sell || 0);
+  /** Spread disabled platform-wide — entry/exit use raw bid/ask only. */
+  static calculateUserSpread(_scriptSettings, _side) {
+    return 0;
   }
 
-  /** USDT adjustment per side on client USD spot quotes: USD field wins, else half of INR total width converted to USD. */
-  static segmentCryptoSpreadHalfUsd(segmentSettings) {
-    const usdSide = Number(segmentSettings?.cryptoSpreadUsdPerSide);
-    if (Number.isFinite(usdSide) && usdSide > 0) return usdSide;
-    const w = Number(segmentSettings?.cryptoSpreadInr);
-    if (!Number.isFinite(w) || w <= 0) return 0;
-    return (w / 2);
+  /** Spread disabled platform-wide — no crypto/forex quote widening. */
+  static segmentCryptoSpreadHalfUsd(_segmentSettings) {
+    return 0;
   }
 
   /**
@@ -1485,10 +1614,8 @@ static _SEGMENT_MERGE_FALLBACK = {
             exposureNum = n;
             break;
           }
-          if (n > 1) {
-            exposureNum = n;
-            break;
-          }
+          exposureNum = n;
+          break;
         }
       }
 
@@ -1505,37 +1632,26 @@ static _SEGMENT_MERGE_FALLBACK = {
         marginRequiredBefore: tradeData.entryPrice * tradeData.quantity / leverage
       });
 
-      // Force apply quantityModeSettings leverage if set and > 1
+      // Force apply quantityModeSettings leverage if set and > 0
       if (exposureNum === 1 && segmentSettingsForMargin?.quantityModeSettings) {
         const qtyLeverage = isIntraday 
           ? segmentSettingsForMargin.quantityModeSettings.intradayLeverage
           : segmentSettingsForMargin.quantityModeSettings.carryForwardLeverage;
-        if (qtyLeverage && Number(qtyLeverage) > 1) {
+        if (qtyLeverage && Number(qtyLeverage) > 0) {
           exposureNum = Number(qtyLeverage);
           console.log('[OrderPlacement] Forcing quantityModeSettings leverage:', exposureNum);
         }
       }
 
-      if (exposureNum > 1) {
+      if (exposureNum > 0) {
         leverage = exposureNum;
         console.log('[OrderPlacement] Leverage after segment_exposure:', leverage);
       }
     }
 
-    // 7. Calculate lot size - fetch from database if not provided
-    let lotSize = tradeData.lotSize;
-    if (!lotSize || lotSize <= 0) {
-      try {
-        lotSize =
-          instrumentDoc?.lotSize > 0
-            ? instrumentDoc.lotSize
-            : 1;
-        if (lotSize <= 0) lotSize = 1;
-      } catch (error) {
-        console.error('Error fetching lot size:', error.message);
-        lotSize = 1;
-      }
-    }
+    // 7. Contract lot size (DB + symbol fallback for MCX/NSE F&O)
+    let lotSize = TradeService.getContractLotSize(instrumentDoc, tradeData);
+    if (!lotSize || lotSize <= 0) lotSize = 1;
     const segU = String(tradeData.segment || '').toUpperCase();
     const segCryptoLot = !isBinanceCryptoOrder(tradeData)
       ? this.segmentCryptoLotSizePerUnitLot(segmentSettings)
@@ -1549,13 +1665,23 @@ static _SEGMENT_MERGE_FALLBACK = {
     if (isBinanceCryptoOrder(tradeData) && instrumentDoc?.lotSize > 0) {
       lotSize = instrumentDoc.lotSize;
     }
-    const qty = Number(tradeData.quantity) || 0;
+    const isOptionInstrument = tradeData.instrumentType === 'OPTIONS';
     let lots =
       tradeData.lots != null && tradeData.lots !== '' && Number.isFinite(Number(tradeData.lots))
         ? Number(tradeData.lots)
-        : lotSize > 0
-          ? (orderIsUsdSpot(tradeData) ? qty / lotSize : Math.ceil(qty / lotSize))
+        : null;
+    if (isOptionInstrument && lots != null && lots > 0 && lotSize > 0) {
+      tradeData.quantity = lots * lotSize;
+    }
+    const qty = Number(tradeData.quantity) || 0;
+    if (lots == null) {
+      lots =
+        lotSize > 0
+          ? orderIsUsdSpot(tradeData)
+            ? qty / lotSize
+            : Math.ceil(qty / lotSize)
           : 1;
+    }
     
     // Prefer quantityModeSettings for all exchanges when set
     const qtyModeSettings = segmentSettings?.quantityModeSettings;
@@ -1619,25 +1745,18 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
     }
     
-    // 8. Calculate spread from user settings (script + optional crypto USD spot segment markup)
-    const spreadScript = this.calculateUserSpread(scriptSettings, tradeData.side);
-    const spreadSegUsd =
-      (isCrypto || isForex) && Number.isFinite(tradeData.entryPrice)
-        ? this.segmentCryptoSpreadHalfUsd(segmentSettings)
-        : 0;
-    const spread = spreadScript + spreadSegUsd;
-
-    let effectiveEntryPrice = tradeData.entryPrice;
-    if (spread > 0) {
-      if (tradeData.side === 'BUY') {
-        effectiveEntryPrice = tradeData.entryPrice + spread;
-      } else {
-        effectiveEntryPrice = tradeData.entryPrice - spread;
-      }
-    }
-    
+    // Spread disabled — use raw entry price (bid/ask from market).
+    const spread = 0;
+    const effectiveEntryPrice = tradeData.entryPrice;
     // 9. Calculate brokerage from user settings with caps from admin + instrument flat charges
-    const marginPrice = effectiveEntryPrice;
+    // BUY option => premium-based margin price, SELL option => strike-based margin price.
+    const strikeForMargin = Number(tradeData.strikePrice ?? instrumentDoc?.strike ?? instrumentDoc?.strikePrice);
+    const isStrikeBasedOptionSell =
+      tradeData.instrumentType === 'OPTIONS' &&
+      String(tradeData.side || '').toUpperCase() === 'SELL' &&
+      Number.isFinite(strikeForMargin) &&
+      strikeForMargin > 0;
+    const marginPrice = isStrikeBasedOptionSell ? strikeForMargin : effectiveEntryPrice;
     const tradeValueInrOpen = marginPrice * (tradeData.quantity || 0);
     const baseBrokerage = await this.calculateUserBrokerage(
       segmentSettings,
@@ -1689,73 +1808,67 @@ static _SEGMENT_MERGE_FALLBACK = {
 
     console.log(`[TradeService.createTrade] Final requiredMargin: ${requiredMargin}`);
 
-    const userSegmentSettingsForBrk = await this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
     const turnoverForBrk = marginPrice * (tradeData.quantity || 0);
-    const ONE_CRORE_BRK = 10_000_000;
+    const franchiseCtx = await resolveFranchiseTradingContext(user, admin);
+    const userFranchiseRate = getUserFranchiseRatePerCrore(user);
     let pureBrokerage = 0;
-    if (userSegmentSettingsForBrk.commissionType === 'PER_CRORE') {
-      const commValue = userSegmentSettingsForBrk.commission || userSegmentSettingsForBrk.commissionLot || 0;
-      pureBrokerage = (turnoverForBrk / ONE_CRORE_BRK) * commValue * 2;
-    } else if (userSegmentSettingsForBrk.commissionType === 'PER_LOT') {
-      const commValue = userSegmentSettingsForBrk.commissionLot || userSegmentSettingsForBrk.commission || 0;
-      pureBrokerage = commValue * (tradeData.lots || lots) * 2;
-    } else if (userSegmentSettingsForBrk.commissionType === 'PER_TRADE') {
-      pureBrokerage = (userSegmentSettingsForBrk.commission || 0) * 2;
-    }
-    pureBrokerage = Math.round(pureBrokerage * 100) / 100;
-    const roundTripBrokerage =
-      pureBrokerage > 0 ? pureBrokerage : Math.round(brokerage * 2 * 100) / 100;
-
-    // 11. Validate margin + brokerage headroom on segment wallets
-    if (isMcx) {
-      const bal = user.mcxWallet?.balance || 0;
-      const um = user.mcxWallet?.usedMargin || 0;
-      const free = bal - um;
-      const need = requiredMargin + roundTripBrokerage;
-      if (need > free) {
-        throw new Error(
-          `Insufficient margin in MCX Account. Required: ${need.toFixed(2)} ` +
-            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
-        );
-      }
-    } else if (isCrypto) {
-      const bal = user.cryptoWallet?.balance || 0;
-      const um = user.cryptoWallet?.usedMargin || 0;
-      const free = bal - um;
-      const need = requiredMargin + roundTripBrokerage;
-      if (need > free) {
-        throw new Error(
-          `Insufficient margin in Crypto Account. Required: ${need.toFixed(2)} ` +
-            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
-        );
-      }
-    } else if (isForex) {
-      const bal = user.forexWallet?.balance || 0;
-      const um = user.forexWallet?.usedMargin || 0;
-      const free = bal - um;
-      const need = requiredMargin + roundTripBrokerage;
-      if (need > free) {
-        throw new Error(
-          `Insufficient margin in Forex Account. Required: ${need.toFixed(2)} ` +
-            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
-        );
-      }
+    if (franchiseCtx.active && userFranchiseRate > 0) {
+      pureBrokerage = computeFranchiseUserOneWayBrokerage(user, turnoverForBrk);
+      console.log('[TradeService.createTrade] Franchise brokerage (one-way):', {
+        userFranchiseRate,
+        turnoverForBrk,
+        pureBrokerage,
+        franchiseRoot: franchiseCtx.franchiseRoot?.name,
+      });
     } else {
-      const { getNseBseBalance, getNseBseUsedMargin } = await import('../utils/nseBseWallet.js');
-      const tb = getNseBseBalance(user);
-      const um = getNseBseUsedMargin(user);
-      const free = tb - um;
-      const need = requiredMargin + roundTripBrokerage;
-      if (need > free) {
-        throw new Error(
-          `Insufficient margin in NSE & BSE Wallet. Required: ${need.toFixed(2)} ` +
-            `(margin ${requiredMargin.toFixed(2)} + brokerage ${roundTripBrokerage.toFixed(2)}), Available: ${free.toFixed(2)}`
+      const userSegmentSettingsForBrk = await this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
+      const ONE_CRORE_BRK = 10_000_000;
+      if (userSegmentSettingsForBrk.commissionType === 'PER_CRORE') {
+        const commValue = Number(
+          userSegmentSettingsForBrk.commission ?? userSegmentSettingsForBrk.commissionLot ?? 0
         );
+        pureBrokerage = (turnoverForBrk / ONE_CRORE_BRK) * commValue;
+      } else if (userSegmentSettingsForBrk.commissionType === 'PER_LOT') {
+        const commValue = Number(
+          userSegmentSettingsForBrk.commissionLot ?? userSegmentSettingsForBrk.commission ?? 0
+        );
+        pureBrokerage = commValue * (tradeData.lots || lots);
+      } else if (userSegmentSettingsForBrk.commissionType === 'PER_TRADE') {
+        pureBrokerage = Number(userSegmentSettingsForBrk.commission ?? 0);
       }
+      pureBrokerage = Math.round(pureBrokerage * 100) / 100;
+    }
+    const isOptionContract = tradeData.instrumentType === 'OPTIONS';
+    const roundTripMultiplier = isOptionContract ? 1 : 2;
+    const openLegBrokerage = Math.round(
+      (pureBrokerage > 0 ? pureBrokerage : brokerage) * roundTripMultiplier * 100
+    ) / 100;
+
+    // 11. Validate margin + brokerage headroom (cash free + open MTM — matches dashboard)
+    const { computeOrderAvailableBalance } = await import('../utils/orderAvailableMargin.js');
+    const need = requiredMargin + openLegBrokerage;
+    let walletField = 'nseBseWallet';
+    let walletLabel = 'NSE & BSE Wallet';
+    if (isMcx) {
+      walletField = 'mcxWallet';
+      walletLabel = 'MCX Account';
+    } else if (isCrypto) {
+      walletField = 'cryptoWallet';
+      walletLabel = 'Crypto Account';
+    } else if (isForex) {
+      walletField = 'forexWallet';
+      walletLabel = 'Forex Account';
+    }
+    const available = await computeOrderAvailableBalance(userId, user, walletField);
+    if (need > available) {
+      throw new Error(
+        `Insufficient margin in ${walletLabel}. Required: ${need.toFixed(2)} ` +
+          `(margin ${requiredMargin.toFixed(2)} + brokerage ${openLegBrokerage.toFixed(2)}), Available: ${available.toFixed(2)}`
+      );
     }
 
-    // 12. Block margin + round-trip brokerage in usedMargin (wallet balance unchanged)
-    const marginInc = requiredMargin + roundTripBrokerage;
+    // 12. Block margin only in usedMargin; brokerage debited from balance on open via ledger
+    const marginInc = requiredMargin;
     if (isMcx) {
       await User.updateOne({ _id: userId }, { $inc: { 'mcxWallet.usedMargin': marginInc } });
     } else if (isCrypto) {
@@ -1805,200 +1918,207 @@ static _SEGMENT_MERGE_FALLBACK = {
         stt: 0,
         total: brokerage + (brokerage * 0.18)
       },
-      commission: roundTripBrokerage,
-      totalCharges: roundTripBrokerage,
-      brokeragePrepaidRoundTrip: true,
-      brokerageReservedInMargin: roundTripBrokerage > 0,
+      commission: openLegBrokerage,
+      totalCharges: openLegBrokerage,
+      brokeragePrepaidRoundTrip: !isOptionContract,
+      brokerageReservedInMargin: false,
       walletBrokerageDebited: false
     });
 
-    console.log('[TradeService] Pure brokerage for distribution:', roundTripBrokerage, 'user commission rate:', userSegmentSettingsForBrk.commission, userSegmentSettingsForBrk.commissionType);
-    console.log('[TradeService] Distribution check:', { admin: admin.name, adminRole: admin.role, userIsDemo: user.isDemo, userAdmin: user.admin });
-
-    // Process FULL brokerage distribution (open+close) on position OPEN
-    // Full round-trip brokerage is credited to hierarchy when position opens
-    console.log('[TradeService] Brokerage distribution check:', {
-      tradeId: trade._id,
-      brokerage: roundTripBrokerage,
-      admin: admin.name,
-      user: user.userId,
-      adminRole: admin.role
-    });
-    if (roundTripBrokerage > 0 && !user.isDemo) {
-      setTimeout(async () => {
-        try {
-          console.log('[TradeService] Calling distributeBrokerage for full round-trip:', trade._id, 'amount:', roundTripBrokerage);
-          await this.distributeBrokerage(trade, roundTripBrokerage, admin, user, 'OPEN+CLOSE');
-          console.log('[TradeService] Full brokerage distributed on trade open:', trade._id, roundTripBrokerage);
-        } catch (error) {
-          console.error('[TradeService] Error processing brokerage distribution on trade open:', error);
-        }
-      }, 1000); // 1 second delay to ensure trade is fully processed
-    } else {
-      console.log('[TradeService] Brokerage is 0, skipping distribution on trade open:', trade._id);
+    if (openLegBrokerage > 0 && trade.status === 'OPEN') {
+      try {
+        await this.recordUserBrokerageLedgerOnOpen(trade, user);
+      } catch (ledgerErr) {
+        console.error('[createTrade] recordUserBrokerageLedgerOnOpen:', ledgerErr?.message || ledgerErr);
+      }
     }
+
+    console.log('[TradeService] Open-leg brokerage for distribution:', openLegBrokerage, {
+      franchiseMode: franchiseCtx.active,
+      userFranchiseRate: userFranchiseRate || null,
+    });
+    // Brokerage distribution is handled by TradingService.placeOrder — avoid duplicate credits here.
 
     void import('./marginMonitorService.js').then((m) => m.invalidateMarginOpenTradesCache?.());
 
     return trade;
   }
   
-  // Close a trade
+  // Close a trade — unified wallet/ledger via TradingService (all segments).
   static async closeTrade(tradeId, exitPrice, reason = 'MANUAL') {
-    const trade = await Trade.findById(tradeId);
-    if (!trade) throw new Error('Trade not found');
-    if (trade.status !== 'OPEN') throw new Error('Trade is not open');
-    
-    // Get user and admin
-    const user = await User.findById(trade.user).populate('admin');
-    const admin = await Admin.findOne({ adminCode: trade.adminCode });
-    
-    // Calculate charges
-    trade.exitPrice = exitPrice;
-    const charges = await Charges.calculateCharges(trade, trade.adminCode, trade.user);
-    trade.charges = charges;
-    
-    // Close trade and calculate P&L
-    trade.closeTrade(exitPrice, reason);
-    
-    // Check if MCX trade - use MCX wallet
-    const isMcx = this.isMcxTrade(trade.segment, trade.exchange);
-    
-    // Release margin and book P&L - use updateOne to avoid validation issues
-    const isCrypto = trade.isCrypto || trade.exchange === 'BINANCE' ||
-      ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(trade.segment || '').toUpperCase());
-    const isForex = trade.isForex || trade.exchange === 'FOREX' ||
-      ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase());
+    const tradePeek = await Trade.findById(tradeId).select('status').lean();
+    if (!tradePeek) throw new Error('Trade not found');
+    if (tradePeek.status !== 'OPEN') throw new Error('Trade is not open');
 
-    const marginRelease = (trade.marginUsed || 0) +
-      (trade.brokerageReservedInMargin ? (Number(trade.commission) || 0) : 0);
+    const { default: TradingService } = await import('./tradingService.js');
+    return TradingService.closeTrade(tradeId, exitPrice, reason);
+  }
+  
+  /**
+   * Patti trading P&L share — wallet + trading P&L + ledger (parent SA or subtree ADMIN e.g. Radha).
+   * Brokerage patti uses creditBrokerageToAdmin instead.
+   */
+  static async recordPattiSaParentShare(adminRef, signedAmount, trade, user, options = {}) {
+    if (!adminRef || !Number.isFinite(signedAmount) || Math.abs(signedAmount) < 0.01) return;
 
-    if (isMcx) {
-      const walletPnl = trade.realizedPnL ?? trade.netPnL ?? 0;
-      const currentMcxBalance = user.mcxWallet?.balance || 0;
-      const newMcxBalance = currentMcxBalance + walletPnl;
-      await User.updateOne(
-        { _id: user._id },
-        { $inc: {
-          'mcxWallet.usedMargin': -marginRelease,
-          'mcxWallet.realizedPnL': walletPnl,
-          'mcxWallet.todayRealizedPnL': walletPnl
-        }, $set: {
-          'mcxWallet.balance': newMcxBalance
-        }}
-      );
-    } else if (isCrypto) {
-      const walletPnl = trade.realizedPnL ?? trade.netPnL ?? 0;
-      await User.updateOne(
-        { _id: user._id },
-        { $inc: {
-          'cryptoWallet.usedMargin': -marginRelease,
-          'cryptoWallet.balance': walletPnl,
-          'cryptoWallet.realizedPnL': walletPnl,
-          'cryptoWallet.todayRealizedPnL': walletPnl
-        }}
-      );
-    } else if (isForex) {
-      const walletPnl = trade.realizedPnL ?? trade.netPnL ?? 0;
-      await User.updateOne(
-        { _id: user._id },
-        { $inc: {
-          'forexWallet.usedMargin': -marginRelease,
-          'forexWallet.balance': walletPnl,
-          'forexWallet.realizedPnL': walletPnl,
-          'forexWallet.todayRealizedPnL': walletPnl
-        }}
-      );
-    } else {
-      const walletPnl = trade.brokeragePrepaidRoundTrip
-        ? (trade.realizedPnL ?? trade.netPnL ?? 0)
-        : (trade.netPnL ?? 0);
-      await User.updateOne(
-        { _id: user._id },
-        { $inc: {
-          'nseBseWallet.usedMargin': -marginRelease,
-          'wallet.blocked': -(trade.marginUsed || 0),
-          'nseBseWallet.balance': walletPnl,
-          'wallet.realizedPnL': walletPnl,
-          'wallet.todayRealizedPnL': walletPnl
-        }}
-      );
-    }
-    
-    await trade.save();
-    
-    // Create ledger entry for user - use correct wallet balance
-    let balanceAfter;
-    if (isMcx) {
-      balanceAfter = user.mcxWallet?.balance || 0;
-    } else if (isCrypto) {
-      balanceAfter = user.cryptoWallet?.balance || 0;
-    } else if (isForex) {
-      balanceAfter = user.forexWallet?.balance || 0;
-    } else {
-      const { getNseBseBalance: gnb } = await import('../utils/nseBseWallet.js');
-      balanceAfter = gnb(user);
+    const adminDoc = await Admin.findById(adminRef._id || adminRef);
+    if (!adminDoc || adminDoc.status !== 'ACTIVE') return;
+
+    const type = signedAmount >= 0 ? 'CREDIT' : 'DEBIT';
+    const amount = Math.round(Math.abs(signedAmount) * 100) / 100;
+    const pattiRoot = options.pattiRootAdmin || null;
+    const segKey = options.pattiSegmentKey || '';
+    const childPct = options.pattiChildPct != null ? Number(options.pattiChildPct) : null;
+    const chargeKind = options.chargeKind || 'TRADING_PNL';
+    const pattiSource = options.pattiSource || 'individual_patti_parent';
+    const isSubtreeAdminShare = pattiSource === 'individual_patti_subtree';
+
+    adminDoc.wallet.balance = Math.round(((adminDoc.wallet.balance || 0) + signedAmount) * 100) / 100;
+    adminDoc.tradingPnL.realized = Math.round(((adminDoc.tradingPnL?.realized || 0) + signedAmount) * 100) / 100;
+    adminDoc.tradingPnL.todayRealized = Math.round(
+      ((adminDoc.tradingPnL?.todayRealized || 0) + signedAmount) * 100
+    ) / 100;
+    adminDoc.stats.totalPnL = Math.round(((adminDoc.stats?.totalPnL || 0) + signedAmount) * 100) / 100;
+    await adminDoc.save();
+
+    let tradingSegment = 'NSE/BSE';
+    if (trade.isCrypto || trade.exchange === 'BINANCE') tradingSegment = 'CRYPTO';
+    else if (trade.isForex || trade.exchange === 'FOREX') tradingSegment = 'FOREX';
+    else if (
+      trade.exchange === 'MCX' ||
+      trade.segment === 'MCX' ||
+      trade.segment === 'MCXFUT' ||
+      trade.segment === 'MCXOPT'
+    ) {
+      tradingSegment = 'MCX';
     }
 
-    let walletDesc = '';
-    let ledgerSegment = 'NSE/BSE';
-    if (isMcx) {
-      walletDesc = ' (MCX)';
-      ledgerSegment = 'MCX';
-    } else if (isCrypto) {
-      walletDesc = ' (Crypto)';
-      ledgerSegment = 'CRYPTO';
-    } else if (isForex) {
-      walletDesc = ' (Forex)';
-      ledgerSegment = 'FOREX';
-    } else {
-      walletDesc = ' (NSE/BSE)';
-    }
+    const userLabel = user?.username || user?.fullName || user?.userId || 'client';
+    const pctLabel = childPct != null ? `${childPct}%` : isSubtreeAdminShare ? 'admin' : 'parent';
+    const roleWord = isSubtreeAdminShare ? 'admin' : 'parent';
+    const kindLabel = chargeKind === 'BROKERAGE' ? 'brokerage pool' : 'trading P&L';
 
     await WalletLedger.create({
-      ownerType: 'USER',
-      ownerId: user._id,
-      adminCode: user.adminCode,
-      type: trade.netPnL >= 0 ? 'CREDIT' : 'DEBIT',
-      reason: 'TRADE_PNL',
-      amount: Math.abs(trade.netPnL),
-      balanceAfter: balanceAfter,
+      ownerType: 'ADMIN',
+      ownerId: adminDoc._id,
+      adminCode: adminDoc.adminCode,
+      type,
+      reason: chargeKind === 'BROKERAGE' ? 'BROKERAGE' : 'TRADE_PNL',
+      amount,
+      balanceAfter: adminDoc.wallet.balance,
       reference: { type: 'Trade', id: trade._id },
-      description: `${trade.symbol} ${trade.side} P&L${walletDesc}`,
-      meta: { segment: ledgerSegment, tradeId: trade.tradeId || String(trade._id) },
+      description: `Patti ${pctLabel} ${roleWord} (₹${amount.toFixed(2)}) on ${kindLabel} — ${trade.symbol} ${trade.side} [${segKey}] (${userLabel})`,
+      meta: {
+        relatedUserId: user?._id || trade.user,
+        userName: user?.username || user?.fullName || '',
+        segment: tradingSegment,
+        tradeSymbol: trade.symbol,
+        tradeSide: trade.side,
+        tradeQuantity: trade.quantity,
+        pattiSharing: true,
+        pattiSource,
+        pattiChildPct: childPct,
+        pattiSegmentKey: segKey,
+        chargeKind,
+        pattiRootAdminId: pattiRoot?._id || adminDoc._id,
+        pattiRootAdminName: pattiRoot?.name || pattiRoot?.username || adminDoc.name || adminDoc.username,
+        pattiRootAdminCode: pattiRoot?.adminCode || adminDoc.adminCode,
+      },
     });
-    
-    // Calculate pure brokerage from user's commission rate (not charges.brokerage which uses fixed rate)
-    const userSegmentSettings = await this.getUserSegmentSettings(user, trade.segment, trade.instrumentType);
-    const turnover = trade.entryPrice * trade.quantity;
-    const ONE_CRORE = 10_000_000;
-    let pureBrokerage = 0;
-    
-    if (userSegmentSettings.commissionType === 'PER_CRORE') {
-      const commValue = userSegmentSettings.commission || userSegmentSettings.commissionLot || 0;
-      pureBrokerage = (turnover / ONE_CRORE) * commValue * 2; // round-trip
-    } else if (userSegmentSettings.commissionType === 'PER_LOT') {
-      const commValue = userSegmentSettings.commissionLot || userSegmentSettings.commission || 0;
-      pureBrokerage = commValue * (trade.lots || 1) * 2; // round-trip
-    } else if (userSegmentSettings.commissionType === 'PER_TRADE') {
-      pureBrokerage = (userSegmentSettings.commission || 0) * 2; // round-trip
-    }
-    pureBrokerage = Math.round(pureBrokerage * 100) / 100;
-    
-    console.log('[TradeService] Pure brokerage from user commission rate:', pureBrokerage, 'charges.brokerage:', charges.brokerage);
-    
-    // Brokerage already fully distributed on trade OPEN (open+close combined)
-    // No brokerage distribution needed on close
-    console.log('[TradeService] Trade close - no brokerage distribution (already done on open):', trade._id);
-
-    void import('./marginMonitorService.js').then((m) => m.invalidateMarginOpenTradesCache?.());
-
-    return trade;
   }
-  
+
+  /**
+   * Credit/debit franchise book or platform charge on admin main wallet + TRADE_PNL / PROFIT_SHARE ledger.
+   */
+  static async recordFranchiseBookPnL(adminRef, signedAmount, trade, user, legKind = 'franchise', options = {}) {
+    if (!adminRef || !Number.isFinite(signedAmount) || Math.abs(signedAmount) < 0.01) return;
+
+    const adminDoc = await Admin.findById(adminRef._id || adminRef);
+    if (!adminDoc || adminDoc.status !== 'ACTIVE') return;
+
+    const type = signedAmount >= 0 ? 'CREDIT' : 'DEBIT';
+    const amount = Math.round(Math.abs(signedAmount) * 100) / 100;
+
+    adminDoc.wallet.balance = Math.round(((adminDoc.wallet.balance || 0) + signedAmount) * 100) / 100;
+    adminDoc.tradingPnL.realized = Math.round(((adminDoc.tradingPnL?.realized || 0) + signedAmount) * 100) / 100;
+    adminDoc.tradingPnL.todayRealized = Math.round(
+      ((adminDoc.tradingPnL?.todayRealized || 0) + signedAmount) * 100
+    ) / 100;
+    adminDoc.stats.totalPnL = Math.round(((adminDoc.stats?.totalPnL || 0) + signedAmount) * 100) / 100;
+    await adminDoc.save();
+
+    const isMCXTrade =
+      trade.exchange === 'MCX' ||
+      trade.segment === 'MCX' ||
+      trade.segment === 'MCXFUT' ||
+      trade.segment === 'MCXOPT';
+    let tradingSegment = 'NSE/BSE';
+    if (trade.isCrypto || trade.exchange === 'BINANCE') tradingSegment = 'CRYPTO';
+    else if (trade.isForex || trade.exchange === 'FOREX') tradingSegment = 'FOREX';
+    else if (isMCXTrade) tradingSegment = 'MCX';
+
+    const segTag = trade.isCrypto
+      ? ' (Crypto)'
+      : trade.isForex
+        ? ' (Forex)'
+        : isMCXTrade
+          ? ' (MCX)'
+          : ' (NSE/BSE)';
+    const userLabel = user?.username || user?.userId || 'client';
+    const isAutoSquare = trade.closeReason === 'AUTO_SQUARE' || trade.closeReason === 'TIME_BASED';
+    const autoTag = isAutoSquare ? ' — Auto-square' : '';
+    const isPlatform = legKind === 'platform';
+    const pct =
+      options.platformChargesPct != null
+        ? Number(options.platformChargesPct) || 0
+        : Number(adminDoc.platformChargesPercentage) || 0;
+
+    const franchiseRoot = options.franchiseRoot || null;
+    const chargeKind =
+      options.chargeKind ||
+      (isPlatform ? 'TRADING_PNL' : 'FRANCHISE_BOOK');
+    const baseAmount =
+      options.baseAmount != null && Number.isFinite(Number(options.baseAmount))
+        ? Math.round(Number(options.baseAmount) * 100) / 100
+        : undefined;
+
+    await WalletLedger.create({
+      ownerType: 'ADMIN',
+      ownerId: adminDoc._id,
+      adminCode: adminDoc.adminCode,
+      type,
+      reason: isPlatform ? 'PROFIT_SHARE' : 'TRADE_PNL',
+      amount,
+      balanceAfter: adminDoc.wallet.balance,
+      reference: { type: 'Trade', id: trade._id },
+      description: isPlatform
+        ? `Franchise platform charge (${pct}%) — ${trade.symbol} ${trade.side} book${segTag} (${userLabel})${autoTag}`
+        : `Franchise book — ${trade.symbol} ${trade.side} P&L${segTag} (${userLabel})${autoTag}`,
+      isAutoSquare,
+      meta: {
+        relatedUserId: user?._id,
+        segment: tradingSegment,
+        tradeId: trade.tradeId || String(trade._id),
+        profitKind: isPlatform ? 'FRANCHISE_PLATFORM_CHARGE' : 'FRANCHISE_BOOK',
+        clientNetPnL: trade.netPnL,
+        chargeKind,
+        platformPct: isPlatform ? pct : undefined,
+        baseAmount,
+        franchiseRootId: franchiseRoot?._id || undefined,
+        franchiseRootName: franchiseRoot?.name || franchiseRoot?.username || undefined,
+        franchiseRootAdminCode: franchiseRoot?.adminCode || undefined,
+      },
+    });
+  }
+
   /** Split B_BOOK counterparty P&L between book admin and parent using patti % (same as brokerage when patti applies). */
   static async applyBBookAdminPnLSplit(trade, directAdmin, user, totalAdminPnL) {
-    if (!directAdmin || !Number.isFinite(totalAdminPnL) || totalAdminPnL === 0) return;
+    const { computeAdminBookPoolForPatti } = await import('../utils/bookPnL.js');
+    const pool =
+      trade?.status === 'CLOSED' && trade.bookType === 'B_BOOK'
+        ? computeAdminBookPoolForPatti(trade)
+        : totalAdminPnL;
+    if (!directAdmin || !Number.isFinite(pool) || pool === 0) return;
 
     // Build hierarchy chain to check for franchise root
     const hierarchyChain = [];
@@ -2012,135 +2132,129 @@ static _SEGMENT_MERGE_FALLBACK = {
     // Check for franchise root in hierarchy
     const franchiseRoot = findFranchiseRootInChain(hierarchyChain);
 
-    // If franchise root exists, P&L stays within franchise subtree only
-    // Platform charges are handled in brokerage distribution, not here
+    // Franchise trading: book P&L → franchise root wallet + ledger; SA gets platformCharges % only.
     if (franchiseRoot) {
-      console.log('[applyBBookAdminPnLSplit] Franchise root detected - P&L stays within subtree:', {
-        franchiseRoot: franchiseRoot.name,
-        totalAdminPnL
+      const franchiseCtx = await resolveFranchiseTradingContext(user, directAdmin);
+      const root = franchiseCtx.franchiseRoot || franchiseRoot;
+      const { franchiseAmount, platformAmount } = splitFranchiseBookPnL(
+        pool,
+        root.platformChargesPercentage
+      );
+
+      console.log('[applyBBookAdminPnLSplit] Franchise book settle:', {
+        franchiseRoot: root.name || root.username,
+        totalAdminPnL: pool,
+        franchiseAmount,
+        platformAmount,
+        platformChargesPercentage: root.platformChargesPercentage,
       });
 
-      // Distribute P&L within franchise subtree using patti logic
-      const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
-      
-      // Check if parent is within franchise subtree (not above franchise root)
-      let parentInSubtree = true;
-      if (split.parentAdmin) {
-        // Build franchise subtree admin IDs
-        const subtreeIds = new Set();
-        let current = franchiseRoot;
-        while (current) {
-          subtreeIds.add(current._id.toString());
-          if (current.role === 'SUPER_ADMIN' || !current.parentId) break;
-          current = await Admin.findById(current.parentId);
-        }
-        // Check if parent is in subtree
-        parentInSubtree = subtreeIds.has(split.parentAdmin._id.toString());
-        
-        if (!parentInSubtree) {
-          console.log('[applyBBookAdminPnLSplit] Parent is outside franchise subtree, ignoring patti split');
-          split.parentAdmin = null;
-          split.childPct = 100;
-        }
+      if (Math.abs(franchiseAmount) >= 0.01) {
+        await TradeService.recordFranchiseBookPnL(root, franchiseAmount, trade, user, 'franchise', {
+          franchiseRoot: root,
+          chargeKind: 'FRANCHISE_BOOK',
+        });
       }
-      
-      if (!split.parentAdmin || split.childPct >= 100) {
-        directAdmin.tradingPnL.realized += totalAdminPnL;
-        directAdmin.tradingPnL.todayRealized += totalAdminPnL;
-        directAdmin.stats.totalPnL += totalAdminPnL;
-        await directAdmin.save();
-        console.log('[applyBBookAdminPnLSplit] P&L credited to directAdmin:', totalAdminPnL);
-        return;
-      }
-
-      const { child, parent } = splitByChildPercent(totalAdminPnL, split.childPct);
-      directAdmin.tradingPnL.realized += child;
-      directAdmin.tradingPnL.todayRealized += child;
-      directAdmin.stats.totalPnL += child;
-      await directAdmin.save();
-
-      const pa = await Admin.findById(split.parentAdmin._id);
-      if (pa && pa.status === 'ACTIVE') {
-        pa.tradingPnL.realized += parent;
-        pa.tradingPnL.todayRealized += parent;
-        pa.stats.totalPnL += parent;
-        await pa.save();
-        console.log('[applyBBookAdminPnLSplit] P&L split within subtree - child:', child, 'parent:', parent);
+      if (Math.abs(platformAmount) >= 0.01) {
+        const superAdmin = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
+        if (superAdmin) {
+          await TradeService.recordFranchiseBookPnL(superAdmin, platformAmount, trade, user, 'platform', {
+            platformChargesPct: root.platformChargesPercentage,
+            franchiseRoot: root,
+            chargeKind: 'TRADING_PNL',
+            baseAmount: Math.abs(pool),
+          });
+        }
       }
       return;
     }
 
-    // No franchise root - use normal patti distribution
-    const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
-    if (!split.parentAdmin || split.childPct >= 100) {
-      directAdmin.tradingPnL.realized += totalAdminPnL;
-      directAdmin.tradingPnL.todayRealized += totalAdminPnL;
-      directAdmin.stats.totalPnL += totalAdminPnL;
-      await directAdmin.save();
+    // No franchise root — multi-level patti cascade (3rd brokerage type)
+    const { credits, usesPatti, segKey, pattiRootId } = await resolvePattiCascadeCredits(
+      directAdmin,
+      user,
+      trade,
+      pool
+    );
+
+    if (usesPatti && credits.length > 0) {
+      let pattiRootDoc = null;
+      if (pattiRootId) {
+        pattiRootDoc = await Admin.findById(pattiRootId).select('name username adminCode role');
+      }
+      for (const c of credits) {
+        if (Math.abs(c.amount) < 0.000001) continue;
+        const adm = await Admin.findById(c.adminId).select(
+          'tradingPnL stats status role wallet adminCode name username status'
+        );
+        if (!adm || adm.status !== 'ACTIVE') continue;
+
+        await this.recordPattiSaParentShare(adm, c.amount, trade, user, {
+          pattiRootAdmin: pattiRootDoc,
+          pattiChildPct: c.childPct,
+          pattiSegmentKey: c.segKey || segKey,
+          chargeKind: 'TRADING_PNL',
+          pattiSource: c.source || 'hierarchy_patti_child',
+        });
+      }
       return;
     }
 
-    const { child, parent } = splitByChildPercent(totalAdminPnL, split.childPct);
-    directAdmin.tradingPnL.realized += child;
-    directAdmin.tradingPnL.todayRealized += child;
-    directAdmin.stats.totalPnL += child;
+    directAdmin.tradingPnL.realized += totalAdminPnL;
+    directAdmin.tradingPnL.todayRealized += totalAdminPnL;
+    directAdmin.stats.totalPnL += totalAdminPnL;
     await directAdmin.save();
-
-    const pa = await Admin.findById(split.parentAdmin._id);
-    if (pa && pa.status === 'ACTIVE') {
-      pa.tradingPnL.realized += parent;
-      pa.tradingPnL.todayRealized += parent;
-      pa.stats.totalPnL += parent;
-      await pa.save();
-    }
   }
 
-  /** Book admin + parent split when patti resolves; else legacy hierarchy distribution. */
-  static async distributeBrokerageWithPatti(trade, totalBrokerage, directAdmin, user, leg = null) {
-    if (!totalBrokerage || totalBrokerage <= 0 || user?.isDemo || !directAdmin) return;
+  /** Patti cascade brokerage credits (3rd type — % split up hierarchy). */
+  static async creditPattiCascadeBrokerage(trade, totalBrokerage, directAdmin, user, leg = null) {
+    const { credits, usesPatti, segKey } = await resolvePattiCascadeCredits(
+      directAdmin,
+      user,
+      trade,
+      totalBrokerage
+    );
 
-    const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
-    if (!split.parentAdmin || split.childPct >= 100) {
-      await this.distributeBrokerage(trade, totalBrokerage, directAdmin, user, leg);
-      return;
-    }
+    if (!usesPatti || !credits.length) return false;
 
-    const { child, parent } = splitByChildPercent(totalBrokerage, split.childPct);
-    if (child > 0) {
+    console.log('[creditPattiCascadeBrokerage] Cascade:', {
+      tradeId: trade._id,
+      totalBrokerage,
+      segKey,
+      credits: credits.map((c) => ({
+        admin: c.admin?.name || c.admin?.username,
+        amount: c.amount,
+        childPct: c.childPct,
+        source: c.source,
+      })),
+    });
+
+    for (const c of credits) {
+      if (Math.abs(c.amount) < 0.000001) continue;
+      const adm =
+        c.admin?.wallet !== undefined
+          ? c.admin
+          : await Admin.findById(c.adminId).select(
+              'name role wallet stats isFranchiseRoot adminCode status'
+            );
+      if (!adm || adm.status !== 'ACTIVE') continue;
       await this.creditBrokerageToAdmin(
-        directAdmin,
-        child,
+        adm,
+        c.amount,
         trade,
-        `Book admin ${split.childPct}% (${split.source})`,
+        `Patti ${c.childPct}% (${c.source})`,
         user,
         leg,
-        directAdmin.isFranchiseRoot
+        adm.isFranchiseRoot,
+        { pattiSharing: true, pattiChildPct: c.childPct, pattiSegmentKey: segKey, pattiSource: c.source }
       );
     }
-    if (parent > 0) {
-      const pa = await Admin.findById(split.parentAdmin._id);
-      if (pa && pa.status === 'ACTIVE') {
-        await this.creditBrokerageToAdmin(
-          pa,
-          parent,
-          trade,
-          `Parent ${100 - split.childPct}% (${split.source})`,
-          user,
-          leg,
-          pa.isFranchiseRoot
-        );
-      } else {
-        await this.creditBrokerageToAdmin(
-          directAdmin,
-          parent,
-          trade,
-          `Parent share (${100 - split.childPct}%) — parent inactive, credited to book admin`,
-          user,
-          leg,
-          directAdmin.isFranchiseRoot
-        );
-      }
-    }
+    return true;
+  }
+
+  /** @deprecated Use creditPattiCascadeBrokerage via distributeBrokerage. */
+  static async distributeBrokerageWithPatti(trade, totalBrokerage, directAdmin, user, leg = null) {
+    return this.creditPattiCascadeBrokerage(trade, totalBrokerage, directAdmin, user, leg);
   }
 
   /** Wallet segment label for user ledger / transfer UI. */
@@ -2170,10 +2284,58 @@ static _SEGMENT_MERGE_FALLBACK = {
     return 'NSE/BSE';
   }
 
+  /** Apply missed open-leg brokerage debits — NSE/BSE only (do not run on crypto/mcx/forex). */
+  static async reconcileUndebitedBrokerage(userId, segmentFilter = 'nse') {
+    if (segmentFilter !== 'nse') return { fixed: 0 };
+
+    const UserModel = (await import('../models/User.js')).default;
+    const user = await UserModel.findById(userId).lean();
+    if (!user) return { fixed: 0 };
+
+    const segmentOr = {
+      $or: [
+        { exchange: { $in: ['NSE', 'NFO', 'BSE', 'BFO'] } },
+        { segment: { $in: ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FNO'] } },
+      ],
+    };
+
+    const trades = await Trade.find({
+      user: userId,
+      commission: { $gt: 0 },
+      walletBrokerageDebited: { $ne: true },
+      ...segmentOr,
+    })
+      .sort({ openedAt: -1, createdAt: -1 })
+      .limit(25)
+      .lean();
+
+    let fixed = 0;
+    for (const t of trades) {
+      try {
+        await this.recordUserBrokerageLedgerOnOpen(t, user);
+        fixed += 1;
+      } catch (err) {
+        console.error(
+          '[reconcileUndebitedBrokerage]',
+          user.userId || userId,
+          t.symbol,
+          err?.message || err
+        );
+      }
+    }
+    return { fixed };
+  }
+
   /** User-visible ledger row when round-trip brokerage is charged at open. */
   static async recordUserBrokerageLedgerOnOpen(trade, user) {
     const amount = Math.round((Number(trade?.commission) || 0) * 100) / 100;
     if (amount <= 0 || !user?._id || !trade?._id) return;
+
+    const TradeModel = (await import('../models/Trade.js')).default;
+    const freshTrade = await TradeModel.findById(trade._id)
+      .select('commission brokerageReservedInMargin walletBrokerageDebited brokeragePrepaidRoundTrip tradeId symbol side')
+      .lean()
+      .catch(() => null);
 
     const existing = await WalletLedger.findOne({
       ownerType: 'USER',
@@ -2182,7 +2344,9 @@ static _SEGMENT_MERGE_FALLBACK = {
       'reference.type': 'Trade',
       'reference.id': trade._id,
     }).lean();
-    if (existing) return;
+
+    const alreadyDebited = !!freshTrade?.walletBrokerageDebited;
+    if (alreadyDebited && existing) return;
 
     const walletSeg = this.resolveTradeWalletSegmentLabel(trade);
     const suffix =
@@ -2194,34 +2358,325 @@ static _SEGMENT_MERGE_FALLBACK = {
             ? ' (Forex)'
             : ' (NSE/BSE)';
 
-    let balanceAfter = 0;
-    if (walletSeg === 'MCX') {
-      balanceAfter = user.mcxWallet?.balance || 0;
-    } else if (walletSeg === 'CRYPTO') {
-      balanceAfter = user.cryptoWallet?.balance || 0;
-    } else if (walletSeg === 'FOREX') {
-      balanceAfter = user.forexWallet?.balance || 0;
-    } else {
-      const { getNseBseBalance } = await import('../utils/nseBseWallet.js');
-      balanceAfter = getNseBseBalance(user);
+    const freshUser = await (await import('../models/User.js')).default.findById(user._id)
+      .select('nseBseWallet wallet cryptoWallet mcxWallet forexWallet adminCode')
+      .lean();
+
+    if (!freshUser) return;
+
+    const { getNseBseBalance, getNseBseUsedMargin } = await import('../utils/nseBseWallet.js');
+
+    const getBalanceForSeg = (u) => {
+      if (walletSeg === 'MCX') return Number(u.mcxWallet?.balance) || 0;
+      if (walletSeg === 'CRYPTO') return Number(u.cryptoWallet?.balance) || 0;
+      if (walletSeg === 'FOREX') return Number(u.forexWallet?.balance) || 0;
+      return Number(getNseBseBalance(u)) || 0;
+    };
+
+    let safeBalanceAfter = getBalanceForSeg(freshUser);
+
+    if (!alreadyDebited) {
+      const releaseUsedMargin = 0;
+      let balanceBefore = safeBalanceAfter;
+      let usedMarginBefore = 0;
+      if (walletSeg === 'MCX') {
+        usedMarginBefore = Number(freshUser.mcxWallet?.usedMargin) || 0;
+      } else if (walletSeg === 'CRYPTO') {
+        usedMarginBefore = Number(freshUser.cryptoWallet?.usedMargin) || 0;
+      } else if (walletSeg === 'FOREX') {
+        usedMarginBefore = Number(freshUser.forexWallet?.usedMargin) || 0;
+      } else {
+        usedMarginBefore = Number(getNseBseUsedMargin(freshUser)) || 0;
+      }
+
+      const balanceAfter = balanceBefore - amount;
+      const safeReleaseUsedMargin = Math.min(Math.max(0, usedMarginBefore), releaseUsedMargin);
+      safeBalanceAfter = Math.max(0, balanceAfter);
+
+      const setFields = {};
+      const incFields = {};
+      if (walletSeg === 'MCX') {
+        setFields['mcxWallet.balance'] = safeBalanceAfter;
+        if (safeReleaseUsedMargin > 0) incFields['mcxWallet.usedMargin'] = -safeReleaseUsedMargin;
+      } else if (walletSeg === 'CRYPTO') {
+        setFields['cryptoWallet.balance'] = safeBalanceAfter;
+        if (safeReleaseUsedMargin > 0) incFields['cryptoWallet.usedMargin'] = -safeReleaseUsedMargin;
+      } else if (walletSeg === 'FOREX') {
+        setFields['forexWallet.balance'] = safeBalanceAfter;
+        if (safeReleaseUsedMargin > 0) incFields['forexWallet.usedMargin'] = -safeReleaseUsedMargin;
+      } else {
+        setFields['nseBseWallet.balance'] = safeBalanceAfter;
+        setFields['wallet.tradingBalance'] = safeBalanceAfter;
+        setFields['wallet.balance'] = safeBalanceAfter;
+        if (safeReleaseUsedMargin > 0) incFields['nseBseWallet.usedMargin'] = -safeReleaseUsedMargin;
+      }
+
+      const mongoUpdate = { $set: setFields };
+      if (Object.keys(incFields).length > 0) mongoUpdate.$inc = incFields;
+
+      const walletUpdate = await (await import('../models/User.js')).default.updateOne(
+        { _id: user._id },
+        mongoUpdate
+      );
+      if (walletUpdate.modifiedCount === 0 && walletUpdate.matchedCount === 0) {
+        throw new Error(`Brokerage wallet update failed for user ${user._id}`);
+      }
+
+      await TradeModel.updateOne(
+        { _id: trade._id },
+        {
+          $set: {
+            walletBrokerageDebited: true,
+            brokerageReservedInMargin: false,
+          },
+        }
+      );
     }
 
-    await WalletLedger.create({
-      ownerType: 'USER',
-      ownerId: user._id,
-      adminCode: user.adminCode,
-      type: 'DEBIT',
-      reason: 'BROKERAGE',
-      amount,
-      balanceAfter,
-      reference: { type: 'Trade', id: trade._id },
-      description: `${trade.symbol || 'Trade'} ${trade.side || ''} Brokerage${suffix}`.trim(),
-      meta: {
-        tradeId: trade.tradeId || String(trade._id),
-        segment: walletSeg === 'NSE/BSE' ? 'NSE/BSE' : walletSeg,
-        prepaidRoundTrip: !!trade.brokeragePrepaidRoundTrip,
-        reservedInMargin: !!trade.brokerageReservedInMargin,
-      },
+    const prepaidRoundTrip = !!(
+      freshTrade?.brokeragePrepaidRoundTrip ?? trade.brokeragePrepaidRoundTrip
+    );
+    const legLabel = prepaidRoundTrip ? 'OPEN+CLOSE' : 'OPEN';
+
+    let franchiseLedgerMeta = {};
+    let franchiseTag = '';
+    try {
+      const directAdmin =
+        user.admin?._id
+          ? user.admin
+          : user.admin
+            ? await Admin.findById(user.admin)
+            : await Admin.findOne({ adminCode: user.adminCode });
+      if (directAdmin) {
+        const franchiseCtx = await resolveFranchiseTradingContext(user, directAdmin);
+        const userFranchiseRate = getUserFranchiseRatePerCrore(user);
+        if (franchiseCtx.active && userFranchiseRate > 0) {
+          franchiseTag = ' [Franchise]';
+          franchiseLedgerMeta = {
+            franchiseBrokerage: true,
+            franchiseRatePerCrore: userFranchiseRate,
+          };
+        }
+      }
+    } catch (frErr) {
+      console.warn('[recordUserBrokerageLedgerOnOpen] franchise meta:', frErr?.message);
+    }
+
+    // Create ledger row immediately (idempotent: only create if it doesn't exist)
+    if (!existing) {
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: user._id,
+        adminCode: user.adminCode,
+        type: 'DEBIT',
+        reason: 'BROKERAGE',
+        amount,
+        balanceAfter: safeBalanceAfter,
+        reference: { type: 'Trade', id: trade._id },
+        description: `${trade.symbol || 'Trade'} ${trade.side || ''} Brokerage${suffix} for ${legLabel}${franchiseTag}`.trim(),
+        meta: {
+          tradeId: trade.tradeId || String(trade._id),
+          segment: walletSeg === 'NSE/BSE' ? 'NSE/BSE' : walletSeg,
+          leg: legLabel,
+          prepaidRoundTrip,
+          reservedConverted: false,
+          debitedOnOpen: true,
+          ...franchiseLedgerMeta,
+        },
+      });
+    }
+  }
+
+  /**
+   * Sum of franchise brokerage credits already posted for a trade leg (supports resume after partial run).
+   */
+  static async getFranchiseBrokerageProgress(tradeId, legLabel) {
+    const rows = await WalletLedger.find({
+      ownerType: 'ADMIN',
+      type: 'CREDIT',
+      'reference.id': tradeId,
+      'meta.franchiseDistribution': true,
+      'meta.franchiseBrokerageLeg': legLabel,
+    })
+      .select('ownerId amount')
+      .lean();
+
+    const byAdmin = new Map();
+    let total = 0;
+    for (const row of rows) {
+      const id = String(row.ownerId);
+      byAdmin.set(id, Math.round(((byAdmin.get(id) || 0) + (Number(row.amount) || 0)) * 100) / 100);
+      total += Number(row.amount) || 0;
+    }
+    return {
+      byAdmin,
+      totalDistributed: Math.round(total * 100) / 100,
+      entryCount: rows.length,
+    };
+  }
+
+  /**
+   * Franchise subtree: cascade ₹/crore from user + admin franchise fields (no SA diversion).
+   */
+  static async distributeFranchiseBrokerage(trade, totalBrokerage, directAdmin, user, franchiseCtx, leg, turnover) {
+    let { hierarchyChain, franchiseRoot } = franchiseCtx;
+    hierarchyChain = await refreshFranchiseHierarchyChain(hierarchyChain);
+    hierarchyChain = await ensureSuperAdminInChain(hierarchyChain);
+
+    const segment = String(trade.segment || '').toUpperCase();
+    const legMultiplier = resolveFranchiseLegMultiplier(trade, leg);
+    const legLabel = String(leg || 'OPEN+CLOSE').toUpperCase();
+
+    const progress = await this.getFranchiseBrokerageProgress(trade._id, legLabel);
+    if (progress.totalDistributed >= totalBrokerage - 0.02) {
+      console.log('[distributeFranchiseBrokerage] Already fully distributed:', {
+        tradeId: trade._id,
+        leg: legLabel,
+        totalBrokerage,
+        totalDistributed: progress.totalDistributed,
+      });
+      return;
+    }
+
+    let adminInrs = buildFranchiseAdminInrLevels(hierarchyChain, turnover, legMultiplier, segment, trade);
+    const expectedUserTotal = computeFranchiseUserTotalBrokerage(user, turnover, legMultiplier);
+
+    const credits = computeFranchiseCascadeShares(totalBrokerage, hierarchyChain, adminInrs);
+    const creditsSum = sumFranchiseCascadeCredits(credits);
+
+    console.log('[distributeFranchiseBrokerage] Cascade:', {
+      totalBrokerage,
+      expectedUserTotal,
+      leg,
+      legMultiplier,
+      turnover,
+      segment,
+      directAdmin: directAdmin?.name,
+      directAdminRole: directAdmin?.role,
+      franchiseRoot: franchiseRoot?.name,
+      chain: hierarchyChain.map((h) => ({ role: h.role, name: h.admin?.name })),
+      adminInrs,
+      creditsSum,
+      priorDistributed: progress.totalDistributed,
+      credits: credits.map((c) => ({ role: c.role, name: c.admin?.name, amount: c.amount, label: c.label })),
+    });
+
+    if (Math.abs(creditsSum - totalBrokerage) > 0.05) {
+      console.warn('[distributeFranchiseBrokerage] Cascade sum mismatch — remainder will go to Super Admin:', {
+        totalBrokerage,
+        creditsSum,
+        diff: Math.round((totalBrokerage - creditsSum) * 100) / 100,
+      });
+    }
+
+    if ((adminInrs[0] || 0) <= 0 && hierarchyChain.length > 1) {
+      console.error('[distributeFranchiseBrokerage] Direct admin has no franchise ₹/crore rate — set restrictMode.brokerageChargePerCrore on:', {
+        directAdmin: hierarchyChain[0]?.admin?.name,
+        directAdminRole: hierarchyChain[0]?.role,
+      });
+    }
+
+    const franchiseLedgerMeta = {
+      franchiseDistribution: true,
+      franchiseBrokerageLeg: legLabel,
+      franchiseRootId: franchiseRoot?._id,
+      franchiseRootName: franchiseRoot?.name || franchiseRoot?.username || '',
+      franchiseRootAdminCode: franchiseRoot?.adminCode || '',
+      clientUserId: user?.userId || user?._id,
+      clientUserName: user?.username || user?.fullName || '',
+    };
+
+    let totalDistributed = progress.totalDistributed;
+
+    const creditShare = async (admin, role, amount, description, isFranchiseRoot = false) => {
+      if (amount <= 0.01 || !admin) return;
+      const adminId = String(admin._id);
+      const alreadyPaid = progress.byAdmin.get(adminId) || 0;
+      const payAmount = Math.round((amount - alreadyPaid) * 100) / 100;
+      if (payAmount <= 0.01) return;
+
+      if (!adminReceivesHierarchyBrokerage(admin, 'trading') && role !== 'SUPER_ADMIN') {
+        const saSink =
+          hierarchyChain.find((h) => h.role === 'SUPER_ADMIN')?.admin || (await resolveSuperAdminAdmin());
+        if (saSink) {
+          await this.creditBrokerageToAdmin(
+            saSink,
+            payAmount,
+            trade,
+            `Franchise — diverted from ${role} (restricted)`,
+            user,
+            leg,
+            false,
+            { ...franchiseLedgerMeta, divertedFromRole: role }
+          );
+          totalDistributed = Math.round((totalDistributed + payAmount) * 100) / 100;
+        }
+        return;
+      }
+
+      await this.creditBrokerageToAdmin(
+        admin,
+        payAmount,
+        trade,
+        description,
+        user,
+        leg,
+        isFranchiseRoot,
+        franchiseLedgerMeta
+      );
+      totalDistributed = Math.round((totalDistributed + payAmount) * 100) / 100;
+    };
+
+    for (const { admin, role, amount, label } of credits) {
+      await creditShare(
+        admin,
+        role,
+        amount,
+        label === 'direct'
+          ? `Franchise direct share (₹${amount.toFixed(2)})`
+          : `Franchise ${role} share (₹${amount.toFixed(2)})`,
+        admin.isFranchiseRoot === true
+      );
+    }
+
+    const finalRemainder = Math.round((totalBrokerage - totalDistributed) * 100) / 100;
+    if (finalRemainder > 0.01) {
+      const sa =
+        hierarchyChain.find((h) => h.role === 'SUPER_ADMIN')?.admin || (await resolveSuperAdminAdmin());
+      if (sa) {
+        await this.creditBrokerageToAdmin(
+          sa,
+          finalRemainder,
+          trade,
+          `Franchise Super Admin remainder (₹${finalRemainder.toFixed(2)})`,
+          user,
+          leg,
+          false,
+          franchiseLedgerMeta
+        );
+        totalDistributed = Math.round((totalDistributed + finalRemainder) * 100) / 100;
+      } else {
+        console.error('[distributeFranchiseBrokerage] UNDISTRIBUTED BROKERAGE — no Super Admin found:', {
+          tradeId: trade._id,
+          finalRemainder,
+          totalBrokerage,
+          totalDistributed,
+        });
+      }
+    }
+
+    if (Math.abs(totalBrokerage - totalDistributed) > 0.05) {
+      console.error('[distributeFranchiseBrokerage] INCOMPLETE DISTRIBUTION:', {
+        totalBrokerage,
+        totalDistributed,
+        shortfall: Math.round((totalBrokerage - totalDistributed) * 100) / 100,
+      });
+    }
+
+    console.log('[distributeFranchiseBrokerage] Done:', {
+      totalBrokerage,
+      totalDistributed,
+      shortfall: Math.round((totalBrokerage - totalDistributed) * 100) / 100,
     });
   }
 
@@ -2234,31 +2689,79 @@ static _SEGMENT_MERGE_FALLBACK = {
       return;
     }
     try {
+      const freshUser = user?._id
+        ? await User.findById(user._id).select(
+            'franchiseChargePerCrore admin createdBy adminCode isDemo userId username fullName hierarchyPath'
+          )
+        : user;
+      if (freshUser) user = freshUser;
+
+      const resolvedDirect = await resolveUserDirectAdmin(user);
+      const cascadeStart = await resolveBrokerageCascadeStartAdmin(user, resolvedDirect || directAdmin);
+      if (cascadeStart) {
+        directAdmin = cascadeStart;
+      } else if (resolvedDirect) {
+        directAdmin = resolvedDirect;
+      } else if (directAdmin?._id) {
+        directAdmin =
+          (await Admin.findById(directAdmin._id).select(
+            'name role parentId restrictMode segmentPermissions defaultSettings isFranchiseRoot adminCode hierarchyPath wallet stats status receivesHierarchyBrokerage'
+          )) || directAdmin;
+      }
+
       console.log('[distributeBrokerage] Starting distribution:', {
         tradeId: trade._id,
         totalBrokerage,
-        directAdmin: directAdmin.name,
-        directAdminRole: directAdmin.role,
+        directAdmin: directAdmin?.name,
+        directAdminRole: directAdmin?.role,
+        userAdminField: user?.admin,
         userId: user.userId,
-        leg: leg
+        userFranchiseRate: getUserFranchiseRatePerCrore(user),
+        leg: leg,
       });
 
-      // Build hierarchy chain from directAdmin up to SuperAdmin
-      const hierarchyChain = [];
-      let currentAdmin = directAdmin;
-      while (currentAdmin) {
-        hierarchyChain.push({ admin: currentAdmin, role: currentAdmin.role });
-        if (currentAdmin.role === 'SUPER_ADMIN' || !currentAdmin.parentId) break;
-        currentAdmin = await Admin.findById(currentAdmin.parentId);
+      if (!directAdmin) {
+        console.error('[distributeBrokerage] No direct admin — cannot distribute brokerage');
+        return;
       }
 
       // Trade parameters needed to convert any commission type → ₹ amount
       const segment = String(trade.segment || '').toUpperCase();
+      const segmentKey = TradeService.resolveMarketWatchSegmentKey(segment, trade.instrumentType);
       const lots = trade.lots || trade.quantity || 1;
       const lotSize = trade.lotSize || 1;
       const price = trade.entryPrice || trade.currentPrice || 0;
-      const turnover = price * lots * lotSize;
+      const turnover = price * (trade.quantity || 0) || price * lots * lotSize;
+
+      const franchiseCtx = await resolveFranchiseTradingContext(user, directAdmin);
+      const pattiCtxEarly = await resolvePattiAdminSaBrokerageContext(directAdmin, user, trade);
+      const inPattiSubtree =
+        pattiCtxEarly.active === true || (await isAdminInActivePattiSubtree(directAdmin));
+
+      if (
+        franchiseCtx.active &&
+        getUserFranchiseRatePerCrore(user) > 0 &&
+        !inPattiSubtree
+      ) {
+        await this.distributeFranchiseBrokerage(
+          trade,
+          totalBrokerage,
+          directAdmin,
+          user,
+          franchiseCtx,
+          leg,
+          turnover
+        );
+        return;
+      }
+
+      // MLM ₹/crore cascade — full chain through Super Admin (required for patti ADMIN↔SA slice)
+      let hierarchyChain = await buildAdminHierarchyChain(directAdmin);
+      hierarchyChain = await ensureSuperAdminInChain(hierarchyChain);
+      hierarchyChain = await refreshFranchiseHierarchyChain(hierarchyChain);
+
       const ONE_CRORE = 10_000_000;
+      const legMultiplier = resolveFranchiseLegMultiplier(trade, leg);
 
       console.log('[distributeBrokerage] Trade parameters:', {
         segment,
@@ -2266,43 +2769,26 @@ static _SEGMENT_MERGE_FALLBACK = {
         lots,
         lotSize,
         price,
-        turnover
+        turnover,
+        leg,
+        legMultiplier,
       });
 
-      // Helper: convert a commission setting to ₹ amount for this trade (round-trip: ×2)
       const commissionToInr = (commType, commissionValue) => {
         const comm = Number(commissionValue) || 0;
         if (comm <= 0) return 0;
-        if (commType === 'PER_LOT' || commType === 'PER_QUANTITY') return comm * lots * 2;
-        if (commType === 'PER_TRADE') return comm * 2;
-        if (commType === 'PER_CRORE') return (turnover / ONE_CRORE) * comm * 2;
-        return comm * lots * 2; // fallback
+        const mult = legMultiplier > 0 ? legMultiplier : 1;
+        if (commType === 'PER_LOT' || commType === 'PER_QUANTITY') return comm * lots * mult;
+        if (commType === 'PER_TRADE') return comm * mult;
+        if (commType === 'PER_CRORE') return (turnover / ONE_CRORE) * comm * mult;
+        return comm * lots * mult;
       };
 
-      // Read user's segment commission rate (this is the true "bottom" rate)
       const sysRaw = await SystemSettings.getSettings();
       const admDefaults = TradeService._segmentMapPlain(sysRaw?.adminSegmentDefaults);
-      const sysSlice = admDefaults[segment];
+      const sysSlice =
+        admDefaults[segmentKey] || admDefaults[segment] || admDefaults.CRYPTOFUT || {};
 
-      // Helper: read commission settings from a segmentPermissions slice
-      const readSliceCommission = (rawSlice) => {
-        let finalSlice = rawSlice || sysSlice || {};
-        const commType = finalSlice?.commissionType || 'PER_LOT';
-        const commValue = commType === 'PER_CRORE'
-          ? (finalSlice?.commission || 0)
-          : (finalSlice?.commissionLot || finalSlice?.commission || 0);
-        return { commType, commValue: Number(commValue) || 0 };
-      };
-
-      // Get admin segment permission slice
-      const getAdminSlice = (adm) => {
-        let segPerms = adm.segmentPermissions;
-        if (segPerms && typeof segPerms.toObject === 'function') segPerms = segPerms.toObject();
-        const slice = segPerms instanceof Map ? segPerms.get(segment) : segPerms?.[segment];
-        return slice && typeof slice.toObject === 'function' ? slice.toObject() : slice;
-      };
-
-      // Get user's segment permission slice using getUserSegmentSettings (includes inheritance)
       console.log('[distributeBrokerage] User object before getUserSegmentSettings:', {
         userId: user.userId,
         adminCode: user.adminCode,
@@ -2320,24 +2806,52 @@ static _SEGMENT_MERGE_FALLBACK = {
       });
       const userComm = {
         commType: userSegmentSettings?.commissionType || 'PER_LOT',
-        commValue: userSegmentSettings?.commissionType === 'PER_CRORE'
-          ? (userSegmentSettings?.commission || 0)
-          : (userSegmentSettings?.commissionLot || userSegmentSettings?.commission || 0)
+        commValue: userSegmentSettings?.commissionType === 'PER_CRORE' ||
+          userSegmentSettings?.commissionType === 'PER_TRADE'
+          ? Number(userSegmentSettings?.commission ?? userSegmentSettings?.commissionLot ?? 0)
+          : Number(userSegmentSettings?.commissionLot ?? userSegmentSettings?.commission ?? 0)
       };
       const userBrokerageInr = commissionToInr(userComm.commType, userComm.commValue);
       console.log('[distributeBrokerage] User brokerage calculation:', {
         commType: userComm.commType,
         commValue: userComm.commValue,
-        userBrokerageInr
+        userBrokerageInr,
+        totalBrokerage,
       });
 
-      // Calculate each admin's ₹ brokerage at their own rate (one-way)
-      for (const entry of hierarchyChain) {
-        const admSlice = getAdminSlice(entry.admin);
-        const { commType, commValue } = readSliceCommission(admSlice);
-        entry.brokerageInr = commissionToInr(commType, commValue);
-        entry.commType = commType;
-        entry.commValue = commValue;
+      // Inject patti ADMIN into chain before MLM levels (levels must match final chain length)
+      const pattiCtx = pattiCtxEarly.active ? pattiCtxEarly : await resolvePattiAdminSaBrokerageContext(directAdmin, user, trade);
+      const pattiRootId = pattiCtx.active
+        ? String(pattiCtx.pattiRoot?._id || pattiCtx.pattiRoot || '')
+        : null;
+
+      if (pattiCtx.active && pattiCtx.pattiRoot && pattiRootId) {
+        if (!hierarchyChain.some((h) => String(h.admin._id) === pattiRootId)) {
+          const freshRoot = await Admin.findById(pattiCtx.pattiRoot._id).select(
+            'name role parentId restrictMode segmentPermissions defaultSettings isFranchiseRoot adminCode hierarchyPath wallet stats status receivesHierarchyBrokerage'
+          );
+          if (freshRoot) {
+            const saIdxInsert = hierarchyChain.findIndex((h) => h.role === 'SUPER_ADMIN');
+            const insertAt = saIdxInsert >= 0 ? saIdxInsert : hierarchyChain.length;
+            hierarchyChain.splice(insertAt, 0, { admin: freshRoot, role: freshRoot.role });
+            hierarchyChain = await refreshFranchiseHierarchyChain(hierarchyChain);
+          }
+        }
+      }
+
+      const mlmCommMeta = resolveMlmChainCommissionMeta(hierarchyChain, segmentKey, trade, sysSlice);
+      const adminInrLevels = buildMlmAdminInrLevels(
+        hierarchyChain,
+        segmentKey,
+        trade,
+        sysSlice,
+        commissionToInr
+      );
+      for (let i = 0; i < hierarchyChain.length; i++) {
+        hierarchyChain[i].brokerageInr = adminInrLevels[i] || 0;
+        hierarchyChain[i].commType = mlmCommMeta[i]?.commType;
+        hierarchyChain[i].commValue = mlmCommMeta[i]?.commValue;
+        hierarchyChain[i].mlmRateSource = mlmCommMeta[i]?.source;
       }
 
       console.log('[distributeBrokerage] Hierarchy chain built:', {
@@ -2353,23 +2867,19 @@ static _SEGMENT_MERGE_FALLBACK = {
       console.log('[distributeBrokerage] Hierarchy ₹ amounts:', {
         userRate: { ...userComm, brokerageInr: userBrokerageInr },
         chain: hierarchyChain.map(h => ({
-          name: h.admin.name, role: h.role,
-          commType: h.commType, commValue: h.commValue, brokerageInr: h.brokerageInr
+          name: h.admin.name,
+          role: h.role,
+          commType: h.commType,
+          commValue: h.commValue,
+          mlmRateSource: h.mlmRateSource,
+          brokerageInr: h.brokerageInr,
         }))
       });
 
-      // Cascading distribution: convert to ₹ amounts and each level keeps the diff.
-      // User pays totalBrokerage (based on user's rate × 2 for round-trip).
-      // Each admin's "cost" is their own rate. They keep: (level below ₹) − (their ₹).
-      // Bottom admin (directAdmin) keeps: totalBrokerage (user's full) − their own ₹ amount (scaled to round-trip).
-      // Top admin (SuperAdmin) keeps: their own ₹ amount (scaled to round-trip) − 0.
-
-      // Scale factor: For half-leg distribution, totalBrokerage is already half of round-trip.
-      // Don't apply round-trip scaling - the amounts are already for the current leg.
+      // MLM cascade: i=0 clientCharge−cost[0]; i≥1 cost[i−1]−cost[i] (restrictMode + segment + inherit)
       const roundTripFactor = 1;
 
       if (roundTripFactor === 0 && totalBrokerage > 0) {
-        // User has no rate configured but brokerage was charged — credit all to direct admin
         console.log('[distributeBrokerage] User rate is 0, crediting full amount to direct admin');
         await this.creditBrokerageToAdmin(
           directAdmin, totalBrokerage, trade,
@@ -2381,19 +2891,8 @@ static _SEGMENT_MERGE_FALLBACK = {
         return;
       }
 
-      // Distribution: each admin keeps the difference between their rate and their parent's rate
-      // hierarchyChain = [Ashish(2000), Manish(1500), Ram(1000), SuperAdmin(500)]
-      // Ashish keeps: 2000-1500 = 500/crore worth
-      // Manish keeps: 1500-1000 = 500/crore worth
-      // Ram keeps: 1000-500 = 500/crore worth
-      // SuperAdmin keeps: 500-0 = 500/crore worth (remainder)
-
-      // Build levels array: each admin's ₹ amount based on their rate
-      const levels = [];
-      for (const entry of hierarchyChain) {
-        levels.push(Math.round(entry.brokerageInr * roundTripFactor * 100) / 100);
-      }
-      levels.push(0); // 0 at the end for SuperAdmin's parent (no parent)
+      const levels = adminInrLevels.map((v) => Math.round((Number(v) || 0) * roundTripFactor * 100) / 100);
+      levels.push(0);
 
       console.log('[distributeBrokerage] Distribution levels:', {
         totalBrokerage,
@@ -2401,21 +2900,193 @@ static _SEGMENT_MERGE_FALLBACK = {
         chain: hierarchyChain.map(h => ({ name: h.admin.name, role: h.role, brokerageInr: h.brokerageInr }))
       });
 
-      // Check for franchise root in hierarchy
       const franchiseRoot = findFranchiseRootInChain(hierarchyChain);
+
+      const pattiRootIdx = pattiRootId
+        ? hierarchyChain.findIndex((h) => String(h.admin._id) === pattiRootId)
+        : -1;
+      const saIdx = hierarchyChain.findIndex((h) => h.role === 'SUPER_ADMIN');
+      const hierarchyChainForPatti = hierarchyChain.map((h) => h.admin);
+      const downlinePattiEdges =
+        pattiCtx.active &&
+        chainHasDownlinePattiEdges(
+          hierarchyChainForPatti,
+          user,
+          pattiCtx.segKey || segmentKey
+        );
+      const pattiPoolStartIdx =
+        downlinePattiEdges && saIdx >= 0 ? 0 : pattiRootIdx >= 0 ? pattiRootIdx : 0;
+      const usePattiAdminSa =
+        pattiCtx.active && saIdx >= 0 && (pattiRootIdx >= 0 || downlinePattiEdges);
+
+      if (pattiCtx.active && !usePattiAdminSa) {
+        console.warn('[distributeBrokerage] Patti configured but chain missing root or SA:', {
+          pattiRootId,
+          pattiRootIdx,
+          saIdx,
+          chain: hierarchyChain.map((h) => ({ name: h.admin?.name, role: h.role })),
+          segKey: pattiCtx.segKey,
+          childPct: pattiCtx.childPct,
+        });
+      }
 
       let divertedToSuperAdmin = 0;
       let divertedToFranchiseRoot = 0;
       let totalDistributed = 0;
+      let pattiPoolAccum = 0;
 
-      // Each admin gets: their rate - parent's rate (next in chain)
+      const creditPattiAdminSaPool = async () => {
+        if (pattiPoolAccum <= 0) return;
+        const bookAdmin = hierarchyChain[0]?.admin || directAdmin;
+        const { credits, usesPatti, segKey, pattiRootId: cascadeRootId } =
+          await resolvePattiCascadeCredits(bookAdmin, user, trade, pattiPoolAccum);
+
+        const pattiRootAdmin =
+          (cascadeRootId &&
+            hierarchyChain.find((h) => String(h.admin._id) === String(cascadeRootId))?.admin) ||
+          hierarchyChain[pattiRootIdx]?.admin ||
+          pattiCtx.pattiRoot;
+
+        const pattiRootMeta = {
+          pattiRootAdminId: pattiRootAdmin?._id,
+          pattiRootAdminName: pattiRootAdmin?.name || pattiRootAdmin?.username || '',
+          pattiRootAdminCode: pattiRootAdmin?.adminCode || '',
+        };
+
+        console.log('[distributeBrokerage] Patti hierarchy pool:', {
+          pool: pattiPoolAccum,
+          usesPatti,
+          credits: credits?.map((c) => ({
+            adminId: c.adminId,
+            amount: c.amount,
+            childPct: c.childPct,
+            source: c.source,
+          })),
+          segKey: segKey || pattiCtx.segKey,
+        });
+
+        if (!usesPatti || !credits?.length) {
+          const { child, parent } = splitByChildPercent(pattiPoolAccum, pattiCtx.childPct);
+          const radhaAdmin = hierarchyChain[pattiRootIdx]?.admin;
+          const saAdmin = hierarchyChain[saIdx]?.admin;
+          const radhaEligible = adminReceivesHierarchyBrokerage(radhaAdmin, 'trading');
+          let saPattiAmount = parent;
+          if (!radhaEligible && child > 0) saPattiAmount = roundMoney(parent + child);
+          if (child > 0 && radhaEligible && radhaAdmin) {
+            await this.creditBrokerageToAdmin(
+              radhaAdmin,
+              child,
+              trade,
+              `Patti ${pattiCtx.childPct}% (₹${child.toFixed(2)})`,
+              user,
+              leg,
+              false,
+              { pattiSharing: true, pattiChildPct: pattiCtx.childPct, pattiSegmentKey: pattiCtx.segKey, ...pattiRootMeta }
+            );
+            totalDistributed += child;
+          }
+          if (saPattiAmount > 0 && saAdmin) {
+            await this.creditBrokerageToAdmin(
+              saAdmin,
+              saPattiAmount,
+              trade,
+              `Patti parent (₹${saPattiAmount.toFixed(2)})`,
+              user,
+              leg,
+              false,
+              { pattiSharing: true, pattiSegmentKey: pattiCtx.segKey, pattiSource: 'individual_patti_parent', ...pattiRootMeta }
+            );
+            totalDistributed += saPattiAmount;
+          }
+          pattiPoolAccum = 0;
+          return;
+        }
+
+        for (const c of credits) {
+          if (Math.abs(c.amount) < 0.000001) continue;
+          const adm =
+            c.admin ||
+            (await Admin.findById(c.adminId).select(
+              'name role wallet stats status isFranchiseRoot adminCode receivesHierarchyBrokerage'
+            ));
+          if (!adm || adm.status !== 'ACTIVE') continue;
+          if (!adminReceivesHierarchyBrokerage(adm, 'trading')) continue;
+
+          await this.creditBrokerageToAdmin(
+            adm,
+            c.amount,
+            trade,
+            `Patti ${c.childPct}% (₹${Math.abs(c.amount).toFixed(2)}) [${segKey || pattiCtx.segKey}]`,
+            user,
+            leg,
+            !!adm.isFranchiseRoot,
+            {
+              pattiSharing: true,
+              pattiChildPct: c.childPct,
+              pattiSegmentKey: segKey || pattiCtx.segKey,
+              pattiSource: c.source,
+              chargeKind: 'BROKERAGE',
+              ...pattiRootMeta,
+            }
+          );
+          totalDistributed += Math.abs(c.amount);
+        }
+
+        pattiPoolAccum = 0;
+      };
+
+      // Bottom keeps client charge − own cost; upper levels keep own cost − parent cost
       for (let i = 0; i < hierarchyChain.length; i++) {
         const { admin, role } = hierarchyChain[i];
-        const myRateAmt = levels[i];              // my own ₹ amount
-        const parentRateAmt = levels[i + 1];      // parent's ₹ amount (next in chain going up)
-        const amount = Math.round((myRateAmt - parentRateAmt) * 100) / 100;
+        const myRateAmt = levels[i];
+        const amount = computeMlmLevelShareAmount(i, totalBrokerage, levels);
 
-        if (amount <= 0) continue;
+        if (amount <= 0) {
+          if (i === 0 && (role === 'SUB_BROKER' || role === 'BROKER')) {
+            console.warn(
+              '[distributeBrokerage] Direct admin share is 0 — client charge must exceed this level cost rate:',
+              {
+                name: admin.name,
+                role,
+                clientChargeInr: totalBrokerage,
+                directCostInr: myRateAmt,
+                commType: hierarchyChain[i].commType,
+                commValue: hierarchyChain[i].commValue,
+                mlmRateSource: hierarchyChain[i].mlmRateSource,
+                segmentKey,
+              }
+            );
+          } else if (role === 'BROKER' && i === 1 && hierarchyChain[0]?.role === 'SUB_BROKER') {
+            console.warn(
+              '[distributeBrokerage] BROKER share is 0 — sub-broker cost rate must exceed broker cost rate (check segment + restrictMode):',
+              {
+                name: admin.name,
+                subBrokerCostInr: levels[0],
+                brokerCostInr: myRateAmt,
+                commType: hierarchyChain[i].commType,
+                commValue: hierarchyChain[i].commValue,
+                mlmRateSource: hierarchyChain[i].mlmRateSource,
+                segmentKey,
+              }
+            );
+          }
+          continue;
+        }
+
+        const inPattiSlice = usePattiAdminSa && i >= pattiPoolStartIdx && i <= saIdx;
+
+        if (inPattiSlice) {
+          if (role === 'SUPER_ADMIN' && franchiseRoot) {
+            divertedToFranchiseRoot += amount;
+          } else {
+            // ADMIN↔SA top slice — pool then split (restricted admin share rolls into SA parent %)
+            pattiPoolAccum += amount;
+          }
+          if (i === saIdx) {
+            await creditPattiAdminSaPool();
+          }
+          continue;
+        }
 
         // If franchise root exists and this is SUPER_ADMIN, divert to franchise root
         if (role === 'SUPER_ADMIN' && franchiseRoot) {
@@ -2429,20 +3100,29 @@ static _SEGMENT_MERGE_FALLBACK = {
         }
 
         console.log('[distributeBrokerage] Crediting:', {
-          name: admin.name, role, amount,
-          myRate: myRateAmt, parentRate: parentRateAmt
+          name: admin.name,
+          role,
+          amount,
+          clientCharge: i === 0 ? totalBrokerage : undefined,
+          belowRate: i > 0 ? levels[i - 1] : undefined,
+          myRate: myRateAmt,
         });
         await this.creditBrokerageToAdmin(
           admin, amount, trade,
           `${role} share (₹${amount.toFixed(2)})`,
           user,
           leg,
-          !!franchiseRoot
+          !!franchiseRoot,
+          { hierarchyRole: role }
         );
         totalDistributed += amount;
       }
 
-      // Handle rounding remainder - give to SuperAdmin
+      if (usePattiAdminSa && pattiPoolAccum > 0) {
+        await creditPattiAdminSaPool();
+      }
+
+      // Handle rounding remainder - give to SuperAdmin (or patti pool if SA in patti slice)
       const remainder = Math.round((totalBrokerage - totalDistributed - divertedToSuperAdmin - divertedToFranchiseRoot) * 100) / 100;
       if (remainder > 0.01) {
         const topAdmin = hierarchyChain[hierarchyChain.length - 1]?.admin;
@@ -2451,6 +3131,9 @@ static _SEGMENT_MERGE_FALLBACK = {
             divertedToFranchiseRoot += remainder;
           } else if (!adminReceivesHierarchyBrokerage(topAdmin, 'trading')) {
             divertedToSuperAdmin += remainder;
+          } else if (usePattiAdminSa && saIdx >= 0) {
+            pattiPoolAccum += remainder;
+            await creditPattiAdminSaPool();
           } else {
             await this.creditBrokerageToAdmin(topAdmin, remainder, trade, `Rounding remainder (₹${remainder.toFixed(2)})`, user, leg, !!franchiseRoot);
             totalDistributed += remainder;
@@ -2481,7 +3164,16 @@ static _SEGMENT_MERGE_FALLBACK = {
             await this.creditBrokerageToAdmin(
               superAdmin, platformCharges, trade,
               `Platform charges (${platformChargesPct}% from franchise root)`,
-              user, leg, false
+              user, leg, false,
+              {
+                profitKind: 'FRANCHISE_PLATFORM_CHARGE',
+                chargeKind: 'BROKERAGE',
+                franchiseRootId: franchiseRoot._id,
+                franchiseRootName: franchiseRoot.name || franchiseRoot.username || '',
+                franchiseRootAdminCode: franchiseRoot.adminCode || '',
+                platformPct: platformChargesPct,
+                baseAmount: divertedToFranchiseRoot,
+              }
             );
           }
         }
@@ -2551,7 +3243,7 @@ static _SEGMENT_MERGE_FALLBACK = {
   }
   
   // Helper to credit brokerage to a single admin
-  static async creditBrokerageToAdmin(admin, amount, trade, description, user = null, leg = null, isFranchiseRoot = false) {
+  static async creditBrokerageToAdmin(admin, amount, trade, description, user = null, leg = null, isFranchiseRoot = false, extraMeta = null) {
     if (!admin || amount <= 0) {
       console.log('[creditBrokerageToAdmin] Skipping - admin or amount invalid:', {
         admin: admin?.name,
@@ -2614,7 +3306,8 @@ static _SEGMENT_MERGE_FALLBACK = {
         tradeSide: trade.side,
         tradeQuantity: trade.quantity,
         leg: leg,
-        isFranchiseRoot
+        isFranchiseRoot,
+        ...(extraMeta && typeof extraMeta === 'object' ? extraMeta : {}),
       }
     });
     

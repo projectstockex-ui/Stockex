@@ -2,6 +2,7 @@ import User from '../models/User.js';
 import Trade from '../models/Trade.js';
 import RiskConfig from '../models/RiskConfig.js';
 import { readNseBseWalletFromDb } from '../utils/nseBseWallet.js';
+import { computePositionPnL } from '../utils/bookPnL.js';
 
 /**
  * TradePro Trading Engine - Wallet Service
@@ -67,18 +68,7 @@ class WalletService {
    * @returns {Number} - Unrealized PnL
    */
   static calculatePositionPnL(position, currentPrice) {
-    const price = currentPrice || position.currentPrice || position.entryPrice;
-    const quantity = position.quantity || 0;
-    const contractSize = position.contractSize || position.lotSize || 1;
-    const entryPrice = position.entryPrice || 0;
-    
-    if (position.side === 'BUY') {
-      // Long position: profit when price goes up
-      return (price - entryPrice) * quantity * contractSize;
-    } else {
-      // Short position: profit when price goes down
-      return (entryPrice - price) * quantity * contractSize;
-    }
+    return computePositionPnL(position, currentPrice);
   }
   
   /**

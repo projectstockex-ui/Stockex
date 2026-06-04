@@ -2,6 +2,7 @@ import User from '../models/User.js';
 import Trade from '../models/Trade.js';
 import Admin from '../models/Admin.js';
 import TradeService from './tradeService.js';
+import { deriveUnderlyingSymbol, resolveLotSizeFromSymbol } from '../utils/lotSizeResolver.js';
 import Instrument from '../models/Instrument.js';
 import MarketState from '../models/MarketState.js';
 import Notification from '../models/Notification.js';
@@ -11,6 +12,19 @@ import SystemSettings from '../models/SystemSettings.js';
 import RiskConfig from '../models/RiskConfig.js';
 import WalletService from './walletService.js';
 import CircuitBreakerService from './circuitBreakerService.js';
+import {
+  subwalletCloseBalancePnL,
+  subwalletMarginReleaseOnClose,
+} from '../utils/subwalletCashWallet.js';
+import {
+  alignCryptoExitToEntryUnit,
+  computeAdminBookPoolForPatti,
+  computeMarkToMarketPnL,
+  reconcileAutosquarePnL,
+  reconcileStoredGrossPnL,
+  resolveTradeCloseQuantity,
+  roundMoney as roundBookMoney,
+} from '../utils/bookPnL.js';
 import leverageValidationService from './leverageValidationService.js';
 import {
   orderIsCrypto,
@@ -19,13 +33,19 @@ import {
   tradeIsUsdSpot,
   tradeIsForex,
   tradeIsCryptoOnly,
+  tradeIsIndianMarket,
 } from '../utils/tradingUsdSpot.js';
 import { creditReferralTradingReward } from './referralService.js';
 import {
   buildInstrumentDenyContext,
   assertHierarchyInstrumentNotDenied,
   isAllowedWithinLowHigh,
-} from '../services/instrumentRestrictionService.js';
+} from './instrumentRestrictionService.js';
+import {
+  resolveSegmentGroupLowHighForInstrument,
+  resolveSegmentGroupClientTradingForInstrument,
+  assertSegmentGroupClientTradingAllowed,
+} from './segmentGroupingService.js';
 import { assertLtpBracketOrderAllowed } from './ltpBracketService.js';
 import {
   isBinanceCryptoOrder,
@@ -205,13 +225,22 @@ class TradingService {
           exchange: exchange 
         }).select('lotSize symbol').lean();
       }
-      if (instrument?.lotSize && instrument.lotSize > 0) {
+      if (instrument?.lotSize && instrument.lotSize > 1) {
         return instrument.lotSize;
       }
+      const base = deriveUnderlyingSymbol(instrument?.tradingSymbol || symbol);
+      const fromSymbol = resolveLotSizeFromSymbol({
+        symbol: base || symbol,
+        tradingSymbol: instrument?.tradingSymbol,
+        exchange: exchange || instrument?.exchange,
+      });
+      if (fromSymbol > 1) return fromSymbol;
     } catch (error) {
       console.error('Error fetching lot size from DB:', error.message);
     }
-    // Fallback to hardcoded
+    const base = deriveUnderlyingSymbol(symbol);
+    const fromSymbol = resolveLotSizeFromSymbol({ symbol: base || symbol, exchange });
+    if (fromSymbol > 1) return fromSymbol;
     return this.getLotSize(symbol, null, exchange);
   }
 
@@ -228,7 +257,17 @@ class TradingService {
 
     // Check if user has the specific segment enabled in their segment permissions
     if (user && userSegment) {
-      let userSegUpper = String(userSegment || '').toUpperCase();
+      const originalSegUpper = String(userSegment || '').toUpperCase();
+      // Segment permissions are stored using market-watch aligned granular keys (e.g. NSE-EQ),
+      // but some callers may pass coarse keys like EQUITY/NSE/BSE. Normalize for permission checks.
+      const normalizeSegmentForPermissions = (segUpper) => {
+        if (!segUpper) return segUpper;
+        const s = String(segUpper).toUpperCase();
+        if (s === 'EQUITY' || s === 'EQ' || s === 'NSE' || s === 'BSE' || s === 'NSEEQ') return 'NSE-EQ';
+        return s;
+      };
+
+      let userSegUpper = normalizeSegmentForPermissions(originalSegUpper);
 
       // Map FNO (Futures & Options product) to NSEFUT/NSEOPT (NSE segments)
       // FNO is the product category, NSEFUT/NSEOPT are the actual exchange segments under NSE
@@ -293,7 +332,8 @@ class TradingService {
 
       // If neither user nor parent has the segment enabled, block trading
       console.log(`[isMarketOpen] User and parent admin do NOT have ${userSegUpper} enabled, blocking trading`);
-      return { open: false, reason: `${userSegUpper} segment is not enabled for this user` };
+      // Keep the original segment name in the error reason (better UX for callers sending EQUITY).
+      return { open: false, reason: `${originalSegUpper} segment is not enabled for this user` };
     }
 
     // Fallback: check market hours only if no user segment check
@@ -314,11 +354,30 @@ class TradingService {
       }
 
       const result = await MarketState.isTradingAllowed(segment);
-      if (exchange === 'MCX' && !result.allowed) {
-        const fallback = this.isMarketOpenFallback('MCX');
-        return fallback.open
-          ? { open: true, reason: 'MCX session open (time-window fallback)' }
-          : { open: false, reason: fallback.reason || result.reason };
+      if (exchange === 'MCX') {
+        if (user) {
+          const { isMcxSessionActiveForUser } = await import('../utils/mcxSessionTiming.js');
+          let sessionUser = user;
+          if (!sessionUser.admin?.segmentPermissions) {
+            const User = (await import('../models/User.js')).default;
+            sessionUser = await User.findById(user._id || user.id)
+              .populate('admin', 'segmentPermissions')
+              .lean();
+          }
+          if (sessionUser?.admin?.segmentPermissions) {
+            sessionUser.parentSegmentPermissions = sessionUser.admin.segmentPermissions;
+          }
+          const mcxActive = await isMcxSessionActiveForUser(sessionUser);
+          if (!mcxActive) {
+            return { open: false, reason: 'MCX trading session is closed (admin timing)' };
+          }
+        }
+        if (!result.allowed) {
+          const fallback = this.isMarketOpenFallback('MCX');
+          return fallback.open
+            ? { open: true, reason: 'MCX session open (time-window fallback)' }
+            : { open: false, reason: fallback.reason || result.reason };
+        }
       }
       return { open: result.allowed, reason: result.reason };
     } catch (error) {
@@ -545,6 +604,143 @@ class TradingService {
     };
   }
 
+  /** True when the order only reduces an existing net open position (exit), not a new open. */
+  static async orderOnlyReducesOpenPosition(userId, orderData) {
+    const side = String(orderData?.side || '').toUpperCase();
+    if (!side || !['BUY', 'SELL'].includes(side)) return false;
+
+    const token = orderData?.token != null ? String(orderData.token) : null;
+    const symbol = orderData?.symbol ? String(orderData.symbol).toUpperCase() : null;
+    const exchange = orderData?.exchange ? String(orderData.exchange).toUpperCase() : null;
+    if (!token && !symbol) return false;
+
+    const query = { user: userId, status: 'OPEN' };
+    if (token) query.token = token;
+    else {
+      query.symbol = new RegExp(`^${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+      if (exchange) query.exchange = exchange;
+    }
+
+    const openTrades = await Trade.find(query).select('side quantity').lean();
+    if (!openTrades.length) return false;
+
+    let netQty = 0;
+    for (const t of openTrades) {
+      const q = Number(t.quantity) || 0;
+      if (t.side === 'BUY') netQty += q;
+      else if (t.side === 'SELL') netQty -= q;
+    }
+    if (netQty > 0 && side === 'SELL') return true;
+    if (netQty < 0 && side === 'BUY') return true;
+    return false;
+  }
+
+  /**
+   * Net an incoming MARKET order against opposite OPEN trades (FIFO) for same instrument.
+   * Returns remaining quantity that should open as a fresh trade.
+   */
+  static async netAgainstOppositeOpenPositions(userId, orderData, quantity) {
+    let remainingQty = Number(quantity) || 0;
+    if (!(remainingQty > 0)) {
+      return { remainingQty: 0, nettedQty: 0, closedTrades: [], lastTrade: null };
+    }
+    if (String(orderData?.orderType || '').toUpperCase() !== 'MARKET') {
+      return { remainingQty, nettedQty: 0, closedTrades: [], lastTrade: null };
+    }
+
+    const incomingSide = String(orderData?.side || '').toUpperCase();
+    if (!['BUY', 'SELL'].includes(incomingSide)) {
+      return { remainingQty, nettedQty: 0, closedTrades: [], lastTrade: null };
+    }
+    const oppositeSide = incomingSide === 'BUY' ? 'SELL' : 'BUY';
+
+    const token = orderData?.token != null ? String(orderData.token) : null;
+    const symbol = String(orderData?.symbol || '').trim();
+    const exchange = String(orderData?.exchange || '').trim();
+    const segment = String(orderData?.segment || '').trim();
+    const productType = String(orderData?.productType || '').trim();
+    if (!token && !symbol) {
+      return { remainingQty, nettedQty: 0, closedTrades: [], lastTrade: null };
+    }
+
+    const query = {
+      user: userId,
+      status: 'OPEN',
+      side: oppositeSide,
+    };
+    if (token) {
+      query.token = token;
+    } else {
+      query.symbol = new RegExp(`^${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+      if (exchange) query.exchange = exchange;
+    }
+    if (segment) query.segment = segment;
+    if (productType) query.productType = productType;
+
+    const openOpposite = await Trade.find(query).sort({ openedAt: 1, createdAt: 1, _id: 1 });
+    if (!openOpposite.length) {
+      return { remainingQty, nettedQty: 0, closedTrades: [], lastTrade: null };
+    }
+
+    const bidPrice = Number(orderData?.bidPrice) || 0;
+    const askPrice = Number(orderData?.askPrice) || 0;
+    const fallbackPx = Number(orderData?.price) || 0;
+    let nettedQty = 0;
+    let lastTrade = null;
+    const closedTrades = [];
+    let partialCloseFn = null;
+
+    for (const openTrade of openOpposite) {
+      if (!(remainingQty > 0)) break;
+
+      const openQty = Number(openTrade.quantity) || 0;
+      if (!(openQty > 0)) continue;
+
+      const closeQty = Math.min(remainingQty, openQty);
+      const isFullClose = closeQty >= openQty - 1e-9;
+      const exitPrice = incomingSide === 'BUY' ? (askPrice || fallbackPx) : (bidPrice || fallbackPx);
+
+      if (isFullClose) {
+        const closeRes = await this.squareOffPosition(
+          openTrade._id.toString(),
+          'NETTING',
+          exitPrice,
+          bidPrice,
+          askPrice
+        );
+        lastTrade = closeRes?.trade || lastTrade;
+        closedTrades.push({
+          tradeId: openTrade.tradeId || String(openTrade._id),
+          quantity: openQty,
+          mode: 'FULL',
+        });
+        nettedQty = roundBookMoney(nettedQty + openQty);
+        remainingQty = roundBookMoney(Math.max(0, remainingQty - openQty));
+      } else {
+        if (!partialCloseFn) {
+          const partialMod = await import('./partialCloseService.js');
+          partialCloseFn = partialMod.executePartialClose;
+        }
+        const partialRes = await partialCloseFn(userId, openTrade._id.toString(), {
+          quantity: closeQty,
+          exitPrice,
+          bidPrice,
+          askPrice,
+        });
+        lastTrade = partialRes?.trade || lastTrade;
+        closedTrades.push({
+          tradeId: openTrade.tradeId || String(openTrade._id),
+          quantity: closeQty,
+          mode: 'PARTIAL',
+        });
+        nettedQty = roundBookMoney(nettedQty + closeQty);
+        remainingQty = roundBookMoney(Math.max(0, remainingQty - closeQty));
+      }
+    }
+
+    return { remainingQty, nettedQty, closedTrades, lastTrade };
+  }
+
   // Place order - Uses user's segment and script settings for all calculations
   // TradePro Trading Engine - 16-step validation pipeline
   static async placeOrder(userId, orderData) {
@@ -637,14 +833,20 @@ class TradingService {
         throw new Error('This instrument is not available for trading.');
       }
 
+      await CircuitBreakerService.ensureCircuitsForOrder(instrument, orderData);
+
       // Check if order side is allowed based on circuit status
       const circuitCheck = CircuitBreakerService.checkOrderAllowed(instrument, orderData.side);
       if (!circuitCheck.allowed) {
         throw new Error(circuitCheck.reason);
       }
       
-      // Check if price is within circuit limits
-      const priceCheck = CircuitBreakerService.checkPriceWithinLimits(instrument, orderData.price);
+      // Check if price is within circuit limits (skips crypto/forex; repairs stale bands)
+      const priceCheck = CircuitBreakerService.checkPriceWithinLimits(
+        instrument,
+        orderData.price,
+        orderData
+      );
       if (!priceCheck.valid) {
         throw new Error(priceCheck.reason);
       }
@@ -661,16 +863,34 @@ class TradingService {
     const denyCtx = buildInstrumentDenyContext(orderData, instrument || null);
     await assertHierarchyInstrumentNotDenied(user, denyCtx);
 
-    // Check if user is allowed to trade within low-high range
-    const allowedWithinLowHigh = await isAllowedWithinLowHigh(user, denyCtx);
-    if (allowedWithinLowHigh && instrument && (instrument.low || instrument.high)) {
-      const orderPrice = Number(orderData.price || 0);
+    if (instrument) {
+      const segClientTrading = await resolveSegmentGroupClientTradingForInstrument(instrument);
+      if (!segClientTrading.allowed) {
+        const onlyClosing = await TradeService.orderOnlyReducesOpenPosition(userId, orderData);
+        if (!onlyClosing) {
+          await assertSegmentGroupClientTradingAllowed(instrument);
+        }
+      }
+    }
+
+    // Segment-group low–high (e.g. Banking ON, IT OFF) + legacy denylist flag
+    const segmentLowHigh = await resolveSegmentGroupLowHighForInstrument(instrument);
+    const allowedFromDenylist = await isAllowedWithinLowHigh(user, denyCtx);
+    const enforceLowHigh = segmentLowHigh.restrict || allowedFromDenylist;
+    if (enforceLowHigh && instrument && (instrument.low || instrument.high)) {
+      const orderPrice =
+        orderData.orderType === 'SL' || orderData.orderType === 'SL-M'
+          ? Number(orderData.triggerPrice || orderData.price || 0)
+          : Number(orderData.price || orderData.ltp || instrument.ltp || 0);
       const lowPrice = Number(instrument.low || 0);
       const highPrice = Number(instrument.high || 0);
       if (lowPrice > 0 && highPrice > 0 && orderPrice > 0) {
         if (orderPrice < lowPrice || orderPrice > highPrice) {
+          const groupHint = segmentLowHigh.groupLabel
+            ? ` (${segmentLowHigh.groupLabel} group)`
+            : '';
           throw new Error(
-            `Order price ${orderPrice} is outside the allowed range (${lowPrice} - ${highPrice}). Trading is restricted to within low-high range.`
+            `Order price ${orderPrice} is outside the allowed range (${lowPrice} - ${highPrice})${groupHint}. Trading is restricted to within day low–high for this instrument group.`
           );
         }
       }
@@ -713,29 +933,22 @@ class TradingService {
       throw new Error(`Trading in ${orderData.symbol} is blocked for your account`);
     }
 
-    // ==================== CIRCUIT LIMIT CHECK ====================
-    // Upper Circuit: When bid=0 and ask=0, stock hit upper circuit - only SELL allowed (no buyers)
-    // Lower Circuit: When bid=0 and ask=0, stock hit lower circuit - only BUY allowed (no sellers)
-    // Circuit detection is based on which price is 0:
-    // - Upper Circuit: askPrice = 0 (no sellers at this price) → Block BUY
-    // - Lower Circuit: bidPrice = 0 (no buyers at this price) → Block SELL
-    const bidPrice = orderData.bidPrice || 0;
-    const askPrice = orderData.askPrice || 0;
-    
-    // Upper Circuit: No ask price means no one is selling → BUY not possible
-    if (orderData.side === 'BUY' && askPrice === 0 && bidPrice > 0) {
-      throw new Error(`${orderData.symbol} is at UPPER CIRCUIT. Buy orders are not allowed. Only sell orders can be placed.`);
-    }
-    
-    // Lower Circuit: No bid price means no one is buying → SELL not possible
-    if (orderData.side === 'SELL' && bidPrice === 0 && askPrice > 0) {
-      throw new Error(`${orderData.symbol} is at LOWER CIRCUIT. Sell orders are not allowed. Only buy orders can be placed.`);
-    }
-    
-    // Both bid and ask are 0 - market is frozen/halted
-    if (bidPrice === 0 && askPrice === 0 && orderData.price > 0) {
-      // Allow trading if we have LTP (last traded price) - this handles pre-market or illiquid stocks
-      console.log(`[Circuit] ${orderData.symbol}: Both bid/ask are 0, using LTP: ${orderData.price}`);
+    // ==================== CIRCUIT LIMIT CHECK (NSE / BSE / MCX only) ====================
+    if (tradeIsIndianMarket(orderData)) {
+      const bidPrice = orderData.bidPrice || 0;
+      const askPrice = orderData.askPrice || 0;
+
+      if (orderData.side === 'BUY' && askPrice === 0 && bidPrice > 0) {
+        throw new Error(`${orderData.symbol} is at UPPER CIRCUIT. Buy orders are not allowed. Only sell orders can be placed.`);
+      }
+
+      if (orderData.side === 'SELL' && bidPrice === 0 && askPrice > 0) {
+        throw new Error(`${orderData.symbol} is at LOWER CIRCUIT. Sell orders are not allowed. Only buy orders can be placed.`);
+      }
+
+      if (bidPrice === 0 && askPrice === 0 && orderData.price > 0) {
+        console.log(`[Circuit] ${orderData.symbol}: Both bid/ask are 0, using LTP: ${orderData.price}`);
+      }
     }
     // ==================== END CIRCUIT CHECK ====================
 
@@ -808,6 +1021,32 @@ class TradingService {
       } else {
         lots = totalQuantity;
       }
+    }
+
+    // FIFO netting: opposite-side MARKET order first closes existing OPEN quantity.
+    const nettingResult = await this.netAgainstOppositeOpenPositions(userId, orderData, totalQuantity);
+    totalQuantity = Number(nettingResult.remainingQty) || 0;
+    if (lotSize > 0) {
+      lots = totalQuantity / lotSize;
+    } else {
+      lots = totalQuantity;
+    }
+
+    if (!(totalQuantity > 0)) {
+      return {
+        success: true,
+        trade: nettingResult.lastTrade || null,
+        nettedOnly: true,
+        nettedQuantity: nettingResult.nettedQty,
+        closedTrades: nettingResult.closedTrades,
+        marginBlocked: 0,
+        tradeValue: 0,
+        leverage: 1,
+        spread: 0,
+        commission: 0,
+        totalCharges: 0,
+        availableBalance: 0,
+      };
     }
 
     // Skip lot validation for USD spot (uses INR notional, not lots)
@@ -905,16 +1144,12 @@ class TradingService {
     //   }
     // }
 
-    const spreadPoints = TradeService.calculateUserSpread(scriptSettings, orderData.side);
-    const segmentHalfUsd =
-      (isCryptoWallet || isForexWallet) && orderData.orderType === 'MARKET'
-        ? TradeService.segmentCryptoSpreadHalfUsd(segmentSettings)
-        : 0;
-    const totalSpreadUsd = spreadPoints + segmentHalfUsd;
+    // Spread disabled — trades use raw bid/ask (no script or segment markup).
+    const totalSpreadUsd = 0;
     
     // Calculate margin - check for fixed margin first
     const isIntraday = orderData.productType === 'MIS' || orderData.productType === 'INTRADAY';
-    const isOption = orderData.instrumentType === 'OPTIONS';
+    const isOption = String(orderData.instrumentType || '').toUpperCase() === 'OPTIONS';
     const isOptionBuy = isOption && orderData.side === 'BUY';
     const isOptionSell = isOption && orderData.side === 'SELL';
     
@@ -928,7 +1163,26 @@ class TradingService {
       allowOptionBuyLeverage:
         isOptionBuy && TradeService.segmentHasOptionSideLeverage(hierarchySegKey),
     });
-    const marginCalc = this.calculateMargin({ ...orderData, quantity: totalQuantity }, user, leverage);
+    // Normalize market price for margin/brokerage calculations so MARKET orders
+    // use side-correct live quote (BUY->ask, SELL->bid) even when typed price is empty.
+    const sideUpper = String(orderData.side || '').toUpperCase();
+    const rawPx = Number(orderData.price);
+    const rawBid = Number(orderData.bidPrice);
+    const rawAsk = Number(orderData.askPrice);
+    const calcPrice =
+      String(orderData.orderType || '').toUpperCase() === 'MARKET'
+        ? sideUpper === 'BUY'
+          ? (Number.isFinite(rawAsk) && rawAsk > 0 ? rawAsk : Number.isFinite(rawPx) ? rawPx : 0)
+          : (Number.isFinite(rawBid) && rawBid > 0 ? rawBid : Number.isFinite(rawPx) ? rawPx : 0)
+        : Number.isFinite(rawPx)
+          ? rawPx
+          : 0;
+
+    const marginCalc = this.calculateMargin(
+      { ...orderData, quantity: totalQuantity, price: calcPrice },
+      user,
+      leverage
+    );
 
     console.log('[OrderPlacement] Margin calculation debug:', {
       isCryptoWallet,
@@ -939,27 +1193,47 @@ class TradingService {
       marginCalcTradeValue: marginCalc.tradeValue
     });
 
-    const price = orderData.price || 0;
-    const spreadUsdSide = Number(segmentSettings?.cryptoSpreadUsdPerSide);
-    // For crypto/forex, use USD spread only (no INR conversion)
-    const segmentSpreadMarkupUsd =
-      (isCryptoWallet || isForexWallet) &&
-      orderData.orderType === 'MARKET' &&
-      orderData.side === 'BUY' &&
-      spreadUsdSide > 0
-        ? spreadUsdSide * totalQuantity
-        : 0;
-    const tradeValue = price * totalQuantity + segmentSpreadMarkupUsd;
+    const price = calcPrice || 0;
+    const tradeValue = price * totalQuantity;
 
     const brokerageLots = TradeService.isIndianQuantitySegmentKey(segU, orderData.exchange)
       ? contractLotSize > 0
         ? totalQuantity / contractLotSize
         : lots
       : lots;
-    const oneWayBrokerage =
-      (await TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, orderData, brokerageLots)) +
-      TradeService.instrumentAdditionalCommission(instrument, brokerageLots, tradeValue);
-    let totalCommission = Math.round(oneWayBrokerage * 2 * 100) / 100;
+    const brokeragePayload = {
+      ...orderData,
+      quantity: totalQuantity,
+      lotSize: contractLotSize > 0 ? contractLotSize : lotSize,
+    };
+    const { resolveFranchiseTradingContext, getUserFranchiseRatePerCrore, computeFranchiseUserOneWayBrokerage } =
+      await import('../utils/franchiseBrokerage.js');
+    const franchiseCtx = await resolveFranchiseTradingContext(user, admin);
+    const userFranchiseRate = getUserFranchiseRatePerCrore(user);
+    let oneWayBrokerage;
+    if (franchiseCtx.active && userFranchiseRate > 0) {
+      oneWayBrokerage = computeFranchiseUserOneWayBrokerage(user, tradeValue);
+      console.log('[placeOrder] Franchise brokerage one-way:', {
+        userFranchiseRate,
+        tradeValue,
+        oneWayBrokerage,
+      });
+    } else {
+      oneWayBrokerage =
+        (await TradeService.calculateUserBrokerage(
+          segmentSettings,
+          scriptSettings,
+          { ...brokeragePayload, price: calcPrice },
+          brokerageLots,
+          admin?.brokerageCaps || null
+        )) +
+        TradeService.instrumentAdditionalCommission(instrument, brokerageLots, tradeValue);
+    }
+    // Mixed brokerage policy:
+    // - OPTIONS: charge once on OPEN leg only.
+    // - Non-options (FUT/EQ/etc): precharge OPEN+CLOSE on OPEN.
+    const isOptionContract = isOption === true;
+    let totalCommission = Math.round(oneWayBrokerage * (isOptionContract ? 1 : 2) * 100) / 100;
     
     // Priority 1: Check for fixed margin in script settings
     if (scriptSettings?.fixedMargin) {
@@ -1036,53 +1310,48 @@ class TradingService {
     const isMCXTradeEarly = orderData.exchange === 'MCX' || orderData.segment === 'MCX' ||
                            orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
 
-    // For crypto/forex, use USD cost (no INR conversion)
-    const spotTradeCostUsd =
-      isCryptoWallet || isForexWallet ? price * totalQuantity + segmentSpreadMarkupUsd : 0;
+    const { computeOrderAvailableBalance } = await import('../utils/orderAvailableMargin.js');
 
-    // Use appropriate wallet based on trade type
+    // Use appropriate wallet based on trade type (cash free + open MTM, same as dashboard)
     let availableBalance;
     if (isCryptoWallet) {
-      const cryptoBalance = user.cryptoWallet?.balance || 0;
-      const cryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
-      const cryptoFreeBalance = cryptoBalance - cryptoUsedMargin;
-      availableBalance = cryptoFreeBalance;
+      const walletField = 'cryptoWallet';
+      availableBalance = await computeOrderAvailableBalance(user._id, user, walletField);
       const cryptoOpenRequired = marginRequired + totalCommission;
-      if (cryptoOpenRequired > cryptoFreeBalance) {
+      if (cryptoOpenRequired > availableBalance) {
         throw new Error(
           `Insufficient crypto wallet balance. Required: ${cryptoOpenRequired.toFixed(2)} ` +
             `(margin ${marginRequired.toFixed(2)} + brokerage ${totalCommission.toFixed(2)}), ` +
-            `Available: ${cryptoFreeBalance.toFixed(2)}`
+            `Available: ${availableBalance.toFixed(2)}`
         );
       }
     } else if (isForexWallet) {
-      const forexBalance = user.forexWallet?.balance || 0;
-      const forexUsedMargin = user.forexWallet?.usedMargin || 0;
-      const forexFreeBalance = forexBalance - forexUsedMargin;
-      availableBalance = forexFreeBalance;
+      const walletField = 'forexWallet';
+      availableBalance = await computeOrderAvailableBalance(user._id, user, walletField);
       const forexOpenRequired = marginRequired + totalCommission;
-      if (forexOpenRequired > forexFreeBalance) {
+      if (forexOpenRequired > availableBalance) {
         throw new Error(
           `Insufficient forex wallet balance. Required: ${forexOpenRequired.toFixed(2)} ` +
             `(margin ${marginRequired.toFixed(2)} + brokerage ${totalCommission.toFixed(2)}), ` +
-            `Available: ${forexFreeBalance.toFixed(2)}`
+            `Available: ${availableBalance.toFixed(2)}`
         );
       }
     } else if (isMCXTradeEarly) {
-      const freshUser = await User.findById(user._id).select('mcxWallet');
-      const mcxBalance = freshUser?.mcxWallet?.balance || 0;
-      const mcxUsedMargin = freshUser?.mcxWallet?.usedMargin || 0;
-      const mcxFreeBalance = mcxBalance - mcxUsedMargin;
-      availableBalance = mcxFreeBalance;
+      const freshUser = await User.findById(user._id).select('mcxWallet wallet nseBseWallet');
+      if (freshUser) {
+        user.mcxWallet = freshUser.mcxWallet;
+        user.nseBseWallet = freshUser.nseBseWallet;
+        user.wallet = freshUser.wallet;
+      }
+      availableBalance = await computeOrderAvailableBalance(user._id, user, 'mcxWallet');
       const mcxOpenRequired = marginRequired + totalCommission;
-      if (mcxOpenRequired > mcxFreeBalance) {
+      if (mcxOpenRequired > availableBalance) {
         throw new Error(
           `Insufficient MCX wallet balance. Required: ${mcxOpenRequired.toLocaleString()} ` +
             `(margin ${marginRequired.toLocaleString()} + brokerage ${totalCommission.toLocaleString()}), ` +
-            `Available: ${mcxFreeBalance.toLocaleString()}`
+            `Available: ${availableBalance.toLocaleString()}`
         );
       }
-      user.mcxWallet = freshUser.mcxWallet;
     } else {
       // Regular trades (NSE/BSE) use trading balance with margin system
       const walletBalance = getNseBseBalance(user);
@@ -1123,15 +1392,16 @@ class TradingService {
       availableBalance = (walletBalance * leverage) - blockedMargin + Math.max(0, usablePledge);
 
       const freeTradingBalance = walletBalance - blockedMargin;
-      availableBalance = freeTradingBalance + Math.max(0, usablePledge);
+      const nseWithMtm = await computeOrderAvailableBalance(user._id, user, 'nseBseWallet');
+      availableBalance = nseWithMtm + Math.max(0, usablePledge);
 
       const nseOpenRequired = marginRequired + totalCommission;
-      if (nseOpenRequired > freeTradingBalance + Math.max(0, usablePledge)) {
+      if (nseOpenRequired > availableBalance) {
         const pledgeMsg = isNFOTrade && usablePledge > 0 ? ` (Pledge: ${Math.max(0, usablePledge).toLocaleString()} available)` : '';
         throw new Error(
           `Insufficient margin. Required: ${nseOpenRequired.toLocaleString()} ` +
             `(margin ${marginRequired.toLocaleString()} + brokerage ${totalCommission.toLocaleString()}), ` +
-            `Available margin: ${(freeTradingBalance + Math.max(0, usablePledge)).toLocaleString()}${pledgeMsg}`
+            `Available margin: ${availableBalance.toLocaleString()}${pledgeMsg}`
         );
       }
     }
@@ -1214,13 +1484,13 @@ class TradingService {
       totalCharges: totalCharges,
       status: orderData.orderType === 'MARKET' ? 'OPEN' : 'PENDING',
       bookType: 'B_BOOK',
-      brokeragePrepaidRoundTrip: true
+      brokeragePrepaidRoundTrip: !isOptionContract
     });
 
     if (orderData.orderType === 'MARKET') {
       trade.entryPrice = effectiveEntryPrice;
-      trade.currentPrice = orderData.price;
-      trade.marketPrice = orderData.price;
+      trade.currentPrice = calcPrice;
+      trade.marketPrice = calcPrice;
     } else if (isCryptoWallet || isForexWallet) {
       if (trade.limitPrice != null && Number(trade.limitPrice) > 0) {
         trade.limitPrice = Number(trade.limitPrice);
@@ -1246,8 +1516,12 @@ class TradingService {
       const cryptoBalance = user.cryptoWallet?.balance || 0;
       const cryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
       const willOpenNow = orderData.orderType === 'MARKET';
-      newCryptoUsedMargin = cryptoUsedMargin + marginRequired + (willOpenNow ? totalCommission : 0);
+      newCryptoUsedMargin = cryptoUsedMargin + marginRequired;
       newCryptoBalance = cryptoBalance;
+      if (willOpenNow && totalCommission > 0) {
+        newCryptoBalance = Math.max(0, cryptoBalance - totalCommission);
+        trade.walletBrokerageDebited = true;
+      }
 
       newTradingBalance = getNseBseBalance(user);
       newUsedMargin = getNseBseUsedMargin(user);
@@ -1255,19 +1529,23 @@ class TradingService {
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       console.log(
-        `Crypto trade: Locking ${marginRequired.toFixed(2)} margin, brokerage ${totalCommission.toFixed(2)} ` +
-          `${willOpenNow ? 'reserved in usedMargin' : 'deferred until fill'}. Balance: ${newCryptoBalance.toFixed(2)}, UsedMargin: ${newCryptoUsedMargin.toFixed(2)}`
+        `Crypto trade: Locking ${marginRequired.toFixed(2)} margin; brokerage ${totalCommission.toFixed(2)} ` +
+          `${willOpenNow ? 'debited from balance on open' : 'deferred until fill'}. Balance: ${newCryptoBalance.toFixed(2)}, UsedMargin: ${newCryptoUsedMargin.toFixed(2)}`
       );
 
       trade.marginUsed = marginRequired;
-      trade.brokerageReservedInMargin = willOpenNow && totalCommission > 0;
-      trade.walletBrokerageDebited = false;
+      trade.brokerageReservedInMargin = false;
+      if (!trade.walletBrokerageDebited) trade.walletBrokerageDebited = false;
     } else if (isForexWallet) {
       const forexBalance = user.forexWallet?.balance || 0;
       const forexUsedMargin = user.forexWallet?.usedMargin || 0;
       const willOpenNow = orderData.orderType === 'MARKET';
-      newForexUsedMargin = forexUsedMargin + marginRequired + (willOpenNow ? totalCommission : 0);
+      newForexUsedMargin = forexUsedMargin + marginRequired;
       newForexBalance = forexBalance;
+      if (willOpenNow && totalCommission > 0) {
+        newForexBalance = Math.max(0, forexBalance - totalCommission);
+        trade.walletBrokerageDebited = true;
+      }
 
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
@@ -1277,30 +1555,25 @@ class TradingService {
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       console.log(
-        `Forex trade: Locking ${marginRequired.toFixed(2)} margin, brokerage ${totalCommission.toFixed(2)} ` +
-          `${willOpenNow ? 'reserved in usedMargin' : 'deferred until fill'}. Balance: ${newForexBalance.toFixed(2)}, UsedMargin: ${newForexUsedMargin.toFixed(2)}`
+        `Forex trade: Locking ${marginRequired.toFixed(2)} margin; brokerage ${totalCommission.toFixed(2)} ` +
+          `${willOpenNow ? 'debited from balance on open' : 'deferred until fill'}. Balance: ${newForexBalance.toFixed(2)}, UsedMargin: ${newForexUsedMargin.toFixed(2)}`
       );
 
       trade.marginUsed = marginRequired;
-      trade.brokerageReservedInMargin = willOpenNow && totalCommission > 0;
-      trade.walletBrokerageDebited = false;
+      trade.brokerageReservedInMargin = false;
+      if (!trade.walletBrokerageDebited) trade.walletBrokerageDebited = false;
     } else if (isMCXTrade) {
       const mcxBalance = user.mcxWallet?.balance || 0;
       const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
-      const mcxFreeBalance = mcxBalance - mcxUsedMargin;
       const willOpenNow = orderData.orderType === 'MARKET';
-      const mcxOpenRequired = marginRequired + totalCommission;
+      // Margin validated above with cash free + open MTM (computeOrderAvailableBalance)
 
-      if (mcxOpenRequired > mcxFreeBalance) {
-        throw new Error(
-          `Insufficient MCX wallet balance. Required: ${mcxOpenRequired.toLocaleString()} ` +
-            `(margin ${marginRequired.toLocaleString()} + brokerage ${totalCommission.toLocaleString()}), ` +
-            `Available: ${mcxFreeBalance.toLocaleString()}`
-        );
-      }
-
-      newMcxUsedMargin = mcxUsedMargin + marginRequired + (willOpenNow ? totalCommission : 0);
+      newMcxUsedMargin = mcxUsedMargin + marginRequired;
       newMcxBalance = mcxBalance;
+      if (willOpenNow && totalCommission > 0) {
+        newMcxBalance = Math.max(0, mcxBalance - totalCommission);
+        trade.walletBrokerageDebited = true;
+      }
 
       // Regular wallet unchanged for MCX trades
       newTradingBalance = getNseBseBalance(user);
@@ -1309,14 +1582,14 @@ class TradingService {
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
       newForexBalance = user.forexWallet?.balance || 0;
-      trade.brokerageReservedInMargin = willOpenNow && totalCommission > 0;
-      trade.walletBrokerageDebited = false;
+      trade.brokerageReservedInMargin = false;
+      if (!trade.walletBrokerageDebited) trade.walletBrokerageDebited = false;
       console.log(
-        `MCX trade: Locking ₹${marginRequired.toLocaleString()} margin, brokerage ₹${totalCommission.toLocaleString()} ` +
-          `${willOpenNow ? 'reserved in usedMargin' : 'deferred until fill'}. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`
+        `MCX trade: Locking ₹${marginRequired.toLocaleString()} margin; brokerage ₹${totalCommission.toLocaleString()} ` +
+          `${willOpenNow ? 'debited from balance on open' : 'deferred until fill'}. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`
       );
     } else {
-      // Regular trades: Block margin in usedMargin, deduct only commission from balance
+      // NSE/BSE: margin in usedMargin; round-trip brokerage debited from balance on open
       // Available = tradingBalance - usedMargin, so margin is only tracked in usedMargin
       
       // NEW DELIVERY PLEDGE LOGIC for NFO/Futures:
@@ -1359,10 +1632,18 @@ class TradingService {
       
       const willOpenNow = orderData.orderType === 'MARKET';
       newTradingBalance = walletBalance;
-      newUsedMargin = walletUsedMargin + marginFromWallet + (willOpenNow ? totalCommission : 0);
+      newUsedMargin = walletUsedMargin + marginFromWallet;
       newBlocked = user.wallet.blocked || 0;
-      trade.brokerageReservedInMargin = willOpenNow && totalCommission > 0;
-      trade.walletBrokerageDebited = false;
+      trade.brokerageReservedInMargin = false;
+      if (willOpenNow && totalCommission > 0) {
+        newTradingBalance = Math.max(0, walletBalance - totalCommission);
+        trade.walletBrokerageDebited = true;
+        console.log(
+          `NSE/BSE trade: Locking ₹${marginFromWallet.toLocaleString()} margin; brokerage ₹${totalCommission.toLocaleString()} debited from balance on open`
+        );
+      } else {
+        trade.walletBrokerageDebited = false;
+      }
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoUsedMargin = user.cryptoWallet?.usedMargin || 0;
       newForexBalance = user.forexWallet?.balance || 0;
@@ -1483,10 +1764,17 @@ class TradingService {
       });
       if (brk > 0) {
         try {
-          // Distribute FULL round-trip brokerage on position OPEN (open+close combined)
-          console.log('[placeOrder] Distributing full brokerage on open (open+close):', brk);
-          await TradeService.distributeBrokerage(trade, brk, admin, user, 'OPEN+CLOSE');
-          console.log('[placeOrder] Full brokerage distributed successfully');
+          const brokerageLeg = trade.brokeragePrepaidRoundTrip ? 'OPEN+CLOSE' : 'OPEN';
+          const { resolveUserDirectAdmin } = await import('../utils/franchiseBrokerage.js');
+          const directAdminForBrokerage = (await resolveUserDirectAdmin(user)) || admin;
+          console.log('[placeOrder] Distributing brokerage on open:', {
+            brk,
+            brokerageLeg,
+            directAdmin: directAdminForBrokerage?.name,
+            userAdminId: user.admin,
+          });
+          await TradeService.distributeBrokerage(trade, brk, directAdminForBrokerage, user, brokerageLeg);
+          console.log('[placeOrder] Brokerage distributed successfully');
         } catch (distErr) {
           console.error('[placeOrder] distributeBrokerage at open:', distErr?.message || distErr);
         }
@@ -1614,7 +1902,7 @@ class TradingService {
       trade.openedAt = new Date();
 
       const commissionDue = Number(trade.commission) || 0;
-      if (commissionDue > 0 && !trade.brokerageReservedInMargin) {
+      if (commissionDue > 0 && !trade.walletBrokerageDebited) {
         const isMcxPending =
           trade.exchange === 'MCX' ||
           trade.segment === 'MCX' ||
@@ -1628,13 +1916,11 @@ class TradingService {
           const bal = freshUser?.cryptoWallet?.balance || 0;
           const um = freshUser?.cryptoWallet?.usedMargin || 0;
           freeBalance = bal - um;
-          marginField = 'cryptoWallet.usedMargin';
         } else if (trade.isForex) {
           const freshUser = await User.findById(trade.user).select('forexWallet.balance forexWallet.usedMargin');
           const bal = freshUser?.forexWallet?.balance || 0;
           const um = freshUser?.forexWallet?.usedMargin || 0;
           freeBalance = bal - um;
-          marginField = 'forexWallet.usedMargin';
         } else if (isMcxPending) {
           const freshUser = await User.findById(trade.user).select('mcxWallet.balance mcxWallet.usedMargin');
           const bal = freshUser?.mcxWallet?.balance || 0;
@@ -1650,15 +1936,15 @@ class TradingService {
           marginField = 'nseBseWallet.usedMargin';
         }
 
-        if (!marginField || commissionDue > freeBalance) {
+        if (commissionDue > freeBalance) {
           console.warn(
             `[executePendingOrder] Cannot open ${trade.symbol}: insufficient available margin for brokerage ₹${commissionDue.toFixed(2)}`
           );
           return null;
         }
-        await User.updateOne({ _id: trade.user }, { $inc: { [marginField]: commissionDue } });
-        trade.brokerageReservedInMargin = true;
-        trade.walletBrokerageDebited = false;
+
+        // Brokerage debited from balance via ledger — do not also reserve in usedMargin.
+        trade.brokerageReservedInMargin = false;
       }
 
       await trade.save();
@@ -1670,11 +1956,19 @@ class TradingService {
         adm &&
         trade.bookType === 'B_BOOK' &&
         !usr.isDemo &&
-        trade.brokeragePrepaidRoundTrip &&
         (trade.commission || 0) > 0
       ) {
         try {
-          await TradeService.distributeBrokerage(trade, trade.commission, adm, usr, 'OPEN+CLOSE');
+          const brokerageLeg = trade.brokeragePrepaidRoundTrip ? 'OPEN+CLOSE' : 'OPEN';
+          const { resolveUserDirectAdmin } = await import('../utils/franchiseBrokerage.js');
+          const directAdminForBrokerage = (await resolveUserDirectAdmin(usr)) || adm;
+          await TradeService.distributeBrokerage(
+            trade,
+            trade.commission,
+            directAdminForBrokerage,
+            usr,
+            brokerageLeg
+          );
         } catch (e) {
           console.error('[executePendingOrder] distributeBrokerage at open:', e?.message || e);
         }
@@ -1740,28 +2034,78 @@ class TradingService {
     
     const admin = await Admin.findOne({ adminCode: trade.adminCode });
 
-    // Apply spread to exit price (opposite of entry).
-    const spreadPoints = trade.spread || 0;
-    let effectiveExitPrice = exitPrice;
-
-    if (spreadPoints > 0) {
-      if (trade.side === 'BUY') {
-        effectiveExitPrice = exitPrice - spreadPoints;
-      } else {
-        effectiveExitPrice = exitPrice + spreadPoints;
-      }
-    }
+    // Spread disabled — close at the quoted exit (bid/ask) without markup.
+    const spreadPoints = 0;
+    const effectiveExitPrice = alignCryptoExitToEntryUnit(trade, exitPrice);
 
     trade.exitPrice = effectiveExitPrice;
     const charges = await Charges.calculateCharges(trade, trade.adminCode, trade.user);
     trade.charges = charges;
 
-    const multiplier = trade.side === 'BUY' ? 1 : -1;
-    const priceDiff = (effectiveExitPrice - trade.entryPrice) * multiplier;
-    const grossPnL = priceDiff * trade.quantity;
+    let closeQuantity = resolveTradeCloseQuantity(trade);
+    if (closeQuantity <= 0) {
+      closeQuantity =
+        Number(trade.originalQty) ||
+        Number(trade.autoSquareHistory?.[trade.autoSquareHistory.length - 1]?.originalQty) ||
+        0;
+    }
+    if (closeQuantity <= 0) {
+      throw new Error('Position has no quantity to close');
+    }
+    const grossPnL = computeMarkToMarketPnL(trade, effectiveExitPrice, closeQuantity);
+    if (Number(trade.quantity) !== closeQuantity) {
+      trade.quantity = closeQuantity;
+    }
 
     const closingCharges = (charges.exchange || 0) + (charges.gst || 0) + (charges.stt || 0) + (charges.sebi || 0) + (charges.stamp || 0);
-    const netPnL = grossPnL - closingCharges;
+    const netPnL = roundBookMoney(grossPnL - closingCharges);
+
+    // Close-leg brokerage: OPTIONS only (FUT/EQ prepaid open+close at entry).
+    const prepaidRoundTrip = !!trade.brokeragePrepaidRoundTrip;
+    const walletPnL = subwalletCloseBalancePnL(trade, grossPnL, netPnL);
+    let closeLegBrokerage = 0;
+    if (!prepaidRoundTrip) {
+      closeLegBrokerage = Math.round((Number(trade.commission) || 0) * 100) / 100;
+      if (closeLegBrokerage <= 0) {
+        try {
+          const turnover = Number(trade.entryPrice || 0) * Number(trade.quantity || 0);
+          const { resolveFranchiseTradingContext, getUserFranchiseRatePerCrore, computeFranchiseUserOneWayBrokerage } =
+            await import('../utils/franchiseBrokerage.js');
+          const franchiseCtx = await resolveFranchiseTradingContext(user, admin);
+          const userFranchiseRate = getUserFranchiseRatePerCrore(user);
+          if (franchiseCtx.active && userFranchiseRate > 0) {
+            closeLegBrokerage = computeFranchiseUserOneWayBrokerage(user, turnover);
+          } else {
+            const userSegmentSettings = await TradeService.getUserSegmentSettings(
+              user,
+              trade.segment,
+              trade.instrumentType
+            );
+            const lots = Number(trade.lots) || 1;
+            const ONE_CRORE = 10_000_000;
+            const commType = String(userSegmentSettings?.commissionType || '').toUpperCase();
+            if (commType === 'PER_CRORE') {
+              const commValue =
+                Number(userSegmentSettings?.commission) ||
+                Number(userSegmentSettings?.commissionLot) ||
+                0;
+              closeLegBrokerage = (turnover / ONE_CRORE) * commValue;
+            } else if (commType === 'PER_LOT') {
+              const commValue =
+                Number(userSegmentSettings?.commissionLot) ||
+                Number(userSegmentSettings?.commission) ||
+                0;
+              closeLegBrokerage = commValue * lots;
+            } else if (commType === 'PER_TRADE') {
+              closeLegBrokerage = Number(userSegmentSettings?.commission) || 0;
+            }
+          }
+          closeLegBrokerage = Math.round(closeLegBrokerage * 100) / 100;
+        } catch {
+          closeLegBrokerage = 0;
+        }
+      }
+    }
 
     trade.exitPrice = effectiveExitPrice;
     trade.effectiveExitPrice = effectiveExitPrice;
@@ -1773,89 +2117,59 @@ class TradingService {
     trade.unrealizedPnL = 0;
     trade.netPnL = netPnL;
     
-    // Admin P&L (opposite in B_BOOK)
+    // Admin book pool for patti = opposite of user gross (same as Orders card)
     if (trade.bookType === 'B_BOOK') {
-      trade.adminPnL = -netPnL;
+      trade.adminPnL = computeAdminBookPoolForPatti(trade);
     } else {
       trade.adminPnL = 0;
     }
 
     await trade.save();
-    
-    // Create ledger entry for user P&L
-    const isMCXTrade = trade.exchange === 'MCX' || trade.segment === 'MCX' || 
-                       trade.segment === 'MCXFUT' || trade.segment === 'MCXOPT';
-    
-    const walletField = trade.isCrypto ? 'cryptoWallet' : trade.isForex ? 'forexWallet' : (isMCXTrade ? 'mcxWallet' : 'wallet');
-    const balanceAfter = trade.isCrypto
-      ? (user.cryptoWallet?.balance || 0)
-      : trade.isForex
-        ? (user.forexWallet?.balance || 0)
-        : (isMCXTrade ? (user.mcxWallet?.balance || 0) : getNseBseBalance(user));
-    
-    // Check if this is an auto-square close
-    const isAutoSquare = trade.closeReason === 'AUTO_SQUARE' || trade.closeReason === 'TIME_BASED';
-    const autoSquareTime = isAutoSquare ? trade.closedAt : null;
-    const autoSquareTimeStr = autoSquareTime ? ` at ${autoSquareTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '';
-    
-    const pnlWalletTag = trade.isCrypto
-      ? ' (Crypto)'
-      : trade.isForex
-        ? ' (Forex)'
-        : isMCXTrade
-          ? ' (MCX)'
-          : ' (NSE/BSE)';
-    const pnlSegment = trade.isCrypto
-      ? 'CRYPTO'
-      : trade.isForex
-        ? 'FOREX'
-        : isMCXTrade
-          ? 'MCX'
-          : 'NSE/BSE';
 
-    await WalletLedger.create({
-      ownerType: 'USER',
-      ownerId: user._id,
-      adminCode: user.adminCode,
-      type: netPnL >= 0 ? 'CREDIT' : 'DEBIT',
-      reason: 'TRADE_PNL',
-      amount: Math.abs(netPnL),
-      balanceAfter: balanceAfter + netPnL,
-      reference: { type: 'Trade', id: trade._id },
-      description: `${trade.symbol} ${trade.side} P&L${pnlWalletTag}${isAutoSquare ? ` (Auto-square${autoSquareTimeStr})` : ''}`,
-      isAutoSquare: isAutoSquare,
-      meta: { segment: pnlSegment, tradeId: trade.tradeId || String(trade._id) },
-    });
+    try {
+      const { emitToUser } = await import('../utils/appSocket.js');
+      const plain = typeof trade.toObject === 'function' ? trade.toObject() : trade;
+      emitToUser(trade.user, 'trade_update', {
+        type: 'TRADE_CLOSED',
+        trade: plain,
+        adminCode: trade.adminCode,
+      });
+    } catch (sockErr) {
+      console.warn('[closeTrade] socket notify:', sockErr?.message || sockErr);
+    }
+
+    const isMCXTrade = trade.exchange === 'MCX' || trade.segment === 'MCX' ||
+                       trade.segment === 'MCXFUT' || trade.segment === 'MCXOPT';
 
     // Release blocked margin and add/subtract P&L to appropriate wallet
     let newUsedMargin, newBlocked, newTradingBalance, newCryptoBalance, newCryptoUsedMargin, newCryptoRealizedPnL;
     let newForexBalance, newForexUsedMargin, newForexRealizedPnL;
     let newMcxBalance, newMcxUsedMargin, newMcxRealizedPnL;
-    
-    const brokerageRelease = trade.brokerageReservedInMargin ? (Number(trade.commission) || 0) : 0;
+
+    const marginRelease = subwalletMarginReleaseOnClose(trade);
     if (trade.isCrypto) {
-      const tradeCostReturned = (trade.marginUsed || 0) + brokerageRelease;
+      const tradeCostReturned = marginRelease;
       newUsedMargin = getNseBseUsedMargin(user);
       newBlocked = user.wallet.blocked || 0;
       newTradingBalance = getNseBseBalance(user);
       newCryptoUsedMargin = Math.max(0, (user.cryptoWallet?.usedMargin || 0) - tradeCostReturned);
-      newCryptoBalance = (user.cryptoWallet?.balance || 0) + netPnL;  // Balance unchanged + P&L
-      newCryptoRealizedPnL = (user.cryptoWallet?.realizedPnL || 0) + netPnL;
+      newCryptoBalance = (user.cryptoWallet?.balance || 0) + walletPnL - closeLegBrokerage;
+      newCryptoRealizedPnL = (user.cryptoWallet?.realizedPnL || 0) + walletPnL;
       newForexBalance = user.forexWallet?.balance || 0;
       newForexRealizedPnL = user.forexWallet?.realizedPnL || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       newMcxRealizedPnL = user.mcxWallet?.realizedPnL || 0;
     } else if (trade.isForex) {
-      const tradeCostReturned = (trade.marginUsed || 0) + brokerageRelease;
+      const tradeCostReturned = marginRelease;
       newUsedMargin = getNseBseUsedMargin(user);
       newBlocked = user.wallet.blocked || 0;
       newTradingBalance = getNseBseBalance(user);
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
       newForexUsedMargin = Math.max(0, (user.forexWallet?.usedMargin || 0) - tradeCostReturned);
-      newForexBalance = (user.forexWallet?.balance || 0) + netPnL;
-      newForexRealizedPnL = (user.forexWallet?.realizedPnL || 0) + netPnL;
+      newForexBalance = (user.forexWallet?.balance || 0) + walletPnL - closeLegBrokerage;
+      newForexRealizedPnL = (user.forexWallet?.realizedPnL || 0) + walletPnL;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       newMcxRealizedPnL = user.mcxWallet?.realizedPnL || 0;
@@ -1867,19 +2181,19 @@ class TradingService {
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
       newForexBalance = user.forexWallet?.balance || 0;
       newForexRealizedPnL = user.forexWallet?.realizedPnL || 0;
-      newMcxUsedMargin = Math.max(0, (user.mcxWallet?.usedMargin || 0) - (trade.marginUsed || 0) - brokerageRelease);
-      newMcxBalance = (user.mcxWallet?.balance || 0) + netPnL;
-      newMcxRealizedPnL = (user.mcxWallet?.realizedPnL || 0) + netPnL;
+      newMcxUsedMargin = Math.max(0, (user.mcxWallet?.usedMargin || 0) - marginRelease);
+      newMcxBalance = (user.mcxWallet?.balance || 0) + walletPnL - closeLegBrokerage;
+      newMcxRealizedPnL = (user.mcxWallet?.realizedPnL || 0) + walletPnL;
     } else {
       // NEW DELIVERY PLEDGE LOGIC:
       // Release wallet margin (marginUsed) - pledge margin is tracked separately
       // Losses MUST come from actual wallet, NOT from pledge margin
-      newUsedMargin = Math.max(0, getNseBseUsedMargin(user) - (trade.marginUsed || 0) - brokerageRelease);
+      newUsedMargin = Math.max(0, getNseBseUsedMargin(user) - marginRelease);
       newBlocked = Math.max(0, (user.wallet.blocked || 0) - (trade.marginUsed || 0));
       
       // P&L is applied to wallet balance (losses come from wallet, not pledge)
       // Pledge margin is only for margin requirement, not for covering losses
-      newTradingBalance = getNseBseBalance(user) + netPnL;
+      newTradingBalance = getNseBseBalance(user) + walletPnL - closeLegBrokerage;
       
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
@@ -1897,7 +2211,7 @@ class TradingService {
     
     const newRealizedPnL = (trade.isCrypto || trade.isForex || isMCXTrade)
       ? (user.wallet.realizedPnL || 0)
-      : (user.wallet.realizedPnL || 0) + netPnL;
+      : (user.wallet.realizedPnL || 0) + walletPnL;
     
     const updateFields = {};
 
@@ -1971,6 +2285,91 @@ class TradingService {
       { _id: user._id },
       { $set: updateFields }
     );
+
+    if (Math.abs(walletPnL) >= 0.01) {
+      const isAutoSquare = trade.closeReason === 'AUTO_SQUARE' || trade.closeReason === 'TIME_BASED';
+      const autoSquareTime = isAutoSquare ? trade.closedAt : null;
+      const autoSquareTimeStr = autoSquareTime
+        ? ` at ${autoSquareTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+        : '';
+      const pnlWalletTag = trade.isCrypto
+        ? ' (Crypto)'
+        : trade.isForex
+          ? ' (Forex)'
+          : isMCXTrade
+            ? ' (MCX)'
+            : ' (NSE/BSE)';
+      const pnlSegment = trade.isCrypto
+        ? 'CRYPTO'
+        : trade.isForex
+          ? 'FOREX'
+          : isMCXTrade
+            ? 'MCX'
+            : 'NSE/BSE';
+      const pnlBalanceAfter = trade.isCrypto
+        ? newCryptoBalance + closeLegBrokerage
+        : trade.isForex
+          ? newForexBalance + closeLegBrokerage
+          : isMCXTrade
+            ? newMcxBalance + closeLegBrokerage
+            : newTradingBalance + closeLegBrokerage;
+
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: user._id,
+        adminCode: user.adminCode,
+        type: walletPnL >= 0 ? 'CREDIT' : 'DEBIT',
+        reason: 'TRADE_PNL',
+        amount: Math.abs(walletPnL),
+        balanceAfter: pnlBalanceAfter,
+        reference: { type: 'Trade', id: trade._id },
+        description: `${trade.symbol} ${trade.side} P&L${pnlWalletTag}${isAutoSquare ? ` (Auto-square${autoSquareTimeStr})` : ''}`,
+        isAutoSquare: isAutoSquare,
+        meta: { segment: pnlSegment, tradeId: trade.tradeId || String(trade._id) },
+      });
+    }
+
+    // User close-leg brokerage ledger entry (wallet debit at position close).
+    if (closeLegBrokerage > 0) {
+      const brkWalletTag = trade.isCrypto
+        ? ' (Crypto)'
+        : trade.isForex
+          ? ' (Forex)'
+          : isMCXTrade
+            ? ' (MCX)'
+            : ' (NSE/BSE)';
+      const brkSegment = trade.isCrypto
+        ? 'CRYPTO'
+        : trade.isForex
+          ? 'FOREX'
+          : isMCXTrade
+            ? 'MCX'
+            : 'NSE/BSE';
+      const closeBalanceAfter = trade.isCrypto
+        ? newCryptoBalance
+        : trade.isForex
+          ? newForexBalance
+          : isMCXTrade
+            ? newMcxBalance
+            : newTradingBalance;
+
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: user._id,
+        adminCode: user.adminCode,
+        type: 'DEBIT',
+        reason: 'BROKERAGE',
+        amount: Math.abs(closeLegBrokerage),
+        balanceAfter: closeBalanceAfter,
+        reference: { type: 'Trade', id: trade._id },
+        description: `${trade.symbol} ${trade.side} Brokerage${brkWalletTag} for CLOSE`,
+        meta: {
+          segment: brkSegment,
+          tradeId: trade.tradeId || String(trade._id),
+          leg: 'CLOSE',
+        },
+      });
+    }
     
     // Update local user object
     if (trade.isCrypto) {
@@ -2021,11 +2420,26 @@ class TradingService {
       }
     }
 
-    // Apply B_BOOK admin PnL split (B_BOOK only)
-    // Brokerage already fully distributed on trade OPEN (open+close combined) - no distribution on close
+    // Apply B_BOOK admin PnL split and close-leg brokerage distribution (B_BOOK only)
     if (trade.bookType === 'B_BOOK' && admin) {
-      await TradeService.applyBBookAdminPnLSplit(trade, admin, user, trade.adminPnL);
-      console.log('[closeTrade] Brokerage already distributed on open - skipping close distribution');
+      const pattiPool = computeAdminBookPoolForPatti(trade);
+      trade.adminPnL = pattiPool;
+      await TradeService.applyBBookAdminPnLSplit(trade, admin, user, pattiPool);
+      if (closeLegBrokerage > 0 && !user.isDemo) {
+        try {
+          const { resolveUserDirectAdmin } = await import('../utils/franchiseBrokerage.js');
+          const directAdminForBrokerage = (await resolveUserDirectAdmin(user)) || admin;
+          await TradeService.distributeBrokerage(
+            trade,
+            closeLegBrokerage,
+            directAdminForBrokerage,
+            user,
+            'CLOSE'
+          );
+        } catch (distErr) {
+          console.error('[closeTrade] distributeBrokerage close leg:', distErr?.message || distErr);
+        }
+      }
     }
 
     // Credit referral reward for first-time trading win (brokerage amount)
@@ -2033,9 +2447,7 @@ class TradingService {
       const brokerageAmount =
         (charges.brokerage || 0) > 0
           ? charges.brokerage
-          : trade.brokeragePrepaidRoundTrip
-            ? trade.commission || 0
-            : 0;
+          : trade.commission || 0;
       if (brokerageAmount > 0) {
         const referralResult = await creditReferralTradingReward(
           user._id,
@@ -2102,7 +2514,7 @@ class TradingService {
   // Get positions - optimized with lean() for faster response
   static async getPositions(userId, status = 'OPEN') {
     return Trade.find({ user: userId, status })
-      .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots entryPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target isAutoSquared autoSquaredAt autoSquareLtp originalQty brokerageAtAutoSquare pnlAtAutoSquare carryForwardQty netBalanceAtAutoSquare closeReason')
+      .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots orderType entryPrice limitPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target isAutoSquared autoSquaredAt autoSquareLtp originalQty brokerageAtAutoSquare pnlAtAutoSquare carryForwardQty netBalanceAtAutoSquare closeReason')
       .sort({ openedAt: -1 })
       .lean();
   }
@@ -2126,6 +2538,8 @@ class TradingService {
 
   /** Flat list of every autosquare event (12:00, 13:00, …) for Orders → Autosquare tab */
   static async getAutoSquareHistory(userId, limit = 300) {
+    const { autosquareEventDedupeKey, normalizeCloseTimeKey, parseIstSessionCloseAt } =
+      await import('../utils/autosquareSessionTime.js');
     const trades = await Trade.find({
       user: userId,
       $or: [
@@ -2142,6 +2556,8 @@ class TradingService {
       .lean();
 
     const rows = [];
+    const dedupeBest = new Map();
+
     for (const t of trades) {
       const events =
         Array.isArray(t.autoSquareHistory) && t.autoSquareHistory.length > 0
@@ -2162,7 +2578,32 @@ class TradingService {
 
       for (const ev of events) {
         if (!ev?.autoSquaredAt) continue;
-        const eventId = `${t._id}-${new Date(ev.autoSquaredAt).getTime()}`;
+        const dk = autosquareEventDedupeKey(t._id, ev.closeTime);
+        const prev = dedupeBest.get(dk);
+        if (prev) {
+          const prevCt = normalizeCloseTimeKey(prev.ev.closeTime);
+          const curCt = normalizeCloseTimeKey(ev.closeTime);
+          if (curCt && !prevCt) {
+            dedupeBest.set(dk, { t, ev });
+          } else if (
+            new Date(ev.autoSquaredAt).getTime() < new Date(prev.ev.autoSquaredAt).getTime()
+          ) {
+            dedupeBest.set(dk, { t, ev });
+          }
+          continue;
+        }
+        dedupeBest.set(dk, { t, ev });
+      }
+    }
+
+    for (const { t, ev } of dedupeBest.values()) {
+        const closeKeyNorm = normalizeCloseTimeKey(ev.closeTime);
+        const sessionAt = closeKeyNorm
+          ? parseIstSessionCloseAt(closeKeyNorm, ev.autoSquaredAt)
+          : ev.autoSquaredAt;
+        const eventId = `${t._id}-${closeKeyNorm || 'legacy'}-${new Date(sessionAt).getTime()}`;
+        const origQty = ev.originalQty ?? t.originalQty ?? t.quantity;
+        const markPx = ev.autoSquareLtp ?? t.autoSquareLtp ?? t.exitPrice;
         rows.push({
           _id: eventId,
           tradeId: t.tradeId,
@@ -2180,33 +2621,39 @@ class TradingService {
           status: t.status,
           isAutoSquared: true,
           isHistoryEvent: true,
-          originalQty: ev.originalQty,
+          originalQty: origQty,
           carryForwardQty: ev.nextDayQty,
           quantity: ev.nextDayQty,
-          autoSquareLtp: ev.autoSquareLtp,
-          pnlAtAutoSquare: ev.pnlAtAutoSquare,
-          autoSquaredAt: ev.autoSquaredAt,
-          closeTime: ev.closeTime || '',
+          autoSquareLtp: markPx,
+          pnlAtAutoSquare: reconcileAutosquarePnL(t, markPx, ev.pnlAtAutoSquare, origQty),
+          autoSquaredAt: sessionAt,
+          closeTime: closeKeyNorm || '',
           netBalanceAtAutoSquare: ev.netBalanceAtAutoSquare,
+          carryForwardLeverage: ev.carryForwardLeverage ?? t.leverage,
           openedAt: t.openedAt,
-          createdAt: ev.autoSquaredAt,
+          createdAt: sessionAt,
         });
-      }
     }
 
-    // Legacy rows: closed at EOD before carry-forward fix (still show in Autosquare tab)
+    rows.sort((a, b) => new Date(b.autoSquaredAt) - new Date(a.autoSquaredAt));
+
+    // Legacy rows: closed by autosquare path but missing autoSquareHistory stamp.
     const legacyClosed = await Trade.find({
       user: userId,
       status: 'CLOSED',
-      closeReason: { $in: ['TIME_BASED', 'AUTO_SQUARE', 'AUTO_SQUARE_330'] },
+      closeReason: { $in: ['TIME_BASED', 'AUTO_SQUARE', 'AUTO_SQUARE_330', 'EOD_SQUAREOFF'] },
       $or: [
         { exchange: { $in: ['NSE', 'NFO', 'BSE', 'BFO'] } },
         { segment: { $in: ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FNO'] } },
+        { exchange: { $in: ['BINANCE', 'FOREX'] } },
+        { segment: { $in: ['CRYPTOFUT', 'CRYPTOOPT', 'CRYPTO', 'FOREXFUT', 'FOREXOPT', 'FOREX'] } },
+        { isCrypto: true },
+        { isForex: true },
       ],
       _id: { $nin: trades.map((t) => t._id) },
     })
       .select(
-        'tradeId userId symbol exchange segment side productType quantity lots entryPrice exitPrice closedAt closeReason realizedPnL netPnL'
+        'tradeId userId symbol exchange segment side productType quantity lots entryPrice exitPrice closedAt closeReason realizedPnL netPnL isCrypto isForex'
       )
       .sort({ closedAt: -1 })
       .limit(80)
@@ -2222,6 +2669,8 @@ class TradingService {
         tradeId: t.tradeId,
         userId: t.userId,
         symbol: t.symbol,
+        isCrypto: t.isCrypto,
+        isForex: t.isForex,
         exchange: t.exchange,
         segment: t.segment,
         side: t.side,
@@ -2235,7 +2684,11 @@ class TradingService {
         carryForwardQty: 0,
         quantity: 0,
         autoSquareLtp: t.exitPrice || null,
-        pnlAtAutoSquare: t.netPnL ?? t.realizedPnL ?? 0,
+        pnlAtAutoSquare: reconcileStoredGrossPnL({
+          ...t,
+          exitPrice: t.exitPrice,
+          effectiveExitPrice: t.exitPrice,
+        }),
         autoSquaredAt: at,
         closeTime: '',
         openedAt: t.openedAt,
@@ -2244,7 +2697,10 @@ class TradingService {
     }
 
     rows.sort((a, b) => new Date(b.autoSquaredAt) - new Date(a.autoSquaredAt));
-    return rows.slice(0, limit);
+
+    const { mergeAutosquareHistoryRows } = await import('../utils/autosquareHistoryMerge.js');
+    const merged = mergeAutosquareHistoryRows(rows);
+    return merged.slice(0, limit);
   }
 
   // Get wallet summary - optimized with aggregation for faster P&L
@@ -2366,6 +2822,44 @@ class TradingService {
     const isForex = trade.isForex || trade.exchange === 'FOREX' ||
       ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(trade.segment || '').toUpperCase());
     const isUsdSpotExit = isCrypto || isForex;
+    const closeSide = trade.side === 'BUY' ? 'SELL' : 'BUY';
+    const isManualClose = String(reason || '').toUpperCase() === 'MANUAL';
+    const enforceCircuitSideGuard = isManualClose && tradeIsIndianMarket(trade);
+
+    // Manual square-off circuit side guard is only for Indian exchanges (NSE/BSE/MCX).
+    if (enforceCircuitSideGuard) {
+      try {
+        const token = trade?.token != null ? String(trade.token) : null;
+        const symbol = String(trade?.symbol || '').trim();
+        const exchange = String(trade?.exchange || '').trim();
+        const or = [];
+        if (token) or.push({ token });
+        if (symbol) {
+          if (exchange) or.push({ symbol, exchange });
+          or.push({ symbol });
+        }
+        if (or.length > 0) {
+          const instrument = await Instrument.findOne({ $or: or })
+            .select('symbol allowBuy allowSell upperCircuit lowerCircuit')
+            .lean();
+          if (instrument) {
+            const sideGate = CircuitBreakerService.checkOrderAllowed(instrument, closeSide);
+            if (!sideGate.allowed) {
+              throw new Error(sideGate.reason || `${instrument.symbol || trade.symbol}: close side blocked by circuit`);
+            }
+          }
+        }
+      } catch (e) {
+        throw new Error(e?.message || 'Close blocked by circuit checks');
+      }
+
+      if (closeSide === 'BUY' && !(Number(askPrice) > 0)) {
+        throw new Error('Cannot close SELL right now: BUY side (ask) is unavailable.');
+      }
+      if (closeSide === 'SELL' && !(Number(bidPrice) > 0)) {
+        throw new Error('Cannot close BUY right now: SELL side (bid) is unavailable.');
+      }
+    }
     
     // Indian Net Trading: Use correct price based on position side
     // BUY position closes at Bid price (you sell at bid)
@@ -2406,6 +2900,9 @@ class TradingService {
     }
     
     if (!price || price <= 0) {
+      if (enforceCircuitSideGuard) {
+        throw new Error('Invalid live exit quote. Manual close requires valid bid/ask from market feed.');
+      }
       const e = trade.entryPrice || 0;
       price = e > 0 ? e : e;
       console.log(`Using entry-based price ${price} as exit price`);

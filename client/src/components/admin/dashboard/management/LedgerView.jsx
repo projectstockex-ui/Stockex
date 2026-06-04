@@ -4,9 +4,33 @@ import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
 import { WALLET_LEDGER_GAME_OPTIONS } from '../../../../constants/walletLedgerGames.js';
 
+function parsePattiShareFromDescription(description) {
+  const m = String(description || '').match(/Patti\s+(\d+\.?\d*)%\s+(admin|parent)/i);
+  if (!m) return null;
+  const n = parseFloat(m[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 function formatLedgerSharePercent(entry) {
   if (entry?.displaySharePercent) return entry.displaySharePercent;
-  if (entry?.reason !== 'GAME_PROFIT') return '—';
+  const pattiFromDesc = parsePattiShareFromDescription(entry?.description);
+  const pattiPct =
+    entry?.meta?.pattiChildPct ?? entry?.sharePercentResolved ?? pattiFromDesc;
+  if (
+    (entry?.meta?.pattiSharing || pattiFromDesc != null) &&
+    pattiPct != null &&
+    Number.isFinite(Number(pattiPct))
+  ) {
+    return `${Number(pattiPct).toFixed(2)}%`;
+  }
+  if (entry?.reason !== 'GAME_PROFIT') {
+    const anyPct = entry?.sharePercentResolved ?? entry?.meta?.sharePercent;
+    if (anyPct != null && Number.isFinite(Number(anyPct))) {
+      return `${Number(anyPct).toFixed(2)}%`;
+    }
+    if (pattiFromDesc != null) return `${pattiFromDesc.toFixed(2)}%`;
+    return '—';
+  }
   const p = entry?.sharePercentResolved ?? entry?.meta?.sharePercent;
   if (p != null && Number.isFinite(Number(p))) {
     return `${Number(p).toFixed(2)}%`;
@@ -170,7 +194,11 @@ const LedgerView = () => {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
-                    <div>{entry.reason}</div>
+                    <div>
+                      {entry.reason === 'TRADE_PNL' && entry.meta?.pattiSharing
+                        ? 'PATTI P&L'
+                        : entry.reason}
+                    </div>
                     {entry.transactionSlip && (
                       <div className="text-[10px] text-purple-400/90 mt-1 p-1.5 bg-purple-900/20 rounded border border-purple-700/30">
                         <div className="flex items-center gap-1 mb-1">

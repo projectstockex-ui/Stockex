@@ -15,6 +15,7 @@
 import express from 'express';
 import {
   alignSegmentDefaultsMap,
+  alignSegmentDefaultsMapPreservingSessionTiming,
   preserveAllowLimitPendingOrdersFromExisting,
   plainSegmentDefaultsMap,
   sanitizeSegmentExplicitKeysForSave,
@@ -132,6 +133,9 @@ router.post('/login', async (req, res) => {
       role: admin.parentId.role
     } : null;
 
+    const { isAdminInActiveFranchiseSubtree } = await import('../utils/franchiseBrokerage.js');
+    const franchiseSubtreeActive = await isAdminInActiveFranchiseSubtree(admin);
+
     // Return all necessary fields (admins can login from multiple devices)
     res.json({
       _id: admin._id,
@@ -147,6 +151,9 @@ router.post('/login', async (req, res) => {
       wallet: admin.wallet,
       charges: admin.charges,
       stats: admin.stats,
+      isFranchiseRoot: admin.isFranchiseRoot === true,
+      franchiseSubtreeActive,
+      platformChargesPercentage: admin.platformChargesPercentage || 0,
       parentAdmin: parentAdmin,
       token: generateToken(admin._id)
     });
@@ -607,6 +614,9 @@ router.get('/me', protectAdmin, async (req, res) => {
     if (!admin) {
       return res.status(404).json({ message: 'Admin not found' });
     }
+    const { isAdminInActiveFranchiseSubtree } = await import('../utils/franchiseBrokerage.js');
+    const franchiseSubtreeActive = await isAdminInActiveFranchiseSubtree(admin);
+
     res.json({
       _id: admin._id,
       username: admin.username,
@@ -619,7 +629,10 @@ router.get('/me', protectAdmin, async (req, res) => {
       referralCode: admin.referralCode,
       wallet: admin.wallet,
       charges: admin.charges,
-      stats: admin.stats
+      stats: admin.stats,
+      isFranchiseRoot: admin.isFranchiseRoot === true,
+      franchiseSubtreeActive,
+      platformChargesPercentage: admin.platformChargesPercentage || 0,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -836,13 +849,21 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
             : (current?.segmentPermissions || {});
         plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
       }
-      updateFields.segmentPermissions = alignSegmentDefaultsMap(plain);
+      if (req.admin.role !== 'SUPER_ADMIN') {
+        const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+        plain = stripMcxSessionTimingFromSegmentMap(plain);
+      }
+      updateFields.segmentPermissions = alignSegmentDefaultsMapPreservingSessionTiming(plain);
     }
     if (scriptSettings) {
       updateFields.scriptSettings = scriptSettings;
     }
     if (segmentExplicitKeys !== undefined) {
-      const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+      let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+      if (req.admin.role !== 'SUPER_ADMIN' && sanitized) {
+        const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
+        sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
+      }
       if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
     }
 
@@ -924,6 +945,10 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
     if (segmentPermissions) {
       let plain =
         segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+      {
+        const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+        plain = stripMcxSessionTimingFromSegmentMap(plain);
+      }
       if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
         const existingSeg =
           user.segmentPermissions instanceof Map
@@ -931,7 +956,7 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
             : (user.segmentPermissions || {});
         plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
       }
-      updateFields.segmentPermissions = alignSegmentDefaultsMap(plain);
+      updateFields.segmentPermissions = alignSegmentDefaultsMapPreservingSessionTiming(plain);
     }
     if (scriptSettings) {
       updateFields.scriptSettings = scriptSettings;
@@ -1721,18 +1746,22 @@ router.put('/manage/toggle-referral-distribution/:adminId', protectAdmin, async 
       const oldValue = targetAdmin.referralDistributionEnabled;
       targetAdmin.referralDistributionEnabled = {
         games: oldValue !== false,
+        trading: oldValue !== false,
         mcx: oldValue !== false,
+        crypto: oldValue !== false,
         forex: oldValue !== false
       };
     }
     
     // Toggle the referral distribution setting for the specified segment
-    if (segment && ['games', 'mcx', 'forex'].includes(segment)) {
+    if (segment && ['games', 'trading', 'mcx', 'crypto', 'forex'].includes(segment)) {
       targetAdmin.referralDistributionEnabled[segment] = !targetAdmin.referralDistributionEnabled[segment];
     } else {
       // If no segment specified, toggle all segments
       targetAdmin.referralDistributionEnabled.games = !targetAdmin.referralDistributionEnabled.games;
+      targetAdmin.referralDistributionEnabled.trading = !targetAdmin.referralDistributionEnabled.trading;
       targetAdmin.referralDistributionEnabled.mcx = !targetAdmin.referralDistributionEnabled.mcx;
+      targetAdmin.referralDistributionEnabled.crypto = !targetAdmin.referralDistributionEnabled.crypto;
       targetAdmin.referralDistributionEnabled.forex = !targetAdmin.referralDistributionEnabled.forex;
     }
     

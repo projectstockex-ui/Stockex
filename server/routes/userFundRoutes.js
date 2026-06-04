@@ -17,6 +17,9 @@ import {
   readNseBseWalletFromDb,
 } from '../utils/nseBseWallet.js';
 import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
+import { repairCryptoWalletBalance, repairNseBseWalletBalance } from '../utils/repairSubwalletBalance.js';
+import { isAbsurdWalletInr } from '../utils/walletBalanceSanity.js';
+import TradeService from '../services/tradeService.js';
 
 /** Wallet-scoped TRADE_PNL / autosquare ledger rows (never match global isAutoSquare alone). */
 function pnlLedgerFilterForWallet(w) {
@@ -207,7 +210,28 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 1), 100);
 
     if (w === 'trading') {
-      const [meshRows, directRows, pnlRows, brokerageRows] = await Promise.all([
+      try {
+        await TradeService.reconcileUndebitedBrokerage(req.user._id, 'nse');
+      } catch (reconcileErr) {
+        console.warn('[subwallet-transfer-ledger] NSE brokerage reconcile:', reconcileErr?.message || reconcileErr);
+      }
+
+      const nseBrokerageLedgerFilter = {
+        $or: [
+          { description: { $regex: /\(NSE\/BSE\)/i } },
+          { 'meta.segment': 'NSE/BSE' },
+        ],
+      };
+      const nseTransferLedgerFilter = {
+        $or: [
+          { 'meta.sourceWallet': { $in: ['nseBseWallet', 'tradingAccount'] } },
+          { 'meta.targetWallet': { $in: ['nseBseWallet', 'tradingAccount'] } },
+          { description: { $regex: /NSE\s*&\s*BSE|Trading Account/i } },
+        ],
+      };
+
+      const [meshRows, directRows, pnlRows, brokerageLedgerRows, transferLedgerRows, brokerageRows] =
+        await Promise.all([
         WalletTransferService.getTransferHistory(req.user._id),
         WalletLedger.find({
           ownerType: 'USER',
@@ -230,6 +254,24 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
           .sort({ createdAt: -1 })
           .limit(lim)
           .lean(),
+        WalletLedger.find({
+          ownerType: 'USER',
+          ownerId: req.user._id,
+          reason: 'BROKERAGE',
+          ...nseBrokerageLedgerFilter,
+        })
+          .sort({ createdAt: -1 })
+          .limit(lim)
+          .lean(),
+        WalletLedger.find({
+          ownerType: 'USER',
+          ownerId: req.user._id,
+          reason: { $in: ['WALLET_TRANSFER_DEBIT', 'WALLET_TRANSFER_CREDIT'] },
+          ...nseTransferLedgerFilter,
+        })
+          .sort({ createdAt: -1 })
+          .limit(lim)
+          .lean(),
         Trade.find({
           user: req.user._id,
           commission: { $gt: 0 },
@@ -238,9 +280,11 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
             { segment: { $in: ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FNO'] } },
           ],
         })
-          .sort({ createdAt: -1 })
+          .sort({ updatedAt: -1 })
           .limit(lim)
-          .select('tradeId symbol side commission createdAt')
+          .select(
+            'tradeId symbol side commission createdAt openedAt brokeragePrepaidRoundTrip walletBrokerageDebited'
+          )
           .lean(),
       ]);
 
@@ -273,22 +317,102 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
         isAutoSquare: row.isAutoSquare || false,
       }));
 
-      const brokerageFromTrades = (brokerageRows || []).map((row) => ({
-        id: `brk-${String(row._id)}`,
+      const ledgerTradeIds = new Set(
+        (brokerageLedgerRows || [])
+          .map((row) => String(row?.meta?.tradeId || '').trim())
+          .filter(Boolean)
+      );
+      const ledgerTradeRefIds = new Set(
+        (brokerageLedgerRows || [])
+          .map((row) => (row?.reference?.id ? String(row.reference.id) : ''))
+          .filter(Boolean)
+      );
+
+      const brokerageFromLedger = (brokerageLedgerRows || []).map((row) => {
+        const inferredLegFromDesc = /\bfor\s+open\+close\b/i.test(String(row?.description || ''))
+          ? 'OPEN+CLOSE'
+          : /\bfor\s+close\b/i.test(String(row?.description || ''))
+            ? 'CLOSE'
+            : /\bfor\s+open\b/i.test(String(row?.description || ''))
+              ? 'OPEN'
+              : '';
+        const metaLeg = String(row?.meta?.leg || '').toUpperCase();
+        const leg = row?.meta?.prepaidRoundTrip
+          ? 'OPEN+CLOSE'
+          : metaLeg === 'OPEN+CLOSE'
+            ? 'OPEN+CLOSE'
+            : metaLeg || inferredLegFromDesc || 'OPEN+CLOSE';
+        return {
+          id: `wl-brk-${String(row._id)}`,
+          at: row.createdAt,
+          amount: Number(row.amount) || 0,
+          kind: 'trade_brokerage',
+          type: 'DEBIT',
+          description: row.description || `Brokerage (NSE/BSE) for ${leg}`,
+          tradeId: row.meta?.tradeId || null,
+          tradeRefId: row?.reference?.id ? String(row.reference.id) : null,
+          leg,
+        };
+      });
+
+      const brokerageFromTrades = (brokerageRows || [])
+        .filter((row) => {
+          if (row.walletBrokerageDebited !== true) return false;
+          const tId = String(row?.tradeId || '').trim();
+          const tRef = row?._id ? String(row._id) : '';
+          if (tId && ledgerTradeIds.has(tId)) return false;
+          if (tRef && ledgerTradeRefIds.has(tRef)) return false;
+          return true;
+        })
+        .map((row) => {
+          const prepaid = row.brokeragePrepaidRoundTrip !== false;
+          const leg = prepaid ? 'OPEN+CLOSE' : 'OPEN';
+          return {
+            id: `brk-${String(row._id)}`,
+            at: row.openedAt || row.createdAt,
+            amount: Number(row.commission) || 0,
+            kind: 'trade_brokerage',
+            type: 'DEBIT',
+            description: `${row.symbol || 'Trade'} ${row.side || ''} Brokerage (NSE/BSE) for ${leg}`.trim(),
+            tradeId: row.tradeId || null,
+            tradeRefId: row?._id ? String(row._id) : null,
+            leg,
+          };
+        });
+
+      const transferEntries = (transferLedgerRows || []).map((row) => ({
+        id: `wl-xfer-${String(row._id)}`,
         at: row.createdAt,
-        amount: Number(row.commission) || 0,
-        kind: 'trade_brokerage',
-        type: 'DEBIT',
-        description: `${row.symbol || 'Trade'} ${row.side || ''} Brokerage (NSE/BSE)`.trim(),
-        tradeId: row.tradeId || null,
+        amount: Number(row.amount) || 0,
+        kind: 'wallet_transfer',
+        type: row.reason === 'WALLET_TRANSFER_CREDIT' ? 'CREDIT' : 'DEBIT',
+        description: row.description || row.reason,
+        reason: row.reason,
       }));
 
       const seen = new Set();
-      const combined = [...mesh, ...bridge, ...pnlEntries, ...brokerageFromTrades]
+      const combined = [
+        ...mesh,
+        ...bridge,
+        ...pnlEntries,
+        ...transferEntries,
+        ...brokerageFromLedger,
+        ...brokerageFromTrades,
+      ]
         .filter((e) => {
+          if (
+            (e.kind === 'trade_pnl' || e.kind === 'trade_autosquare') &&
+            Number(e.amount) < 0.01
+          ) {
+            return false;
+          }
           const k =
-            e.kind === 'trade_brokerage' && e.tradeId
-              ? `brk-trade-${e.tradeId}`
+            e.kind === 'trade_brokerage'
+              ? e.tradeId
+                ? `brk-trade-${e.tradeId}-${String(e.leg || 'OPEN').toUpperCase().replace(/\s+/g, '')}`
+                : e.tradeRefId
+                  ? `brk-ref-${e.tradeRefId}-${String(e.leg || 'OPEN').toUpperCase().replace(/\s+/g, '')}`
+                  : `${e.id}-${new Date(e.at).getTime()}`
               : `${e.id}-${new Date(e.at).getTime()}`;
           if (seen.has(k)) return false;
           seen.add(k);
@@ -298,6 +422,19 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
         .slice(0, lim);
 
       return res.json({ entries: combined });
+    }
+
+    if (w === 'crypto') {
+      try {
+        const uSnap = await User.findById(req.user._id).select('cryptoWallet').lean();
+        const bal = Number(uSnap?.cryptoWallet?.balance) || 0;
+        const um = Number(uSnap?.cryptoWallet?.usedMargin) || 0;
+        if (bal < 1 && um < 1) {
+          await repairCryptoWalletBalance(req.user._id);
+        }
+      } catch (repairErr) {
+        console.warn('[subwallet-transfer-ledger] crypto repair:', repairErr?.message || repairErr);
+      }
     }
 
     const segmentKey = w;
@@ -395,8 +532,10 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
           })
             .sort({ createdAt: -1 })
             .limit(lim)
-            .select('tradeId symbol side commission createdAt updatedAt status')
-            .lean()
+          .select(
+            'tradeId symbol side commission createdAt updatedAt openedAt status walletBrokerageDebited brokeragePrepaidRoundTrip'
+          )
+          .lean()
         : [],
     ]);
 
@@ -437,32 +576,91 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
       isAutoSquare: row.isAutoSquare || false,
     }));
 
-    const brokerageFromLedger = (brokerageLedgerRows || []).map((row) => ({
+    const ledgerTradeIds = new Set(
+      (brokerageLedgerRows || [])
+        .map((row) => String(row?.meta?.tradeId || '').trim())
+        .filter(Boolean)
+    );
+    const ledgerTradeRefIds = new Set(
+      (brokerageLedgerRows || [])
+        .map((row) => (row?.reference?.id ? String(row.reference.id) : ''))
+        .filter(Boolean)
+    );
+
+    const brokerageFromLedger = (brokerageLedgerRows || []).map((row) => {
+      const inferredLegFromDesc = /\bfor\s+open\+close\b/i.test(String(row?.description || ''))
+        ? 'OPEN+CLOSE'
+        : /\bfor\s+close\b/i.test(String(row?.description || ''))
+          ? 'CLOSE'
+          : /\bfor\s+open\b/i.test(String(row?.description || ''))
+            ? 'OPEN'
+            : '';
+      const metaLeg = String(row?.meta?.leg || '').toUpperCase();
+      const leg = row?.meta?.prepaidRoundTrip
+        ? 'OPEN+CLOSE'
+        : metaLeg === 'OPEN+CLOSE'
+          ? 'OPEN+CLOSE'
+          : metaLeg || inferredLegFromDesc || 'OPEN';
+      const segLabel = w === 'mcx' ? 'MCX' : w === 'crypto' ? 'CRYPTO' : w === 'forex' ? 'FOREX' : 'NSE/BSE';
+      const baseDescRaw = String(row?.description || 'Brokerage').trim();
+      const baseDescNoLeg = baseDescRaw
+        .replace(/\s+for\s+(OPEN\+CLOSE|OPEN|CLOSE)\s*$/i, '')
+        .trim();
+      const hasSegmentTag = /\((MCX|CRYPTO|FOREX|NSE\/BSE)\)/i.test(baseDescNoLeg);
+      const normalizedBase = hasSegmentTag ? baseDescNoLeg : `${baseDescNoLeg} (${segLabel})`;
+      return {
       id: `wl-brk-${String(row._id)}`,
       at: row.createdAt,
       amount: Number(row.amount) || 0,
       kind: 'trade_brokerage',
       type: 'DEBIT',
-      description: row.description || 'Brokerage',
+      description: `${normalizedBase} for ${leg}`,
       tradeId: row.meta?.tradeId || null,
-    }));
+      tradeRefId: row?.reference?.id ? String(row.reference.id) : null,
+      leg,
+      };
+    });
 
-    const brokerageFromTrades = (brokerageRows || []).map((row) => ({
-      id: `brk-${String(row._id)}`,
-      at: row.createdAt,
-      amount: Number(row.commission) || 0,
-      kind: 'trade_brokerage',
-      type: 'DEBIT',
-      description: `${row.symbol || 'Trade'} ${row.side || ''} Brokerage (${w.toUpperCase()})`.trim(),
-      tradeId: row.tradeId || null,
-    }));
+    const brokerageFromTrades = (brokerageRows || [])
+      // Fallback only when wallet was actually debited (never show commission without balance cut).
+      .filter((row) => {
+        if (row.walletBrokerageDebited !== true) return false;
+        const tId = String(row?.tradeId || '').trim();
+        const tRef = row?._id ? String(row._id) : '';
+        if (tId && ledgerTradeIds.has(tId)) return false;
+        if (tRef && ledgerTradeRefIds.has(tRef)) return false;
+        return true;
+      })
+      .map((row) => ({
+        leg: row.brokeragePrepaidRoundTrip !== false ? 'OPEN+CLOSE' : 'OPEN',
+        id: `brk-${String(row._id)}`,
+        at: row.openedAt || row.createdAt,
+        amount: Number(row.commission) || 0,
+        kind: 'trade_brokerage',
+        type: 'DEBIT',
+        description: `${row.symbol || 'Trade'} ${row.side || ''} Brokerage (${w.toUpperCase()}) for ${
+          row.brokeragePrepaidRoundTrip !== false ? 'OPEN+CLOSE' : 'OPEN'
+        }`.trim(),
+        tradeId: row.tradeId || null,
+        tradeRefId: row?._id ? String(row._id) : null,
+      }));
 
     const seen = new Set();
     const combined = [...mesh, ...bridge, ...pnlEntries, ...brokerageFromLedger, ...brokerageFromTrades]
       .filter((e) => {
+        if (
+          (e.kind === 'trade_pnl' || e.kind === 'trade_autosquare') &&
+          Number(e.amount) < 0.01
+        ) {
+          return false;
+        }
         const k =
-          e.kind === 'trade_brokerage' && e.tradeId
-            ? `brk-trade-${e.tradeId}`
+          e.kind === 'trade_brokerage'
+            ? e.tradeId
+              ? `brk-trade-${e.tradeId}-${String(e.leg || 'OPEN').toUpperCase().replace(/\s+/g, '')}`
+              : e.tradeRefId
+                ? `brk-ref-${e.tradeRefId}-${String(e.leg || 'OPEN').toUpperCase().replace(/\s+/g, '')}`
+                : `${e.id}-${new Date(e.at).getTime()}`
             : `${e.id}-${new Date(e.at).getTime()}`;
         if (seen.has(k)) return false;
         seen.add(k);
@@ -474,6 +672,38 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
     res.json({ entries: combined });
   } catch (error) {
     console.error('subwallet-transfer-ledger:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Rebuild crypto cash balance from transfers + ledger (fixes bad autosquare state).
+router.post('/repair-crypto-wallet', protectUser, async (req, res) => {
+  try {
+    const result = await repairCryptoWalletBalance(req.user._id);
+    const user = await User.findById(req.user._id).select('cryptoWallet').lean();
+    res.json({
+      message: 'Crypto wallet repaired from ledger history',
+      ...result,
+      cryptoWallet: user?.cryptoWallet || {},
+    });
+  } catch (error) {
+    console.error('repair-crypto-wallet:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.post('/repair-nse-bse-wallet', protectUser, async (req, res) => {
+  try {
+    const result = await repairNseBseWalletBalance(req.user._id);
+    const live = await readNseBseWalletFromDb(req.user._id);
+    res.json({
+      message: 'NSE/BSE wallet repaired from transfer and ledger history',
+      ...result,
+      balance: live.balance,
+      usedMargin: live.usedMargin,
+    });
+  } catch (error) {
+    console.error('repair-nse-bse-wallet:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -672,7 +902,46 @@ router.get('/my-admin', protectUser, async (req, res) => {
 router.get('/nse-bse-wallet', protectUser, async (req, res) => {
   try {
     await migrateNseBseWalletIfNeeded(req.user._id);
-    const live = await readNseBseWalletFromDb(req.user._id);
+    try {
+      await TradeService.reconcileUndebitedBrokerage(req.user._id, 'nse');
+    } catch (reconcileErr) {
+      console.warn('[nse-bse-wallet] brokerage reconcile:', reconcileErr?.message || reconcileErr);
+    }
+    let live = await readNseBseWalletFromDb(req.user._id);
+    let repaired = false;
+    const rawDoc = await User.collection.findOne(
+      { _id: req.user._id },
+      { projection: { 'nseBseWallet.balance': 1, 'wallet.tradingBalance': 1 } }
+    );
+    const rawBal =
+      rawDoc?.nseBseWallet?.balance != null
+        ? Number(rawDoc.nseBseWallet.balance)
+        : Number(rawDoc?.wallet?.tradingBalance);
+    let hasAbsurdQty = false;
+    const bigQtyRows = await Trade.find({
+      user: req.user._id,
+      status: 'OPEN',
+      quantity: { $gt: 50_000 },
+      isCrypto: { $ne: true },
+      exchange: { $nin: ['BINANCE', 'MCX', 'FOREX'] },
+    })
+      .select('quantity originalQty autoSquareHistory')
+      .limit(10)
+      .lean();
+    if (bigQtyRows.length) {
+      const { isAbsurdOpenQuantity } = await import('../utils/walletBalanceSanity.js');
+      hasAbsurdQty = bigQtyRows.some((r) => isAbsurdOpenQuantity(r));
+    }
+
+    if (isAbsurdWalletInr(rawBal) || hasAbsurdQty) {
+      try {
+        await repairNseBseWalletBalance(req.user._id);
+        live = await readNseBseWalletFromDb(req.user._id);
+        repaired = true;
+      } catch (repairErr) {
+        console.error('[nse-bse-wallet] auto-repair failed:', repairErr?.message || repairErr);
+      }
+    }
     const recalculated = await recalculateUsedMargin(req.user._id);
     const usedMargin = recalculated.nseBseWallet ?? recalculated.wallet ?? live.usedMargin;
     const available = Math.max(0, live.balance - usedMargin);
@@ -682,6 +951,7 @@ router.get('/nse-bse-wallet', protectUser, async (req, res) => {
       availableBalance: available,
       transferableBalance: available,
       mainBalance: live.mainBalance,
+      balanceRepaired: repaired,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

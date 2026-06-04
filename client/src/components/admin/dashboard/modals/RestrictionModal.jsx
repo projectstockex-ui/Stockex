@@ -65,6 +65,7 @@ function initialRestrictionsFromAdmin(adminUser) {
     allowFutures: r?.allowFutures ?? true,
     allowCommodity: r?.allowCommodity ?? true,
     allowCrypto: r?.allowCrypto ?? true,
+    allowWithinLowHigh: r?.allowWithinLowHigh === true,
     instrumentDenylist: Array.isArray(r?.instrumentDenylist)
       ? r.instrumentDenylist.map((row) => ({
           exchange: row.exchange || 'MCX',
@@ -102,7 +103,14 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
       ...prev,
       instrumentDenylist: [
         ...(prev.instrumentDenylist || []),
-        { exchange: 'MCX', segment: '', symbol: '', tradingSymbol: '' },
+        {
+          exchange: 'MCX',
+          segment: '',
+          symbol: '',
+          tradingSymbol: '',
+          allowWithinLowHigh: false,
+          blockOutsideLowHigh: false,
+        },
       ],
     }));
   };
@@ -606,17 +614,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
                             </div>
                           </div>
 
-                          <div className="md:col-span-2 flex flex-col gap-2 justify-end">
-                            <ToggleSwitch
-                              label="Allow within Low-High"
-                              checked={row.allowWithinLowHigh || false}
-                              onChange={() => updateDenyRow(idx, 'allowWithinLowHigh', !row.allowWithinLowHigh)}
-                            />
-                            <ToggleSwitch
-                              label="Block Outside Low-High"
-                              checked={row.blockOutsideLowHigh || false}
-                              onChange={() => updateDenyRow(idx, 'blockOutsideLowHigh', !row.blockOutsideLowHigh)}
-                            />
+                          <div className="md:col-span-2 flex justify-end items-end">
                             <button
                               type="button"
                               onClick={() => removeDenyRow(idx)}

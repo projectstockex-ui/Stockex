@@ -195,6 +195,11 @@ const adminSchema = new mongoose.Schema({
       type: Boolean,
       default: true
     },
+    /** Master toggle for NSE + MCX + crypto + forex trading referral */
+    trading: {
+      type: Boolean,
+      default: true
+    },
     mcx: {
       type: Boolean,
       default: true
@@ -713,6 +718,10 @@ const adminSchema = new mongoose.Schema({
       /** IST (HH:mm or HH:mm:ss) — earliest time this segment allows trading */
       cryptoStartTime: { type: String, default: '' },
       cryptoClosingTime: { type: String, default: '' },
+      /** IST MCX session start (HH:mm or HH:mm:ss) — hierarchy → users */
+      mcxStartTime: { type: String, default: '' },
+      /** IST MCX session close — carry-forward + freeze at this time */
+      mcxClosingTime: { type: String, default: '' },
       cryptoReferenceSymbol: { type: String, default: '' },
       /** @deprecated UI removed; kept for legacy DB docs. */
       cryptoPricePerLotInr: { type: Number, default: 0 },
@@ -814,6 +823,11 @@ const adminSchema = new mongoose.Schema({
     allowFutures: { type: Boolean, default: true },
     allowCommodity: { type: Boolean, default: true },
     allowCrypto: { type: Boolean, default: true },
+    /**
+     * When true, all users under this admin’s hierarchy may trade only within each instrument’s day low–high.
+     * When false, that subtree does not get hierarchy-wide low–high trading (segment groups may still apply).
+     */
+    allowWithinLowHigh: { type: Boolean, default: false },
     /** Merged with ancestors at trade time — blocks instrument for this admin’s entire subtree */
     instrumentDenylist: [
       {

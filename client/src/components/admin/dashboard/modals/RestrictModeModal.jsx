@@ -16,7 +16,6 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
     officePartnerType: targetAdmin.officePartnerType === 'INTERNAL' ? 'INTERNAL' : 'EXTERNAL',
     monthlyIncentiveAmount: targetAdmin.restrictMode?.monthlyIncentiveAmount || 0,
     monthlyIncentiveScope: targetAdmin.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
-    brokerageChargePerCrore: targetAdmin.restrictMode?.brokerageChargePerCrore || 0,
     restrictBrokerage: {
       games: targetAdmin.restrictMode?.restrictBrokerage?.games || false,
       trading: targetAdmin.restrictMode?.restrictBrokerage?.trading || false,
@@ -44,7 +43,6 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
         officePartnerType: prev.officePartnerType,
         monthlyIncentiveAmount: data.restrictMode?.monthlyIncentiveAmount || 0,
         monthlyIncentiveScope: data.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
-        brokerageChargePerCrore: data.restrictMode?.brokerageChargePerCrore || 0,
         restrictBrokerage: {
           games: data.restrictMode?.restrictBrokerage?.games || false,
           trading: data.restrictMode?.restrictBrokerage?.trading || false,
@@ -67,7 +65,6 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
         maxSubBrokers: restrictData.maxSubBrokers,
         monthlyIncentiveAmount: restrictData.monthlyIncentiveAmount,
         monthlyIncentiveScope: restrictData.monthlyIncentiveScope,
-        brokerageChargePerCrore: restrictData.brokerageChargePerCrore,
         restrictBrokerage: restrictData.restrictBrokerage,
       }, {
         headers: { Authorization: `Bearer ${token}` }
@@ -333,26 +330,6 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                 </div>
               </div>
 
-              {/* Brokerage Charge Per Crore */}
-              <div className="p-4 bg-dark-700 rounded-lg border border-blue-600/40">
-                <label className="font-medium flex items-center gap-2 mb-2 text-blue-400">
-                  <DollarSign size={16} /> Brokerage Charge Per Crore (₹)
-                </label>
-                <input
-                  type="number"
-                  value={restrictData.brokerageChargePerCrore || 0}
-                  onChange={(e) =>
-                    setRestrictData((prev) => ({ ...prev, brokerageChargePerCrore: parseFloat(e.target.value) || 0 }))
-                  }
-                  className="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                />
-                <p className="text-xs text-gray-500 mt-2">
-                  Brokerage charge per crore turnover for this {getRoleLabel(targetAdmin.role).toLowerCase()}.
-                </p>
-              </div>
             </>
 
             {/* Warning */}

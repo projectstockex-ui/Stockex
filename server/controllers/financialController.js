@@ -64,6 +64,15 @@ export const getUserWallet = async (req, res) => {
       mainWalletBalance = legacyBalance;
     }
 
+    // Keep wallet.balance in sync with cashBalance (legacy docs may have stale wallet.balance).
+    const staleBalance = Number(walletObj.balance || 0);
+    if (mainWalletBalance > 0 && staleBalance !== mainWalletBalance) {
+      await User.updateOne(
+        { _id: req.user._id },
+        { $set: { 'wallet.balance': mainWalletBalance, 'wallet.cashBalance': mainWalletBalance } }
+      );
+    }
+
     const tradingBalance = Number(walletObj.tradingBalance || 0);
     const usedMargin = Number(walletObj.usedMargin || walletObj.blocked || 0);
     const unrealizedPnL = Number(walletObj.unrealizedPnL || 0);
@@ -94,7 +103,7 @@ export const getUserWallet = async (req, res) => {
       // Wallets
       wallet: {
         ...walletObj,
-        balance: Number(walletObj.balance || mainWalletBalance),
+        balance: mainWalletBalance,
         cashBalance: mainWalletBalance,
         tradingBalance,
         usedMargin,

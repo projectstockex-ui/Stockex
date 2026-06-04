@@ -7,6 +7,7 @@ import {
 import { 
   trackHierarchyEarnings 
 } from './superAdminEarningsService.js';
+import { isReferralEnabledForUser } from '../utils/referralDistributionHelper.js';
 
 /**
  * Jackpot referral: winPercent × total prize pool (bank) that session — matches admin "% of bank".
@@ -55,6 +56,11 @@ export async function creditReferralTradingReward(referredUserId, brokerageAmoun
 
     if (referredUser.isDemo) {
       return { credited: false, reason: 'Demo users do not generate referral bonuses' };
+    }
+
+    const referralAllowed = await isReferralEnabledForUser(referredUserId, 'trading');
+    if (!referralAllowed) {
+      return { credited: false, reason: 'Referral in trading disabled for this hierarchy' };
     }
 
     if (referredUser.referralStats?.firstTradingWin) {

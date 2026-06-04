@@ -32,14 +32,14 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
         incentiveScope: presetScope,
       }));
     } else if (partnerMode === 'EXTERNAL') {
-      const preset = targetAdmin.restrictMode?.monthlyBrokerageCharge;
+      const preset = targetAdmin.restrictMode?.brokerageChargePerCrore;
       setFormData((prev) => ({
         ...prev,
         amount: preset > 0 ? String(preset) : '',
         description: `Monthly brokerage charge (${new Date().toLocaleDateString()})`,
       }));
     }
-  }, [partnerMode, targetAdmin._id, targetAdmin.restrictMode?.monthlyIncentiveAmount, targetAdmin.restrictMode?.monthlyBrokerageCharge, targetAdmin.restrictMode?.monthlyIncentiveScope]);
+  }, [partnerMode, targetAdmin._id, targetAdmin.restrictMode?.monthlyIncentiveAmount, targetAdmin.restrictMode?.brokerageChargePerCrore, targetAdmin.restrictMode?.monthlyIncentiveScope]);
 
   useEffect(() => {
     if (partnerMode !== 'EXTERNAL') return;
@@ -78,7 +78,9 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
       }, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
-      setSuccess(`Successfully took ₹${formData.amount} brokerage from ${targetAdmin.name || targetAdmin.username}`);
+      setSuccess(
+        `Successfully took ₹${formData.amount} from ${targetAdmin.name || targetAdmin.username}'s main wallet`
+      );
       setFormData((prev) => ({ ...prev, amount: '', description: '' }));
       setTimeout(() => {
         onClose();
@@ -168,7 +170,9 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
               <p className="text-xs text-green-400 mt-1">Office (INTERNAL) — Give Incentive</p>
             )}
             {partnerMode === 'EXTERNAL' && (
-              <p className="text-xs text-amber-400 mt-1">Outside partner (EXTERNAL) — Take brokerage or Transfer all hierarchy</p>
+              <p className="text-xs text-amber-400 mt-1">
+                Outside partner (EXTERNAL) — Take brokerage (main wallet) or Transfer all hierarchy
+              </p>
             )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button>
@@ -183,8 +187,17 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
           {(partnerMode === 'EXTERNAL' || partnerMode === 'PARTNER_LEGACY') && (
             <>
               <div className={`${partnerMode === 'EXTERNAL' ? 'p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg' : ''}`}>
+                {partnerMode === 'EXTERNAL' && (
+                  <p className="text-xs text-gray-400 mb-2">
+                    Admin main wallet:{' '}
+                    <span className="text-white font-semibold tabular-nums">
+                      ₹{Number(targetAdmin.wallet?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-gray-500"> (temporary wallet use nahi hota)</span>
+                  </p>
+                )}
                 <label className="block text-sm text-gray-400 mb-1">
-                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore (₹) — from Limits' : 'Amount to Take (₹)'}
+                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore (₹) — from Franchise' : 'Amount to Take (₹)'}
                 </label>
                 <input
                   type="number"
@@ -197,7 +210,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
                 />
                 {partnerMode === 'EXTERNAL' && targetAdmin.restrictMode?.brokerageChargePerCrore > 0 && (
                   <p className="text-xs text-rose-400 mt-1">
-                    Preset from Limits: ₹{Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
+                    Preset from Franchise: ₹{Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
                   </p>
                 )}
               </div>

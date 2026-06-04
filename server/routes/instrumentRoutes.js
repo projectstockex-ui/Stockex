@@ -178,6 +178,135 @@ async function ensureMcxRestrictionPickerSeedIfEmpty() {
 
 const router = express.Router();
 
+/** Super-admin instrument search (symbol, trading symbol, name, token, segment). */
+function applyAdminInstrumentSearch(query, search) {
+  const term = String(search || '').trim();
+  if (!term) return;
+  const rx = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  const searchClause = {
+    $or: [
+      { symbol: rx },
+      { name: rx },
+      { tradingSymbol: rx },
+      { token: rx },
+      { displaySegment: rx },
+      { category: rx },
+    ],
+  };
+  if (!query.$and) query.$and = [];
+  query.$and.push(searchClause);
+}
+
+/** Admin list / bulk: filter instruments by contract expiry window. */
+function applyAdminExpiryRangeToQuery(query, { startDate, endDate, expiryFrom, expiryTo } = {}) {
+  const rangeFrom = expiryFrom || startDate;
+  const rangeTo = expiryTo || endDate;
+  if (!rangeFrom && !rangeTo) return query;
+  const expiryFilter = {};
+  if (rangeFrom) {
+    const fromDate = new Date(rangeFrom);
+    if (!Number.isNaN(fromDate.getTime())) {
+      fromDate.setHours(0, 0, 0, 0);
+      expiryFilter.$gte = fromDate;
+    }
+  }
+  if (rangeTo) {
+    const toDate = new Date(rangeTo);
+    if (!Number.isNaN(toDate.getTime())) {
+      toDate.setHours(23, 59, 59, 999);
+      expiryFilter.$lte = toDate;
+    }
+  }
+  if (Object.keys(expiryFilter).length > 0) {
+    query.expiry = { ...(query.expiry || {}), ...expiryFilter };
+  }
+  return query;
+}
+
+function buildAdminBulkExpirySearchQuery({ startDate, endDate, search }) {
+  const query = {};
+  if (search) applyAdminInstrumentSearch(query, search);
+  applyAdminExpiryRangeToQuery(query, { startDate, endDate });
+  return query;
+}
+
+/** Admin bulk: constrain query to a single displaySegment key (NSEFUT, NSEOPT, MCXFUT, ...). */
+function applyAdminDisplaySegmentFilterToQuery(query, displaySegment) {
+  const seg = String(displaySegment || '').trim();
+  if (!seg) return query;
+  // Match the same behavior as /admin list displaySegment mapping.
+  if (seg === 'FOREXFUT' || seg === 'FOREXOPT') {
+    query.exchange = 'FOREX';
+    query.$and = query.$and || [];
+    const forexOr =
+      seg === 'FOREXOPT'
+        ? [{ displaySegment: 'FOREXOPT' }, { displaySegment: 'FOREX', exchange: 'FOREX', instrumentType: 'OPTIONS' }]
+        : [
+            { displaySegment: 'FOREXFUT' },
+            { displaySegment: 'FOREX', exchange: 'FOREX', instrumentType: { $ne: 'OPTIONS' } },
+            { displaySegment: 'FOREX', exchange: 'FOREX', instrumentType: { $exists: false } },
+          ];
+    query.$and.push({ $or: forexOr });
+    return query;
+  }
+
+  query.$or = query.$or || [];
+  if (seg === 'NSEFUT') {
+    query.$or.push(
+      { displaySegment: 'NSEFUT' },
+      { exchange: 'NFO', instrumentType: 'FUTURES' },
+      { exchange: 'NFO', instrumentType: 'FUT' }
+    );
+  } else if (seg === 'NSEOPT') {
+    query.$or.push(
+      { displaySegment: 'NSEOPT' },
+      { exchange: 'NFO', instrumentType: 'OPTIONS' },
+      { exchange: 'NFO', instrumentType: 'OPTION' }
+    );
+  } else if (seg === 'MCXFUT') {
+    query.$or.push(
+      { displaySegment: 'MCXFUT' },
+      { exchange: 'MCX', instrumentType: 'FUTURES' },
+      { exchange: 'MCX', instrumentType: 'COMMODITY' },
+      { exchange: 'MCX', instrumentType: 'FUT' }
+    );
+  } else if (seg === 'MCXOPT') {
+    query.$or.push(
+      { displaySegment: 'MCXOPT' },
+      { exchange: 'MCX', instrumentType: 'OPTIONS' },
+      { exchange: 'MCX', instrumentType: 'OPTION' }
+    );
+  } else if (seg === 'BSE-FUT') {
+    query.$or.push(
+      { displaySegment: 'BSE-FUT' },
+      { exchange: 'BFO', instrumentType: 'FUTURES' },
+      { exchange: 'BFO', instrumentType: 'FUT' }
+    );
+  } else if (seg === 'BSE-OPT') {
+    query.$or.push(
+      { displaySegment: 'BSE-OPT' },
+      { exchange: 'BFO', instrumentType: 'OPTIONS' },
+      { exchange: 'BFO', instrumentType: 'OPTION' }
+    );
+  } else if (seg === 'CRYPTOFUT') {
+    query.$or.push({ exchange: 'BINANCE', instrumentType: 'FUTURES', displaySegment: 'CRYPTOFUT' });
+  } else if (seg === 'CRYPTOOPT') {
+    query.$or.push({ exchange: 'BINANCE', instrumentType: 'OPTIONS', displaySegment: 'CRYPTOOPT' });
+  } else if (seg === 'NSE-EQ') {
+    query.$or.push({ displaySegment: 'NSE-EQ' }, { exchange: 'NSE' });
+  } else {
+    // Fallback: exact match
+    query.displaySegment = seg;
+  }
+
+  // If other conditions already used $and, normalize $or into $and for safety.
+  if (query.$and && query.$or && query.$or.length > 0) {
+    query.$and.push({ $or: query.$or });
+    delete query.$or;
+  }
+  return query;
+}
+
 // ==================== PUBLIC ROUTES ====================
 
 // Get all enabled instruments (for users)
@@ -597,11 +726,8 @@ router.get('/admin', protectAdmin, async (req, res) => {
                 { displaySegment: 'FOREX', exchange: 'FOREX', instrumentType: { $exists: false } }
               ];
         if (search) {
-          const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-          query.$and = [
-            { $or: forexOr },
-            { $or: [{ symbol: rx }, { name: rx }] }
-          ];
+          query.$and = [{ $or: forexOr }];
+          applyAdminInstrumentSearch(query, search);
         } else {
           query.$or = forexOr;
         }
@@ -660,16 +786,12 @@ router.get('/admin', protectAdmin, async (req, res) => {
       }
     }
     if (search && !(displaySegment === 'FOREXFUT' || displaySegment === 'FOREXOPT')) {
-      const searchOr = [
-        { symbol: { $regex: search, $options: 'i' } },
-        { name: { $regex: search, $options: 'i' } }
-      ];
       if (query.$or) {
         if (!query.$and) query.$and = [];
-        query.$and.push({ $or: searchOr });
-      } else {
-        query.$or = searchOr;
+        query.$and.push({ $or: query.$or });
+        delete query.$or;
       }
+      applyAdminInstrumentSearch(query, search);
     }
     
     // Filter by expiry date - show instruments expiring up to the selected date
@@ -686,24 +808,7 @@ router.get('/admin', protectAdmin, async (req, res) => {
     const rangeTo = expiryTo || endDate;
     const hasExpiryRange = Boolean(rangeFrom || rangeTo);
     if (hasExpiryRange) {
-      const expiryFilter = {};
-      if (rangeFrom) {
-        const fromDate = new Date(rangeFrom);
-        if (!Number.isNaN(fromDate.getTime())) {
-          fromDate.setHours(0, 0, 0, 0);
-          expiryFilter.$gte = fromDate;
-        }
-      }
-      if (rangeTo) {
-        const toDate = new Date(rangeTo);
-        if (!Number.isNaN(toDate.getTime())) {
-          toDate.setHours(23, 59, 59, 999);
-          expiryFilter.$lte = toDate;
-        }
-      }
-      if (Object.keys(expiryFilter).length > 0) {
-        query.expiry = { ...(query.expiry || {}), ...expiryFilter };
-      }
+      applyAdminExpiryRangeToQuery(query, { startDate, endDate, expiryFrom, expiryTo });
     }
 
     // Market Watch: hide rolled / past F&O (same as user lists). Opt out: ?includeExpired=true
@@ -909,6 +1014,89 @@ router.put('/admin/bulk-toggle', protectAdmin, superAdminOnly, async (req, res) 
     await Instrument.updateMany({ _id: { $in: ids } }, { $set: setDoc });
 
     res.json({ message: `${ids.length} instruments updated` });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+/** Super Admin: set user trading panel visibility dates on many instruments at once. */
+router.put('/admin/bulk-panel-visibility', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const {
+      ids,
+      tradingPanelVisibleFrom,
+      tradingPanelVisibleUntil,
+      startDate,
+      endDate,
+      search,
+      displaySegment,
+      applyToFilteredList,
+    } = req.body || {};
+
+    let panelFields;
+    try {
+      panelFields = sanitizeTradingPanelVisibilityBody({
+        tradingPanelVisibleFrom,
+        tradingPanelVisibleUntil,
+      });
+    } catch (panelErr) {
+      return res.status(400).json({ message: panelErr.message });
+    }
+
+    const clearing =
+      panelFields.tradingPanelVisibleFrom == null && panelFields.tradingPanelVisibleUntil == null;
+    if (!clearing && !panelFields.tradingPanelVisibleFrom && !panelFields.tradingPanelVisibleUntil) {
+      return res.status(400).json({
+        message: 'Set at least one of tradingPanelVisibleFrom or tradingPanelVisibleUntil',
+      });
+    }
+
+    const MAX_BULK = 15000;
+    let filter;
+
+    if (applyToFilteredList) {
+      if (!displaySegment && !startDate && !endDate && !search) {
+        return res.status(400).json({
+          message:
+            'Set segment and/or expiry date range and/or search before applying to filtered list (safety limit).',
+        });
+      }
+      filter = buildAdminBulkExpirySearchQuery({
+        startDate,
+        endDate,
+        search: search || '',
+      });
+      applyAdminDisplaySegmentFilterToQuery(filter, displaySegment);
+    } else if (Array.isArray(ids) && ids.length > 0) {
+      const objectIds = ids
+        .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+        .map((id) => new mongoose.Types.ObjectId(String(id)));
+      if (objectIds.length === 0) {
+        return res.status(400).json({ message: 'No valid instrument ids' });
+      }
+      filter = { _id: { $in: objectIds } };
+    } else {
+      return res.status(400).json({
+        message: 'Provide ids[] or applyToFilteredList with expiry/search filters',
+      });
+    }
+
+    const matchCount = await Instrument.countDocuments(filter);
+    if (matchCount === 0) {
+      return res.status(404).json({ message: 'No instruments match this filter' });
+    }
+    if (matchCount > MAX_BULK) {
+      return res.status(400).json({
+        message: `Too many instruments (${matchCount}). Narrow expiry range or search (max ${MAX_BULK}).`,
+      });
+    }
+
+    const result = await Instrument.updateMany(filter, { $set: panelFields });
+    res.json({
+      message: `Panel visibility updated for ${result.modifiedCount} instrument(s)`,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

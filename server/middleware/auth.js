@@ -45,13 +45,7 @@ export const protectUser = async (req, res, next) => {
       return res.status(401).json({ message: 'Not authorized' });
     }
 
-    // Single device login check - verify session token matches
-    if (decoded.sessionToken && user.activeSessionToken && decoded.sessionToken !== user.activeSessionToken) {
-      return res.status(401).json({ 
-        message: 'Session expired. You have been logged in from another device.',
-        code: 'SESSION_EXPIRED_OTHER_DEVICE'
-      });
-    }
+    // Clients may stay logged in on web + mobile at the same time (no single-device enforcement).
 
     req.user = user;
     next();

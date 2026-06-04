@@ -3,11 +3,14 @@ import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
+import { getRuntimeSocketUrl, getSocketClientOptions } from '../lib/runtimeApiUrl';
+import { triggerAutosquareSound } from '../utils/tradingAlertSound';
 import {
   Home, ArrowLeft, RefreshCw, Calendar, Filter, Download,
   TrendingUp, TrendingDown, Timer, CheckCircle, XCircle, AlertCircle,
-  X, ChevronRight, Scissors
+  X, ChevronRight, Scissors, Info
 } from 'lucide-react';
+import TradeCloseBreakdownPanel from '../components/trading/TradeCloseBreakdownPanel.jsx';
 import {
   IOSToast,
   IOSConfirmModal,
@@ -17,6 +20,11 @@ import {
   useIOSConfirm
 } from '../components/IOSComponents';
 import { getTradeQtyLotsDisplay } from '../utils/tradeQtyLotsDisplay.js';
+import {
+  formatAutosquareEndClock,
+  formatAutosquareSessionDate,
+} from '../utils/autosquareSessionDisplay.js';
+import { resolveTradeDisplayPnL } from '../utils/tradePnL.js';
 
 const UserOrders = () => {
   const navigate = useNavigate();
@@ -45,6 +53,10 @@ const UserOrders = () => {
   const { toast, showToast, hideToast } = useIOSToast();
   const { confirm, showConfirm, hideConfirm } = useIOSConfirm();
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [showBreakdownModal, setShowBreakdownModal] = useState(false);
+  const [tradeBreakdown, setTradeBreakdown] = useState(null);
+  const [loadingBreakdown, setLoadingBreakdown] = useState(false);
+  const [breakdownError, setBreakdownError] = useState(null);
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
@@ -78,8 +90,9 @@ const UserOrders = () => {
   useEffect(() => {
     if (!user?.token) return;
 
-    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
-    const socket = io(socketUrl);
+    const socketUrl = getRuntimeSocketUrl();
+    const socket = io(socketUrl, getSocketClientOptions());
+    const myUserId = String(user._id || user.id || '');
     const pending = {};
     const MARKET_TICK_FLUSH_MS = 0;
     let flushTimer = null;
@@ -105,6 +118,14 @@ const UserOrders = () => {
 
     socket.on('connect', () => {
       console.log('Socket.IO connected for UserOrders');
+      if (myUserId) socket.emit('register_user', myUserId);
+    });
+
+    socket.on('ledger_autosquare', (data) => {
+      if (myUserId && data?.targetUserId && String(data.targetUserId) !== myUserId) return;
+      triggerAutosquareSound();
+      window.dispatchEvent(new CustomEvent('stockex:ledger-autosquare', { detail: data }));
+      fetchAllOrders();
     });
 
     socket.on('market_tick', (ticks) => {
@@ -119,7 +140,7 @@ const UserOrders = () => {
       if (flushTimer) clearTimeout(flushTimer);
       socket.disconnect();
     };
-  }, [user?.token]);
+  }, [user?.token, user?._id, user?.id]);
 
   // Get current price from market data for live P&L calculation
   const getCurrentPrice = (position) => {
@@ -172,6 +193,24 @@ const UserOrders = () => {
     }
     
     return { fromDate, toDate };
+  };
+
+  const isAutoSquaredTrade = (t) => {
+    if (!t) return false;
+    const reason = String(t.closeReason || '').toUpperCase();
+    if (['TIME_BASED', 'AUTO_SQUARE', 'AUTO_SQUARE_330', 'EOD_SQUAREOFF'].includes(reason)) return true;
+    if (t.isAutoSquared === true) return true;
+    if (t.autoSquaredAt) return true;
+    if (Array.isArray(t.autoSquareHistory) && t.autoSquareHistory.length > 0) return true;
+    return false;
+  };
+
+  const formatTradeStatusLabel = (t) => {
+    if (isAutoSquaredTrade(t)) return 'AUTO-SQUARED';
+    const reason = String(t?.closeReason || '').toUpperCase();
+    if (reason === 'MANUAL') return 'MANUAL';
+    if (reason === 'CANCELLED') return 'CANCELLED';
+    return t?.status || t?.closeReason || 'CLOSED';
   };
 
   const fetchAllOrders = async () => {
@@ -250,13 +289,19 @@ const UserOrders = () => {
       );
 
       setPositions(filteredPositions.filter(t => !t.isAutoSquared));
-      setClosedTrades(filteredHistory.filter(t => t.status === 'CLOSED'));
-      setCancelledOrders(filteredHistory.filter(t => t.status === 'CANCELLED'));
+      setClosedTrades(
+        filteredHistory.filter((t) => t.status === 'CLOSED' && !isAutoSquaredTrade(t))
+      );
+      setCancelledOrders(
+        filteredHistory.filter(
+          (t) => t.status === 'CANCELLED' || String(t.closeReason || '').toUpperCase() === 'CANCELLED'
+        )
+      );
       setAutoSquareOrders(filteredAutoSquare);
       setPendingOrders(filteredPending);
 
       // Calculate stats from filtered data
-      const closed = filteredHistory.filter(t => t.status === 'CLOSED');
+      const closed = filteredHistory.filter((t) => t.status === 'CLOSED' && !isAutoSquaredTrade(t));
       const getPnL = (t) => t.realizedPnL ?? t.netPnL ?? t.pnl ?? t.unrealizedPnL ?? 0;
       const totalPnL = closed.reduce((sum, t) => sum + getPnL(t), 0);
       const wins = closed.filter(t => getPnL(t) > 0).length;
@@ -366,6 +411,55 @@ const UserOrders = () => {
     });
   };
 
+  const resolveTradeClosedAt = (item) => {
+    if (item?.closeTime) {
+      const base = item.openedAt || item.closedAt || item.autoSquaredAt || item.createdAt || Date.now();
+      const d = new Date(base);
+      const parts = String(item.closeTime).trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if (parts && !Number.isNaN(d.getTime())) {
+        d.setHours(Number(parts[1]), Number(parts[2]), Number(parts[3] || 0), 0);
+        return d;
+      }
+    }
+    if (item?.closedAt) {
+      const dt = new Date(item.closedAt);
+      if (!Number.isNaN(dt.getTime())) return dt;
+    }
+    if (item?.autoSquaredAt) {
+      const dt = new Date(item.autoSquaredAt);
+      if (!Number.isNaN(dt.getTime())) return dt;
+    }
+    return null;
+  };
+
+  const formatTradeExitTime = (item) => {
+    const dt = resolveTradeClosedAt(item);
+    if (!dt) return null;
+    return dt.toLocaleString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  };
+
+  const openTradeBreakdown = async (item) => {
+    if (!item?._id || !user?.token) return;
+    setShowBreakdownModal(true);
+    setTradeBreakdown(null);
+    setBreakdownError(null);
+    setLoadingBreakdown(true);
+    try {
+      const { data } = await axios.get(`/api/trading/trades/${item._id}/close-breakdown`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setTradeBreakdown(data);
+    } catch (error) {
+      setBreakdownError(error.response?.data?.message || error.message || 'Failed to load');
+    } finally {
+      setLoadingBreakdown(false);
+    }
+  };
+
   const getCurrentData = () => {
     switch (activeTab) {
       case 'positions': return positions;
@@ -390,8 +484,12 @@ const UserOrders = () => {
       item.entryPrice || item.price,
       item.exitPrice || '-',
       item.realizedPnL ?? item.netPnL ?? item.pnl ?? item.unrealizedPnL ?? 0,
-      item.status,
-      formatDate(item.closedAt || item.createdAt || item.openedAt)
+      formatTradeStatusLabel(item),
+      activeTab === 'autosquare'
+        ? formatAutosquareSessionDate(item)
+        : formatDate(
+            item.autoSquaredAt || resolveTradeClosedAt(item) || item.closedAt || item.createdAt || item.openedAt
+          )
     ]);
 
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
@@ -594,23 +692,14 @@ const UserOrders = () => {
               // Calculate live P&L for open positions using current market data
               let pnl;
               if (activeTab === 'autosquare') {
-                if (item.pnlAtAutoSquare != null && Number.isFinite(Number(item.pnlAtAutoSquare))) {
-                  pnl = Number(item.pnlAtAutoSquare);
-                } else {
-                  const endLtp = item.autoSquareLtp || item.currentPrice || item.entryPrice;
-                  const qty = item.originalQty || item.quantity;
-                  pnl = item.side === 'BUY'
-                    ? (endLtp - item.entryPrice) * qty
-                    : (item.entryPrice - endLtp) * qty;
-                }
+                pnl = resolveTradeDisplayPnL(item);
               } else if (activeTab === 'positions') {
                 const ltp = getCurrentPrice(item) || item.currentPrice || item.entryPrice;
                 pnl = item.side === 'BUY'
                   ? (ltp - item.entryPrice) * item.quantity
                   : (item.entryPrice - ltp) * item.quantity;
               } else {
-                // For closed trades, use realized P&L from backend
-                pnl = item.realizedPnL || item.pnl || item.unrealizedPnL || 0;
+                pnl = resolveTradeDisplayPnL(item);
               }
               const isProfitable = pnl >= 0;
               
@@ -660,8 +749,10 @@ const UserOrders = () => {
                           <th className="pb-2 text-right">Entry</th>
                           {activeTab === 'autosquare' && <th className="pb-2 text-right">LTP @ End Time</th>}
                           {activeTab === 'autosquare' && <th className="pb-2 text-right">Next Day Qty</th>}
-                          {activeTab === 'closed' && <th className="pb-2 text-right">Exit</th>}
-                          <th className="pb-2">Status</th>
+                          {activeTab === 'closed' && (
+                            <th className="pb-2 text-right">Exit / Status</th>
+                          )}
+                          {activeTab !== 'closed' && <th className="pb-2">Status</th>}
                           <th className="pb-2">Date</th>
                         </tr>
                       </thead>
@@ -715,17 +806,9 @@ const UserOrders = () => {
                               ) : (
                                 <div className="text-red-400">LTP not captured</div>
                               )}
-                              {(item.closeTime || item.autoSquaredAt) && (
+                              {formatAutosquareEndClock(item) && (
                                 <div className="text-[10px] text-gray-500">
-                                  @
-                                  {item.closeTime
-                                    ? String(item.closeTime).slice(0, 8)
-                                    : new Date(item.autoSquaredAt).toLocaleTimeString('en-IN', {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                        second: '2-digit',
-                                        hour12: false,
-                                      })}
+                                  @{formatAutosquareEndClock(item)}
                                 </div>
                               )}
                             </td>
@@ -737,28 +820,52 @@ const UserOrders = () => {
                               </span>
                             </td>
                           )}
-                          {activeTab === 'closed' && <td className="py-2 text-right">₹{(item.exitPrice || 0).toLocaleString()}</td>}
-                          <td className="py-2">
-                            <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
-                              item.isAutoSquared && item.status === 'OPEN' ? 'bg-purple-500/20 text-purple-500' :
-                              item.status === 'OPEN' ? 'bg-blue-500/20 text-blue-500' :
-                              item.status === 'CLOSED' ? 'bg-green-500/20 text-green-400' :
-                              item.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-400' :
-                              'bg-red-500/20 text-red-400'
-                            }`}>
-                              {item.isLegacyClosed
-                                ? 'CLOSED (legacy)'
-                                : item.isAutoSquared && item.status === 'OPEN' && !item.isHistoryEvent
-                                  ? 'OPEN FOR NEXT DAY'
-                                  : item.isHistoryEvent
-                                    ? 'AUTO-SQUARED'
-                                    : item.status}
-                            </span>
-                          </td>
+                          {activeTab === 'closed' && (
+                            <td className="py-2 text-right align-top">
+                              <div>₹{(item.exitPrice || 0).toLocaleString()}</div>
+                              {formatTradeExitTime(item) ? (
+                                <div className="text-[10px] text-gray-500 mt-0.5">
+                                  Exit @ {formatTradeExitTime(item)}
+                                </div>
+                              ) : null}
+                              <div className="mt-1 flex justify-end">
+                                <span className="inline-flex px-1.5 py-0.5 rounded text-xs font-semibold bg-green-500/20 text-green-400">
+                                  {formatTradeStatusLabel(item)}
+                                </span>
+                              </div>
+                            </td>
+                          )}
+                          {activeTab !== 'closed' && (
+                            <td className="py-2">
+                              <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
+                                activeTab === 'autosquare'
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : item.isAutoSquared && item.status === 'OPEN'
+                                    ? 'bg-purple-500/20 text-purple-500'
+                                    : item.status === 'OPEN'
+                                      ? 'bg-blue-500/20 text-blue-500'
+                                      : item.status === 'CLOSED'
+                                        ? 'bg-green-500/20 text-green-400'
+                                        : item.status === 'PENDING'
+                                          ? 'bg-yellow-500/20 text-yellow-400'
+                                          : 'bg-red-500/20 text-red-400'
+                              }`}>
+                                {activeTab === 'autosquare'
+                                  ? 'AUTO-SQUARED'
+                                  : item.isAutoSquared && item.status === 'OPEN' && !item.isHistoryEvent
+                                    ? 'OPEN FOR NEXT DAY'
+                                    : item.isHistoryEvent
+                                      ? 'AUTO-SQUARED'
+                                      : formatTradeStatusLabel(item)}
+                              </span>
+                            </td>
+                          )}
                           <td className="py-2 text-gray-400">
                             {activeTab === 'autosquare'
-                              ? formatDate(item.autoSquaredAt || item.createdAt)
-                              : formatDate(item.createdAt || item.openedAt)}
+                              ? formatAutosquareSessionDate(item)
+                              : activeTab === 'closed'
+                                ? formatDate(resolveTradeClosedAt(item) || item.closedAt || item.createdAt || item.openedAt)
+                                : formatDate(item.createdAt || item.openedAt)}
                           </td>
                         </tr>
                       </tbody>
@@ -790,12 +897,49 @@ const UserOrders = () => {
                       </button>
                     </div>
                   )}
+
+                  {activeTab === 'closed' && item.status === 'CLOSED' && (
+                    <div className="px-4 py-3 border-t border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => openTradeBreakdown(item)}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-xl text-sm font-medium transition-all active:scale-95"
+                      >
+                        <Info size={16} />
+                        P&L & charges breakdown
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {showBreakdownModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1c1c1e] rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto border border-white/10">
+            <div className="sticky top-0 bg-[#1c1c1e] border-b border-white/10 p-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">Trade P&L & charges</h3>
+              <button
+                type="button"
+                onClick={() => setShowBreakdownModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <TradeCloseBreakdownPanel
+                data={tradeBreakdown}
+                loading={loadingBreakdown}
+                error={breakdownError}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* iOS-style Bottom Safe Area */}
       <div className="ios-safe-bottom bg-[#000000]" />

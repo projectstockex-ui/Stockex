@@ -12,10 +12,25 @@ import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
 import {
   computeNseBseRealBalance,
   executeLedgerAutosquareNil,
-  shouldTriggerLedgerAutosquare,
-  ledgerClosePercent,
-  getLedgerReferenceBalance,
 } from '../services/nseBseLedgerAutosquareService.js';
+import {
+  isPastCryptoCloseForUser,
+  resolveEffectiveCryptoClosingTimeForUser,
+  resolveSystemCryptoClosingTime,
+  isCryptoSegmentKey,
+} from '../utils/cryptoSessionTiming.js';
+import {
+  isPastMcxCloseForUser,
+  resolveEffectiveMcxClosingTimeForUser,
+  resolveSystemMcxClosingTime,
+  isMcxSegmentKey,
+  resolveMcxCloseFromSegSettings,
+} from '../utils/mcxSessionTiming.js';
+import {
+  applySegmentCarryForward,
+  applyCryptoForexCarryForward,
+  readSegmentSettingsForCarry,
+} from '../services/carryForwardService.js';
 
 /**
  * TradePro Trading Engine - EOD Settlement Cron Jobs
@@ -71,47 +86,98 @@ class EODSettlement {
   }
 
   static getAutosquareSettingsForTrade(admin, trade, segmentGroup) {
-    let autosquarePercent = 90;
-    let carryForwardLeverage = 50;
-    const segPerms = admin?.segmentPermissions instanceof Map
-      ? Object.fromEntries(admin.segmentPermissions)
-      : admin?.segmentPermissions || {};
-
-    const keys = EODSettlement.segmentPermissionKeysForTrade(trade, segmentGroup);
-    for (const key of keys) {
-      const segSettings = segPerms[key];
-      if (!segSettings) continue;
-      const lot = segSettings.lotSettings || {};
-      const qty = segSettings.quantityModeSettings || {};
-      if (lot.autosquarePercent != null) autosquarePercent = Number(lot.autosquarePercent);
-      else if (qty.autosquarePercent != null) autosquarePercent = Number(qty.autosquarePercent);
-      if (lot.carryForwardLeverage > 0) carryForwardLeverage = Number(lot.carryForwardLeverage);
-      else if (qty.carryForwardLeverage > 0) carryForwardLeverage = Number(qty.carryForwardLeverage);
-      else if (segSettings.exposureCarryForward > 0) {
-        carryForwardLeverage = Number(segSettings.exposureCarryForward);
-      }
-      break;
-    }
+    const seg = readSegmentSettingsForCarry(admin, trade, segmentGroup);
     return {
-      autosquarePercent: Number.isFinite(autosquarePercent) ? autosquarePercent : 90,
-      carryForwardLeverage: Number.isFinite(carryForwardLeverage) && carryForwardLeverage > 0
-        ? carryForwardLeverage
-        : 50,
+      autosquarePercent: seg.autosquarePercent != null ? seg.autosquarePercent : 90,
+      carryForwardLeverage:
+        seg.carryForwardLeverage != null && seg.carryForwardLeverage > 0 ? seg.carryForwardLeverage : 1,
+      carryForwardUseTotalEquity: seg.carryForwardUseTotalEquity,
     };
   }
 
-  /** Closing time for one segment key: admin setting first, then system default */
+  /** Closing time for one segment key. Crypto: SystemSettings CRYPTOFUT first (matches UI). */
   static getSegmentCloseTime(admin, segKey, sysSegDefaults = {}) {
+    if (isCryptoSegmentKey(segKey)) {
+      const sysClose = resolveSystemCryptoClosingTime(sysSegDefaults);
+      if (sysClose) return sysClose;
+    }
+    if (isMcxSegmentKey(segKey)) {
+      const sysClose = resolveSystemMcxClosingTime(sysSegDefaults);
+      if (sysClose) return sysClose;
+    }
+
     const segPerms = admin?.segmentPermissions instanceof Map
       ? Object.fromEntries(admin.segmentPermissions)
       : admin?.segmentPermissions || {};
     const segSettings = segPerms[segKey] || {};
-    let closeTime = String(segSettings.cryptoClosingTime || segSettings.closingTime || '').trim();
+    let closeTime = '';
+    if (isCryptoSegmentKey(segKey)) {
+      closeTime = String(segSettings.cryptoClosingTime || segSettings.closingTime || '').trim();
+    } else if (isMcxSegmentKey(segKey)) {
+      closeTime = resolveMcxCloseFromSegSettings(segSettings);
+    } else {
+      closeTime = String(segSettings.closingTime || '').trim();
+    }
     if (!closeTime) {
       const sysSeg = sysSegDefaults[segKey] || {};
-      closeTime = String(sysSeg.cryptoClosingTime || sysSeg.closingTime || '').trim();
+      if (isCryptoSegmentKey(segKey)) {
+        closeTime = String(sysSeg.cryptoClosingTime || sysSeg.closingTime || '').trim();
+      } else if (isMcxSegmentKey(segKey)) {
+        closeTime = resolveMcxCloseFromSegSettings(sysSeg);
+      } else {
+        closeTime = String(sysSeg.closingTime || '').trim();
+      }
     }
     return closeTime;
+  }
+
+  /** MCX session end: carry-forward + freeze quotes (SystemSettings MCXFUT close). */
+  static async executeGlobalMcxSessionAutosquare(sysSegDefaults = {}) {
+    const closeTime = resolveSystemMcxClosingTime(sysSegDefaults);
+    if (!closeTime || !EODSettlement.isPastClosingTimeIST(closeTime)) {
+      return { carried: 0, closed: 0, failed: 0, ran: false };
+    }
+
+    const { runMcxSessionEndIfNeeded } = await import('../services/mcxSessionCloseService.js');
+    const { getMarketData } = await import('../services/zerodhaWebSocket.js');
+    const { getAppSocket } = await import('../utils/appSocket.js');
+    const result = await runMcxSessionEndIfNeeded(getMarketData(), {
+      io: getAppSocket(),
+    });
+
+    return {
+      carried: result.carried || 0,
+      closed: result.closed || 0,
+      failed: result.failed || 0,
+      skipped: result.skipped || 0,
+      cancelled: result.cancelled || 0,
+      ran: !!result.ran,
+      frozen: result.frozen,
+    };
+  }
+
+  /** Crypto session end: carry-forward + freeze quotes (SystemSettings close time). */
+  static async executeGlobalCryptoSessionAutosquare(sysSegDefaults = {}) {
+    const closeTime = resolveSystemCryptoClosingTime(sysSegDefaults);
+    if (!closeTime || !EODSettlement.isPastClosingTimeIST(closeTime)) {
+      return { carried: 0, closed: 0, failed: 0, ran: false };
+    }
+
+    const { runCryptoSessionEndIfNeeded } = await import('../services/cryptoSessionCloseService.js');
+    const { getAppSocket } = await import('../utils/appSocket.js');
+    const result = await runCryptoSessionEndIfNeeded(getCryptoData(), {
+      io: getAppSocket(),
+    });
+
+    return {
+      carried: result.carried || 0,
+      closed: result.closed || 0,
+      failed: result.failed || 0,
+      skipped: result.skipped || 0,
+      cancelled: result.cancelled || 0,
+      ran: !!result.ran,
+      frozen: result.frozen,
+    };
   }
 
   /** Crypto end time for an admin hierarchy (Ram 23:15, Radga 22:30, etc.) */
@@ -162,7 +228,8 @@ class EODSettlement {
 
   /**
    * Carry-forward qty for next session:
-   * nextDayQty = floor((walletBalance + positionPnL) × carryForwardLeverage / endLtp)
+   * CRYPTO/FOREX (24-May): cap = (balance+usedMargin)×leverage; trim qty to floor(cap/LTP).
+   * NSE/BSE/MCX: nextDayQty = floor((walletBalance + PnL) × leverage / endLtp).
    */
   static sameISTDay(a, b) {
     if (!a || !b) return false;
@@ -182,152 +249,19 @@ class EODSettlement {
     return false;
   }
 
-  static async applyCarryForwardAutosquare(trade, { ltp, closeTime, segmentGroup, admin }) {
-    const { carryForwardLeverage } = EODSettlement.getAutosquareSettingsForTrade(
+  static async applyCarryForwardAutosquare(
+    trade,
+    { ltp, closeTime, segmentGroup, admin, netBalanceOverride = null, skipWalletUpdate = false } = {}
+  ) {
+    if (!['CRYPTO', 'FOREX', 'MCX', 'NSE'].includes(segmentGroup)) {
+      throw new Error(`Unsupported carry-forward segmentGroup: ${segmentGroup}`);
+    }
+    return applySegmentCarryForward(trade, {
+      ltp,
+      closeTime,
+      segmentGroup,
       admin,
-      trade,
-      segmentGroup
-    );
-    const { balancePath, usedMarginPath } = EODSettlement.walletFieldsForSegmentGroup(segmentGroup);
-
-    const user = await User.findOne({ userId: trade.userId })
-      .select(`${balancePath.split('.')[0]} wallet.tradingBalance wallet.usedMargin`)
-      .lean();
-    if (!user) throw new Error(`User ${trade.userId} not found`);
-
-    const walletRoot = balancePath.split('.')[0];
-    const initialBalance = Number(user[walletRoot]?.balance) || 0;
-    const qtyAtEvent = Number(trade.quantity) || Number(trade.lots) || 1;
-    const firstOrigQty = trade.originalQty != null ? Number(trade.originalQty) : qtyAtEvent;
-    const entryLtp = Number(trade.entryPrice) || 0;
-    const multiplier = trade.side === 'BUY' ? 1 : -1;
-    const pnl = (Number(ltp) - entryLtp) * qtyAtEvent * multiplier;
-    const netBalance = Math.max(0, initialBalance + pnl);
-    const nextDayQty = Math.max(
-      0,
-      Math.floor((netBalance * carryForwardLeverage) / Number(ltp))
-    );
-    const carryForwardQty = nextDayQty;
-    const squaredAt = new Date();
-    const historyEntry = {
-      autoSquaredAt: squaredAt,
-      closeTime: closeTime ? String(closeTime) : '',
-      autoSquareLtp: Number(ltp) > 0 ? Number(ltp) : null,
-      originalQty: qtyAtEvent,
-      nextDayQty,
-      pnlAtAutoSquare: pnl,
-      netBalanceAtAutoSquare: netBalance,
-      carryForwardLeverage,
-    };
-    const prevMargin = Number(trade.marginUsed) || Number(trade.requiredMargin) || 0;
-    const nextMargin =
-      qtyAtEvent > 0 && prevMargin > 0
-        ? Math.round((prevMargin * nextDayQty) / qtyAtEvent * 100) / 100
-        : Math.round(((nextDayQty * Number(ltp)) / carryForwardLeverage) * 100) / 100;
-
-    if (!skipWalletUpdate) {
-      await User.updateOne({ userId: trade.userId }, { $set: { [balancePath]: netBalance } });
-    }
-
-    const freshTrade = await Trade.findById(trade._id).select('autoSquareHistory').lean();
-    const closeKey = closeTime ? String(closeTime) : '';
-    const alreadyLogged = (freshTrade?.autoSquareHistory || []).some(
-      (e) =>
-        closeKey &&
-        String(e.closeTime || '') === closeKey &&
-        EODSettlement.sameISTDay(e.autoSquaredAt, squaredAt) &&
-        Math.abs(new Date(e.autoSquaredAt).getTime() - squaredAt.getTime()) < 120000
-    );
-
-    const latestFields = {
-      status: 'OPEN',
-      isAutoSquared: true,
-      autoSquaredAt: squaredAt,
-      autoSquareLtp: Number(ltp) > 0 ? Number(ltp) : null,
-      closeReason: 'AUTO_SQUARE',
-      originalQty: firstOrigQty,
-      pnlAtAutoSquare: pnl,
-      carryForwardQty: nextDayQty,
-      netBalanceAtAutoSquare: netBalance,
-      quantity: nextDayQty,
-      productType: 'NRML',
-      leverage: carryForwardLeverage,
-      marginUsed: nextMargin,
-      requiredMargin: nextMargin,
-    };
-
-    if (alreadyLogged) {
-      await Trade.findByIdAndUpdate(trade._id, { $set: latestFields });
-    } else {
-      await Trade.findByIdAndUpdate(trade._id, {
-        $push: { autoSquareHistory: historyEntry },
-        $set: latestFields,
-      });
-    }
-
-    const userDoc = await User.findOne({ userId: trade.userId }).select('_id adminCode').lean();
-    if (userDoc?._id) {
-      try {
-        await recalculateUsedMargin(userDoc._id);
-      } catch (err) {
-        console.warn(`[Auto-square] usedMargin recalc failed for ${trade.userId}:`, err.message);
-      }
-
-      const walletSuffix =
-        segmentGroup === 'MCX'
-          ? ' (MCX)'
-          : segmentGroup === 'CRYPTO'
-            ? ' (Crypto)'
-            : segmentGroup === 'FOREX'
-              ? ' (Forex)'
-              : ' (NSE/BSE)';
-      const ledgerSegment =
-        segmentGroup === 'MCX'
-          ? 'MCX'
-          : segmentGroup === 'CRYPTO'
-            ? 'CRYPTO'
-            : segmentGroup === 'FOREX'
-              ? 'FOREX'
-              : 'NSE/BSE';
-      try {
-        const WalletLedger = (await import('../models/WalletLedger.js')).default;
-        const balAfter =
-          segmentGroup === 'MCX'
-            ? netBalance
-            : segmentGroup === 'CRYPTO'
-              ? netBalance
-              : segmentGroup === 'FOREX'
-                ? netBalance
-                : netBalance;
-        await WalletLedger.create({
-          ownerType: 'USER',
-          ownerId: userDoc._id,
-          adminCode: userDoc.adminCode || trade.adminCode,
-          type: pnl >= 0 ? 'CREDIT' : 'DEBIT',
-          reason: 'TRADE_PNL',
-          amount: Math.round(Math.abs(pnl) * 100) / 100,
-          balanceAfter: balAfter,
-          reference: { type: 'Trade', id: trade._id },
-          description:
-            `${trade.symbol || 'Trade'} ${trade.side || ''} Auto-square @ ₹${Number(ltp).toLocaleString('en-IN')} → next qty ${nextDayQty}${walletSuffix}`,
-          isAutoSquare: true,
-          meta: { segment: ledgerSegment, tradeId: trade.tradeId || String(trade._id) },
-        });
-      } catch (ledgerErr) {
-        console.warn('[Auto-square] ledger note failed:', ledgerErr?.message || ledgerErr);
-      }
-    }
-
-    return {
-      originalQty: qtyAtEvent,
-      firstOrigQty,
-      nextDayQty,
-      carryForwardQty: nextDayQty,
-      pnl,
-      netBalance,
-      carryForwardLeverage,
-      historyEntry,
-    };
+    });
   }
 
   /**
@@ -352,22 +286,26 @@ class EODSettlement {
         if (!user) continue;
 
         const snapshot = await computeNseBseRealBalance(userOid, { preferBidAsk: true });
-        const closePct = ledgerClosePercent(user);
-        const ref = snapshot.referenceBalance || (await getLedgerReferenceBalance(userOid));
 
-        if (shouldTriggerLedgerAutosquare(snapshot.realBalance, ref, closePct)) {
+        if (snapshot.shouldTrigger) {
           const nilResult = await executeLedgerAutosquareNil(userOid, {
-            reason: 'LEDGER_EOD',
+            reason: snapshot.triggerReason || `INTRADAY_AUTOSQUARE_${snapshot.autosquarePercent}%`,
             force: false,
+            snapshot,
           });
           closedCount += nilResult.closed || 0;
           console.log(
-            `[EOD NSE/BSE] Ledger nil user ${user.userId}: equity ₹${snapshot.realBalance} <= floor ₹${snapshot.minEquityFloor}`
+            `[EOD NSE/BSE] Autosquare user ${user.userId}: loss ${snapshot.lossPercent}% ` +
+              `(threshold ${snapshot.autosquarePercent}%)`
           );
           continue;
         }
 
-        const netBalance = snapshot.realBalance;
+        const { sanitizeInrWalletAmount } = await import('../utils/walletBalanceSanity.js');
+        const netBalance = sanitizeInrWalletAmount(snapshot.realBalance, {
+          field: 'nseBseEodNetBalance',
+          userId: String(user.userId || userOid),
+        });
         await User.updateOne(
           { _id: userOid },
           { $set: { 'nseBseWallet.balance': Math.max(0, netBalance), 'wallet.tradingBalance': 0 } }
@@ -447,8 +385,10 @@ class EODSettlement {
       console.log('CRON: Daily counter reset starting...');
       try {
         await WalletService.resetDailyCounters();
-        const { resetDailyLedgerReference } = await import('../services/nseBseLedgerAutosquareService.js');
-        await resetDailyLedgerReference();
+        const { resetDailyLedgerReference: resetNseBseLedgerReference } = await import('../services/nseBseLedgerAutosquareService.js');
+        await resetNseBseLedgerReference();
+        const { resetDailyLedgerReference: resetAllLedgerReference } = await import('../services/ledgerAutosquareService.js');
+        await resetAllLedgerReference();
         
         // Also reset trading blocked status for users
         await User.updateMany(
@@ -482,16 +422,26 @@ class EODSettlement {
       timezone: 'Asia/Kolkata'
     });
     
-    // ==================== MCX MIS EOD SQUARE-OFF ====================
+    // ==================== MCX EOD AUTO-SQUARE (carry-forward) ====================
     // Hard backup at 11:30 PM IST — dynamic scheduler alone missed positions when server was down
     // or admin closingTime was unset (MCX trades Sun–Fri extended hours).
     cron.schedule('30 23 * * *', async () => {
-      console.log('CRON: MCX MIS EOD square-off starting (23:30 IST)...');
+      console.log('CRON: MCX EOD autosquare starting (23:30 IST)...');
       try {
-        const result = await StopOutService.executeEODSquareOff('MCX');
-        console.log('CRON: MCX MIS EOD square-off complete:', result);
+        const Admin = (await import('../models/Admin.js')).default;
+        const SystemSettings = (await import('../models/SystemSettings.js')).default;
+        const sys = await SystemSettings.getSettings();
+        const sysSegDefaults = sys.adminSegmentDefaults instanceof Map
+          ? Object.fromEntries(sys.adminSegmentDefaults)
+          : sys.adminSegmentDefaults || {};
+        const admins = await Admin.find({ segmentPermissions: { $exists: true, $ne: null } }).lean();
+        for (const admin of admins) {
+          const closeTime = EODSettlement.getSegmentCloseTime(admin, 'MCXFUT', sysSegDefaults) || '23:30:00';
+          await this.executeAdminHierarchyAutoSquare(admin._id, 'MCX', closeTime);
+        }
+        console.log('CRON: MCX EOD autosquare complete');
       } catch (error) {
-        console.error('CRON: MCX MIS EOD square-off error:', error);
+        console.error('CRON: MCX EOD autosquare error:', error);
       }
     }, {
       timezone: 'Asia/Kolkata'
@@ -527,14 +477,12 @@ class EODSettlement {
       await this.checkAndTriggerAutoSquare();
     };
     
-    // Run immediately and then every minute
+    // Run immediately and then every 30 seconds (crypto session close must not wait 60s+)
     checkLiveDataStop();
-    setInterval(checkLiveDataStop, 60 * 1000);
+    setInterval(checkLiveDataStop, 30 * 1000);
     
-    // NOTE: Balance-based autosquare removed — it fired immediately after trade open
-    // (free balance < 90% of balance+margin) and stamped wrong time (10:22 pm).
-    // Intraday 90% stop-out is handled by MarginMonitorService (margin level).
-    // EOD carry-forward runs only at each admin's cryptoClosingTime below.
+    // Intraday autosquare: equity loss >= segment autosquarePercent (ledgerAutosquareService).
+    // End-time carry-forward runs only at each admin's cryptoClosingTime (separate path).
 
     console.log('EODSettlement: Dynamic auto-square scheduler initialized (checks every minute at admin segment close times)');
   }
@@ -552,6 +500,25 @@ class EODSettlement {
       const sysSegDefaults = sys.adminSegmentDefaults instanceof Map
         ? Object.fromEntries(sys.adminSegmentDefaults)
         : sys.adminSegmentDefaults || {};
+
+      // Crypto: one global pass at SystemSettings CRYPTOFUT close (same as UI 07:25–14:30)
+      const sysCryptoClose = resolveSystemCryptoClosingTime(sysSegDefaults);
+      if (sysCryptoClose && EODSettlement.isPastClosingTimeIST(sysCryptoClose)) {
+        try {
+          await EODSettlement.executeGlobalCryptoSessionAutosquare(sysSegDefaults);
+        } catch (cryptoErr) {
+          console.error('[Crypto session close] Global autosquare failed:', cryptoErr);
+        }
+      }
+
+      const sysMcxClose = resolveSystemMcxClosingTime(sysSegDefaults);
+      if (sysMcxClose && EODSettlement.isPastClosingTimeIST(sysMcxClose)) {
+        try {
+          await EODSettlement.executeGlobalMcxSessionAutosquare(sysSegDefaults);
+        } catch (mcxErr) {
+          console.error('[MCX session close] Global autosquare failed:', mcxErr);
+        }
+      }
       
       // Get all admins with segmentPermissions that have closing times
       const admins = await Admin.find({ segmentPermissions: { $exists: true, $ne: null } }).lean();
@@ -565,6 +532,10 @@ class EODSettlement {
         const segmentsToCheck = ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'MCXFUT', 'MCXOPT', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREXFUT', 'FOREXOPT'];
         
         for (const segKey of segmentsToCheck) {
+          // Crypto global session close handled above (SystemSettings timing)
+          if (isCryptoSegmentKey(segKey) && sysCryptoClose) continue;
+          // MCX: keep per-admin cron so Ram hierarchy close times still run (global is backup)
+
           let closeTime = EODSettlement.getSegmentCloseTime(admin, segKey, sysSegDefaults);
 
           // Hardcoded fallbacks only when neither admin nor system has a close time
@@ -683,16 +654,19 @@ class EODSettlement {
         console.warn(`Auto-square: No closeTime for admin ${adminId} segment ${segment}; using current IST for stamp only`);
       }
       
-      // NSE/BSE: MIS + NRML stay OPEN (carry-forward qty). MCX MIS may still close at EOD.
-      // CRYPTO: re-run at each close time (12:00, 13:00, …) and append autoSquareHistory
-      const markAllCrypto = segment === 'CRYPTO';
+      // 24-May parity:
+      // CRYPTO/NSE/BSE/MCX use carry-forward autosquare (position stays OPEN with next-day qty).
+      // FOREX keeps full close path.
+      const keepOpenCrypto = segment === 'CRYPTO';
+      const markAllForex = segment === 'FOREX';
       const keepOpenNseBse = EODSettlement.isNseBseAutosquareSegment(segment, null);
-      // NSE/BSE + Crypto: run every market close (new history row each day). MCX: first pass only.
+      const keepOpenMcx = segment === 'MCX';
+      // NSE/BSE/MCX + Crypto: run every market close (new history row each day).
       const trades = await Trade.find({
         adminCode: admin?.adminCode,
         productType: { $in: ['MIS', 'NRML', 'CARRYFORWARD'] },
         status: 'OPEN',
-        ...(markAllCrypto || keepOpenNseBse ? {} : { isAutoSquared: { $ne: true } }),
+        ...(keepOpenCrypto || keepOpenNseBse || keepOpenMcx ? {} : { isAutoSquared: { $ne: true } }),
         ...segmentQuery,
       }).lean();
 
@@ -725,7 +699,7 @@ class EODSettlement {
 
       console.log(
         `Auto-square: Segment ${segment}, ${
-          markAllCrypto || keepOpenNseBse
+          keepOpenCrypto || keepOpenNseBse || keepOpenMcx
             ? 'MIS/NRML stay OPEN (carry-forward autosquare)'
             : 'will close MIS and mark NRML as auto-squared'
         }`
@@ -762,16 +736,28 @@ class EODSettlement {
 
           // Direct fallback: read from in-memory Binance data using pair/token
           let directCryptoLtp = 0;
+          let cryptoBid = 0;
+          let cryptoAsk = 0;
           if (!ltpFromMap && (segment === 'CRYPTO' || trade.isCrypto || trade.exchange === 'BINANCE')) {
             const allCrypto = getCryptoData();
             const pairKey = trade.pair || trade.token || '';
             const symbolKey = trade.symbol || '';
-            const tick = allCrypto[pairKey] || allCrypto[pairKey.toUpperCase()] || allCrypto[symbolKey] || allCrypto[symbolKey.toUpperCase() + 'USDT'];
-            directCryptoLtp = tick?.ltp || 0;
+            const tick =
+              allCrypto[pairKey] ||
+              allCrypto[pairKey?.toUpperCase?.()] ||
+              allCrypto[symbolKey] ||
+              allCrypto[`${String(symbolKey).toUpperCase()}USDT`];
+            directCryptoLtp = tick?.ltp || tick?.last_price || 0;
+            cryptoBid = Number(tick?.bid || tick?.bestBid || directCryptoLtp) || 0;
+            cryptoAsk = Number(tick?.ask || tick?.bestAsk || directCryptoLtp) || 0;
             console.log(`Auto-square: Direct crypto lookup for ${pairKey}/${symbolKey} → ltp=${directCryptoLtp}`);
           }
 
           const ltp = ltpFromMap || directCryptoLtp || trade.currentPrice || trade.entryPrice;
+          const exitBid =
+            cryptoBid > 0 ? cryptoBid : trade.side === 'BUY' ? ltp : ltp;
+          const exitAsk =
+            cryptoAsk > 0 ? cryptoAsk : trade.side === 'SELL' ? ltp : ltp;
 
           console.log(`Auto-square: ${trade.tradeId} (${trade.symbol}) cacheKey=${ck} ltpFromMap=${ltpFromMap} directCryptoLtp=${directCryptoLtp} currentPrice=${trade.currentPrice} entryPrice=${trade.entryPrice} → ltp=${ltp}`);
 
@@ -781,10 +767,68 @@ class EODSettlement {
             continue;
           }
 
-          // For CRYPTO: mark ALL positions as auto-squared and keep OPEN (no closing)
-          // For other segments: close MIS positions, mark NRML as auto-squared
-          if (markAllCrypto) {
-            const result = await EODSettlement.applyCarryForwardAutosquare(trade, {
+          // CRYPTO per-user close gate (same as old parity expectations).
+          if (keepOpenCrypto && trade.user) {
+            const tradeUser = await User.findById(trade.user)
+              .populate('admin', 'name segmentPermissions hierarchyPath role adminCode')
+              .lean();
+            if (tradeUser) {
+              const userEffectiveClose = await resolveEffectiveCryptoClosingTimeForUser(tradeUser);
+              const pastUserClose = await isPastCryptoCloseForUser(tradeUser);
+              if (!pastUserClose) {
+                console.warn(
+                  `Auto-square: Skip crypto ${trade.tradeId} (${tradeUser.userId}) — ` +
+                    `user effective close ${userEffectiveClose || '—'} not reached yet ` +
+                    `(admin cron used ${closeTime || 'n/a'}; SA/default may be 22:30)`
+                );
+                continue;
+              }
+            }
+          }
+
+          // MCX per-user close gate (Ram hierarchy timing → users).
+          if (keepOpenMcx && trade.user) {
+            const tradeUser = await User.findById(trade.user)
+              .populate('admin', 'name segmentPermissions hierarchyPath role adminCode')
+              .lean();
+            if (tradeUser) {
+              const userEffectiveClose = await resolveEffectiveMcxClosingTimeForUser(tradeUser);
+              const pastUserClose = await isPastMcxCloseForUser(tradeUser);
+              if (!pastUserClose) {
+                console.warn(
+                  `Auto-square: Skip MCX ${trade.tradeId} (${tradeUser.userId}) — ` +
+                    `user effective close ${userEffectiveClose || '—'} not reached yet ` +
+                    `(admin cron used ${closeTime || 'n/a'})`
+                );
+                continue;
+              }
+            }
+          }
+
+          // FOREX: full square-off at close (wallet + P&L via closeTrade).
+          if (markAllForex || (trade.isForex && segment === 'FOREX')) {
+            const bidPx = trade.side === 'BUY' ? exitBid : exitBid;
+            const askPx = trade.side === 'SELL' ? exitAsk : exitAsk;
+            const result = await TradingService.squareOffPosition(
+              trade._id.toString(),
+              'TIME_BASED',
+              trade.side === 'BUY' ? bidPx : askPx,
+              bidPx,
+              askPx
+            );
+            if (result?.trade?.status === 'CLOSED' || result?.success) {
+              closedCount++;
+              console.log(
+                `Auto-square ${markAllForex ? 'FOREX' : 'CRYPTO'}: closed ${trade.tradeId} at ${trade.side === 'BUY' ? bidPx : askPx}`
+              );
+            } else {
+              failedCount++;
+              console.error(
+                `Auto-square ${markAllForex ? 'FOREX' : 'CRYPTO'}: failed ${trade.tradeId}: ${result?.message || 'close did not complete'}`
+              );
+            }
+          } else if (keepOpenCrypto) {
+            const result = await applyCryptoForexCarryForward(trade, {
               ltp,
               closeTime,
               segmentGroup: 'CRYPTO',
@@ -792,8 +836,19 @@ class EODSettlement {
             });
             markedCount++;
             console.log(
-              `Auto-square CRYPTO ${trade.tradeId}: origQty=${result.originalQty} ` +
-                `walletAfterPnl=${result.netBalance.toFixed(2)} carryFwdLeverage=${result.carryForwardLeverage}x ` +
+              `Auto-square CRYPTO ${trade.productType} ${trade.tradeId} (keep OPEN): origQty=${result.originalQty} ` +
+                `nextDayQty=${result.nextDayQty} pnl=${result.pnl.toFixed(2)}`
+            );
+          } else if (keepOpenMcx) {
+            const result = await EODSettlement.applyCarryForwardAutosquare(trade, {
+              ltp,
+              closeTime,
+              segmentGroup: 'MCX',
+              admin,
+            });
+            markedCount++;
+            console.log(
+              `Auto-square MCX ${trade.productType} ${trade.tradeId} (keep OPEN): origQty=${result.originalQty} ` +
                 `nextDayQty=${result.nextDayQty} pnl=${result.pnl.toFixed(2)}`
             );
           } else if (

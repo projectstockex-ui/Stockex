@@ -56,5 +56,15 @@ export function patchSegmentField(slice, field, value) {
   } else {
     next[field] = value;
   }
+
+  const ct = next.commissionType;
+  if (ct === 'PER_CRORE' || ct === 'PER_TRADE') {
+    if (field === 'commissionLot' && value !== undefined) {
+      next.commission = value;
+    } else if (field === 'commission' && value !== undefined) {
+      next.commissionLot = value;
+    }
+  }
+
   return next;
 }

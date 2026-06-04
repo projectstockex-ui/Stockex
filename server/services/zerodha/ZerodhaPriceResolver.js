@@ -130,18 +130,20 @@ export class ZerodhaPriceResolver {
       .lean();
     const resultClose = toPositiveNumber(latestResult?.closePrice);
 
-    const ltpPrice = pickFirstPositive(
-      safeSessionClearing,  // Use session clearing as LTP (last 15m bar close - this is what user wants)
-      wsLtp,
-      safeKitePrice,
-      dbLtp,
-      bracketDayLtp,
-      dbClose,
-    );
+    // Live session: tick LTP first. 15m bar close is reference only (not the flickering "LTP").
+    //
+    // IMPORTANT:
+    // - When market is closed and `closedMode='ltp'`, users expect "real LTP" stick (Kite quote / WS),
+    //   not "last bracket resolved" (bracketDayLtp), which can differ from NSE LTP.
+    const ltpPrice = isNseOpen
+      ? pickFirstPositive(wsLtp, safeKitePrice, dbLtp, bracketDayLtp, safeSessionClearing, dbClose)
+      : closedMode === 'ltp'
+        ? pickFirstPositive(wsLtp, safeKitePrice, dbLtp, safeSessionClearing, dbClose)
+        : pickFirstPositive(bracketDayLtp, wsLtp, safeKitePrice, dbLtp, safeSessionClearing, dbClose);
 
     const clearingPrice = pickFirstPositive(
       lockedClearing,
-      safeKitePrice,      // Use Kite LTP as clearing price (matches user requirement)
+      safeKitePrice, // Use Kite LTP as clearing price (matches user requirement)
       safePrevDayClose,
       safeSessionClearing,
       dbClose,
@@ -179,17 +181,15 @@ export class ZerodhaPriceResolver {
               ? 'game_result_fallback'
               : 'unavailable'
       : closedMode === 'ltp'
-        ? bracketDayLtp != null
-          ? 'bracket_resolved_ltp'
+        ? wsLtp != null
+          ? 'ws_closed_ltp'
           : safeKitePrice != null
             ? 'kite_closed_ltp'
-            : wsLtp != null
-              ? 'ws_closed_ltp'
-              : dbLtp != null
-                ? 'db_closed_ltp'
-                : resultClose != null
-                  ? 'game_result_closed_ltp'
-                  : 'unavailable'
+            : dbLtp != null
+              ? 'db_closed_ltp'
+              : resultClose != null
+                ? 'game_result_closed_ltp'
+                : 'unavailable'
         : lockedClearing != null
           ? 'jackpot_locked_clearing'
           : safeSessionClearing != null
@@ -212,6 +212,7 @@ export class ZerodhaPriceResolver {
       price: selectedPrice,
       ltpPrice: ltpPriceFinal,    // Fixed LTP for specific games
       clearingPrice: clearingPriceFinal,  // Fixed clearing price for specific games
+      safeSessionClearing: safeSessionClearing, // Raw last completed 15m close (no clearing fallback mix)
       actualLtp: ltpPriceFinal,  // Explicit actual LTP field
       ltp: ltpPriceFinal,       // Alternative LTP field name
       open: pickFirstPositive(liveTick?.open, closeRefInst?.open, selectedPrice),

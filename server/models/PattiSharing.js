@@ -33,11 +33,10 @@ const pattiSharingSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  /** Granular keys: NSEFUT, NSEOPT, MCXFUT, CRYPTOFUT, etc. (see pattiSharingSegments.js) */
   segments: {
-    EQUITY: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } },
-    FNO: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } },
-    MCX: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } },
-    CURRENCY: { enabled: { type: Boolean, default: true }, brokerPercentage: { type: Number, default: 50 } }
+    type: mongoose.Schema.Types.Mixed,
+    default: () => ({}),
   },
   notes: {
     type: String,
@@ -55,15 +54,6 @@ const pattiSharingSchema = new mongoose.Schema({
 // Ensure broker percentage + superAdmin percentage = 100
 pattiSharingSchema.pre('save', function(next) {
   this.superAdminPercentage = 100 - this.brokerPercentage;
-  
-  // Also update segment percentages
-  const segments = ['EQUITY', 'FNO', 'MCX', 'CURRENCY'];
-  segments.forEach(seg => {
-    if (this.segments && this.segments[seg]) {
-      this.segments[seg].superAdminPercentage = 100 - (this.segments[seg].brokerPercentage || 50);
-    }
-  });
-  
   next();
 });
 

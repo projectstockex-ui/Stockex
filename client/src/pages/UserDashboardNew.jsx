@@ -3,6 +3,7 @@ import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
+import { resolveMainWalletBalance } from '../utils/resolveMainWalletBalance';
 import {
   Home, Wallet, Users, FileText, Copy, BarChart2, User, HelpCircle,
   LogOut, Menu, X, ChevronDown, Settings, Bell, Sun, Moon,
@@ -132,9 +133,7 @@ const UserWalletPage = () => {
     return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
   }, [fetchData]);
 
-  // Main wallet balance (where admin deposits funds)
-  // API returns cashBalance at top level and also in wallet object
-  const mainWalletBalance = walletData?.cashBalance || walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0;
+  const mainWalletBalance = resolveMainWalletBalance(walletData);
   const usedMargin = walletData?.usedMargin || walletData?.wallet?.usedMargin || walletData?.wallet?.blocked || 0;
   const availableMainWallet = mainWalletBalance; // Main wallet is fully available for withdraw
 
@@ -1761,7 +1760,7 @@ const UserDashboardNew = () => {
       const { data } = await axios.get('/api/user/wallet', {
         headers: { Authorization: `Bearer ${user.token}` }
       });
-      setWalletBalance(data?.wallet?.balance || 0);
+      setWalletBalance(resolveMainWalletBalance(data));
     } catch (error) {
       console.error('Error:', error);
     }

@@ -236,6 +236,13 @@ const tradeSchema = new mongoose.Schema({
       pnlAtAutoSquare: { type: Number, default: null },
       netBalanceAtAutoSquare: { type: Number, default: null },
       carryForwardLeverage: { type: Number, default: null },
+      carryForwardLimitAtSquare: { type: Number, default: null },
+      positionValueAtSquare: { type: Number, default: null },
+      closedQtyAtCarry: { type: Number, default: null },
+      realizedPnLAtCarry: { type: Number, default: null },
+      walletEquityAtSquare: { type: Number, default: null },
+      cashAtSquare: { type: Number, default: null },
+      openMtmAtSquare: { type: Number, default: null },
     },
   ],
   // Who/what closed the position (for TradePro engine)
@@ -357,7 +364,17 @@ const tradeSchema = new mongoose.Schema({
     closedLots: { type: Number, default: 0 },
     closedPnL: { type: Number, default: 0 },
     closeReason: { type: String, default: null }
-  }
+  },
+  partialCloseLegs: [
+    {
+      closedAt: { type: Date, default: Date.now },
+      quantity: { type: Number, default: 0 },
+      exitPrice: { type: Number, default: 0 },
+      grossPnL: { type: Number, default: 0 },
+      netPnL: { type: Number, default: 0 },
+      marginReleased: { type: Number, default: 0 },
+    },
+  ],
 }, { timestamps: true });
 
 // Pre-save: Generate trade ID

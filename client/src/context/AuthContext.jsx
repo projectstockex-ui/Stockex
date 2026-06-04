@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { parseStoredUserJson } from '../lib/parseStoredUser.js';
 
 const AuthContext = createContext();
 
@@ -41,13 +42,61 @@ export const AuthProvider = ({ children }) => {
     const storedAdmin = localStorage.getItem('admin');
     
     if (storedUser) {
-      setUser(JSON.parse(storedUser));
+      const parsed = parseStoredUserJson(storedUser);
+      if (parsed) setUser(parsed);
+      else localStorage.removeItem('user');
     }
     if (storedAdmin) {
       setAdmin(JSON.parse(storedAdmin));
     }
     setLoading(false);
   }, []);
+
+  const getAdminToken = useCallback(() => {
+    if (admin?.token) return admin.token;
+    try {
+      const stored = localStorage.getItem('admin');
+      if (!stored) return null;
+      return JSON.parse(stored)?.token || null;
+    } catch {
+      return null;
+    }
+  }, [admin]);
+
+  const getUserToken = useCallback(() => {
+    if (user?.token) return user.token;
+    const stored = localStorage.getItem('user');
+    return parseStoredUserJson(stored)?.token || null;
+  }, [user]);
+
+  // Attach Bearer token on admin/user API calls (many screens use plain axios without headers)
+  useEffect(() => {
+    const requestInterceptor = axios.interceptors.request.use((config) => {
+      const url = String(config.url || '');
+      if (url.includes('/api/admin/')) {
+        const token = getAdminToken();
+        if (token) {
+          config.headers = config.headers || {};
+          if (!config.headers.Authorization) {
+            config.headers.Authorization = `Bearer ${token}`;
+          }
+        }
+      } else if (url.includes('/api/user/') && !url.includes('/login') && !url.includes('/register')) {
+        const token = getUserToken();
+        if (token) {
+          config.headers = config.headers || {};
+          if (!config.headers.Authorization) {
+            config.headers.Authorization = `Bearer ${token}`;
+          }
+        }
+      }
+      return config;
+    });
+
+    return () => {
+      axios.interceptors.request.eject(requestInterceptor);
+    };
+  }, [getAdminToken, getUserToken]);
 
   // Setup axios interceptor for auth errors (expired/invalid token)
   useEffect(() => {

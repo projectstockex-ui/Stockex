@@ -13,7 +13,7 @@
 
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
-import { generateToken, generateSessionToken } from '../middleware/auth.js';
+import { generateToken } from '../middleware/auth.js';
 import { sendOTP as sendOTPService, verifyOTP as verifyOTPService } from '../services/otpService.js';
 
 // ==================== USER REGISTRATION ====================
@@ -266,16 +266,12 @@ export const loginUser = async (req, res) => {
       return res.status(401).json({ message: 'Your account has been deactivated. Contact your admin.' });
     }
 
-    // Generate unique session token for single-device enforcement.
-    const sessionToken = generateSessionToken();
-
-    // Track login metadata and active session token.
+    // Track login metadata (web + mobile may be active concurrently).
     const userAgent = req.headers['user-agent'] || 'Unknown device';
     const deviceType = userAgent.includes('Mobile') ? 'Mobile' : 'Desktop';
     await User.updateOne(
       { _id: user._id },
       {
-        activeSessionToken: sessionToken,
         isLogin: true,
         lastLoginAt: new Date(),
         lastLoginDevice: deviceType
@@ -306,7 +302,7 @@ export const loginUser = async (req, res) => {
       demoExpiresAt: user.demoExpiresAt,
       createdAt: user.createdAt,
       parentAdmin,
-      token: generateToken(user._id, sessionToken)
+      token: generateToken(user._id)
     });
   } catch (error) {
     console.error('[AuthController] Error in user login:', error);
@@ -326,7 +322,7 @@ export const logoutUser = async (req, res) => {
   try {
     await User.updateOne(
       { _id: req.user._id },
-      { $unset: { activeSessionToken: 1 } }
+      { isLogin: false }
     );
     
     res.json({ message: 'Logout successful' });

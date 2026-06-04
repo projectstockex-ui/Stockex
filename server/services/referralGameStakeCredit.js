@@ -11,6 +11,7 @@ import User from '../models/User.js';
 import Referral from '../models/Referral.js';
 import GameSettings from '../models/GameSettings.js';
 import WalletLedger from '../models/WalletLedger.js';
+import { isReferralEnabledForUser } from '../utils/referralDistributionHelper.js';
 
 const GAME_LABELS = {
   btcUpDown: 'BTC Up/Down',
@@ -82,6 +83,11 @@ export async function creditReferralPercentOfTotalStake({
     }
     if (referredUser.isDemo) {
       return { credited: false, reason: 'Demo users do not generate referral bonuses' };
+    }
+
+    const referralAllowed = await isReferralEnabledForUser(referredUserId, 'games');
+    if (!referralAllowed) {
+      return { credited: false, reason: 'Referral in games disabled for this hierarchy' };
     }
 
     if (referredUser.convertedToRealAt) {

@@ -37,14 +37,26 @@ export function normalizeSegmentCommissionFields(slice = {}, baseline = null) {
     next.commissionType = commissionType;
     next.commissionUnit = 'INR';
     if (commissionType === 'PER_CRORE' || commissionType === 'PER_TRADE') {
-      if (
+      if (next.commission != null && next.commission !== '') {
+        const n = Number(next.commission);
+        if (Number.isFinite(n)) {
+          next.commission = n;
+          next.commissionLot = n;
+        }
+      } else if (
         (next.commission == null || next.commission === '') &&
         Number(next.commissionLot) > 0
       ) {
         next.commission = next.commissionLot;
       }
     } else if (commissionType === 'PER_LOT' || commissionType === 'PER_QUANTITY') {
-      if (
+      if (next.commissionLot != null && next.commissionLot !== '') {
+        const n = Number(next.commissionLot);
+        if (Number.isFinite(n)) {
+          next.commissionLot = n;
+          next.commission = n;
+        }
+      } else if (
         (next.commissionLot == null || next.commissionLot === '') &&
         Number(next.commission) > 0
       ) {

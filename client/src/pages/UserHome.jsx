@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
+import { resolveMainWalletBalance, formatInrMainWallet } from '../utils/resolveMainWalletBalance';
 import {
   Wallet, TrendingUp, TrendingDown, Calendar, ChevronLeft, ChevronRight,
   RefreshCw, ExternalLink, Timer, DollarSign, BarChart3, PieChart,
@@ -357,6 +358,7 @@ const API_TIMEOUT_MS = 25000;
 const UserHome = () => {
   const { user, loading: authLoading } = useAuth();
   const [walletData, setWalletData] = useState(null);
+  const [nseBseSnapshot, setNseBseSnapshot] = useState(null);
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
@@ -385,15 +387,22 @@ const UserHome = () => {
       });
 
     try {
-      const [walletOutcome, tradesOutcome] = await Promise.allSettled([
+      const [walletOutcome, tradesOutcome, nseOutcome] = await Promise.allSettled([
         req('/api/user/wallet'),
         req('/api/trade/history'),
+        req('/api/user/funds/nse-bse-wallet').catch(() => null),
       ]);
 
       if (walletOutcome.status === 'fulfilled') {
         setWalletData(walletOutcome.value);
       } else {
         setWalletData(null);
+      }
+
+      if (nseOutcome.status === 'fulfilled' && nseOutcome.value) {
+        setNseBseSnapshot(nseOutcome.value);
+      } else {
+        setNseBseSnapshot(null);
       }
 
       if (tradesOutcome.status === 'fulfilled') {
@@ -456,6 +465,8 @@ const UserHome = () => {
   const monthlyTrades = closedTrades.filter(t => new Date(t.exitTime) >= monthStart);
   const monthlyPnL = monthlyTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
 
+  const mainWalletBalance = resolveMainWalletBalance(walletData, nseBseSnapshot);
+
   const getGreeting = () => {
     const hour = currentTime.getHours();
     if (hour < 12) return 'Good Morning';
@@ -487,7 +498,7 @@ const UserHome = () => {
               <div>
                 <h3 className="text-yellow-400 font-bold">Demo Account</h3>
                 <p className="text-gray-400 text-sm">
-                  Virtual balance: ₹{(walletData?.wallet?.balance || 0).toLocaleString()} • Practice trading without risk
+                  Virtual balance: ₹{formatInrMainWallet(mainWalletBalance)} • Practice trading without risk
                 </p>
               </div>
             </div>
@@ -536,7 +547,7 @@ const UserHome = () => {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        {/* Wallet Balance */}
+        {/* Main Wallet (same as Accounts page) */}
         <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-4 relative overflow-hidden">
           <div className="absolute top-2 right-2">
             <button className="text-xs bg-white/20 hover:bg-white/30 px-2 py-1 rounded transition">
@@ -548,8 +559,8 @@ const UserHome = () => {
               <Wallet size={20} />
             </div>
           </div>
-          <div className="text-sm text-white/70">Wallet Balance</div>
-          <div className="text-2xl font-bold">₹{(walletData?.wallet?.balance || 0).toLocaleString()}</div>
+          <div className="text-sm text-white/70">Main Wallet</div>
+          <div className="text-2xl font-bold">₹{formatInrMainWallet(mainWalletBalance)}</div>
         </div>
 
         {/* Today's P&L */}

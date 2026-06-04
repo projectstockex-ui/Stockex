@@ -13,7 +13,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 3000,
+      host: true,
+      port: 5173,
       proxy: {
         '/api': {
           target: env.VITE_API_URL || 'http://localhost:5001',
@@ -27,7 +28,7 @@ export default defineConfig(({ mode }) => {
         }
       },
       hmr: {
-        port: 3000
+        port: 5173
       }
     }
   }

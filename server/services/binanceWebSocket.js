@@ -1,6 +1,16 @@
 import WebSocket from 'ws';
 import TradingService from './tradingService.js';
+import MarginMonitorService from './marginMonitorService.js';
 import { setLTPInRedis } from './ltpResolutionService.js';
+import { recordLtpPoint } from './ltpHistoryStore.js';
+import {
+  isCryptoSessionLiveSync,
+  runCryptoSessionEndIfNeeded,
+  getEffectiveCryptoData,
+  startCryptoSessionTimingWatcher,
+  isCryptoSessionFrozen,
+  clearCryptoSessionFreeze,
+} from './cryptoSessionCloseService.js';
 
 let io = null;
 let ws = null;
@@ -19,6 +29,7 @@ const CRYPTO_SYMBOLS = [
 
 export const initBinanceWebSocket = (socketIO) => {
   io = socketIO;
+  startCryptoSessionTimingWatcher();
   console.log('Binance WebSocket service initialized');
   connectWebSocket();
 };
@@ -77,8 +88,24 @@ const connectWebSocket = () => {
           lastUpdated: new Date(),
         };
 
+        if (!isCryptoSessionLiveSync()) {
+          void runCryptoSessionEndIfNeeded(
+            { ...cryptoData, [pair]: tickData, [symbol]: tickData },
+            { io }
+          ).catch((err) => console.error('[CryptoSession] end handler:', err?.message || err));
+          return;
+        }
+
+        if (isCryptoSessionFrozen()) {
+          clearCryptoSessionFreeze();
+        }
+
         cryptoData[pair] = tickData;
         cryptoData[symbol] = tickData;
+
+        // Store previous LTPs for UI (sampled)
+        recordLtpPoint(pair, { ltp: tickData.ltp, bid: tickData.bid, ask: tickData.ask }, { minSampleMs: 2000 });
+        recordLtpPoint(symbol, { ltp: tickData.ltp, bid: tickData.bid, ask: tickData.ask }, { minSampleMs: 2000 });
 
         // Persist LTP to Redis so EOD auto-square can resolve it
         setLTPInRedis(pair, tickData.ltp).catch(() => {});
@@ -119,6 +146,17 @@ const connectWebSocket = () => {
           ask: tickData.ask,
           ltp: tickData.ltp,
         }).catch((err) => console.error('checkAndTriggerStopLoss:', err?.message || err));
+
+        // Keep wallet/margin heartbeat running on crypto ticks too
+        // so STOP_OUT / ledger autosquare triggers without relying on Zerodha ticks.
+        MarginMonitorService.onPriceTick(pair, tickData.ltp, {
+          bid: tickData.bid,
+          ask: tickData.ask,
+          ltp: tickData.ltp,
+          pair,
+          symbol,
+          exchange: 'BINANCE',
+        }).catch((err) => console.error('marginMonitor(crypto):', err?.message || err));
       }
     } catch (error) {
       console.error('Error parsing Binance message:', error.message);
@@ -147,7 +185,7 @@ const connectWebSocket = () => {
   });
 };
 
-export const getCryptoData = () => cryptoData;
+export const getCryptoData = () => getEffectiveCryptoData(cryptoData);
 
 export const getCryptoPrice = (symbol) => {
   const pair = symbol.toUpperCase().includes('USDT')

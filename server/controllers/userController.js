@@ -187,19 +187,12 @@ export const loginUser = async (req, res) => {
     user.lastLogin = new Date();
     await user.save();
 
-    // Generate tokens
-    const { generateToken, generateSessionToken } = await import('../middleware/auth.js');
+    const { generateToken } = await import('../middleware/auth.js');
     const token = generateToken(user._id);
-    const sessionToken = generateSessionToken();
-
-    // Update session token
-    user.activeSessionToken = sessionToken;
-    await user.save();
 
     res.json({
       message: 'Login successful',
       token,
-      sessionToken,
       user: {
         id: user._id,
         username: user.username,
@@ -233,7 +226,7 @@ export const logoutUser = async (req, res) => {
   try {
     await User.updateOne(
       { _id: req.user._id },
-      { $unset: { activeSessionToken: 1 } }
+      { isLogin: false }
     );
     
     res.json({ message: 'Logout successful' });

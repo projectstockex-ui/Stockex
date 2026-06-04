@@ -1,9 +1,17 @@
 import { KiteTicker } from 'kiteconnect';
 import MarginMonitorService from './marginMonitorService.js';
 import Instrument from '../models/Instrument.js';
+import {
+  isMcxSessionLiveSync,
+  runMcxSessionEndIfNeeded,
+  applyMcxFreezeToMarketUpdates,
+  startMcxSessionTimingWatcher,
+  isMcxTokenKey,
+} from './mcxSessionCloseService.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { recordLtpPoint } from './ltpHistoryStore.js';
 
 let ticker = null;
 let connectionInProgress = false; // Flag to prevent multiple simultaneous connection attempts
@@ -17,6 +25,7 @@ let marginMonitorEnabled = false; // DISABLED for maximum speed - re-enable if n
 // Balanced throttling - update DB frequently but not on every tick
 const DB_UPDATE_THROTTLE_MS = 300; // Update DB every 300ms per token
 const lastDbUpdateTimestamps = new Map();
+const LTP_HISTORY_SAMPLE_MS = 2000;
 const PENDING_PROCESS_THROTTLE_MS = 1000;
 let lastPendingProcessAt = 0;
 
@@ -25,7 +34,9 @@ export const initZerodhaWebSocket = (socketIO) => {
   io = socketIO;
   // Initialize margin monitor with same Socket.IO instance
   MarginMonitorService.init(socketIO);
+  startMcxSessionTimingWatcher();
   import('./nseBseLedgerAutosquareService.js').then((m) => m.initNseBseLedgerAutosquare(socketIO));
+  import('./ledgerAutosquareService.js').then((m) => m.initLedgerAutosquare(socketIO));
   
   // Clear any stale subscriptions from previous session
   console.log('[initZerodhaWebSocket] Clearing stale subscription list from previous session');
@@ -363,9 +374,11 @@ const processTicks = async (ticks) => {
     const circuitStatus = isUpperCircuit ? 'UC' : isLowerCircuit ? 'LC' : null;
 
     const indexSym = KITE_INDEX_SYMBOL[nTok];
+    const tradingsymbol = tick.tradingsymbol || '';
     const tickData = {
       token,
-      symbol: tick.tradable ? tick.tradingsymbol : indexSym || tick.tradingsymbol,
+      symbol: tick.tradable ? tradingsymbol : indexSym || tradingsymbol,
+      tradingSymbol: tradingsymbol,
       ltp: tick.last_price,
       bid: bestBid,
       ask: bestAsk,
@@ -398,17 +411,29 @@ const processTicks = async (ticks) => {
     updates[token] = tickData;
     canonicalOnly[token] = tickData;
 
+    // Store previous LTPs for UI (sampled)
+    recordLtpPoint(token, { ltp: tickData.ltp, bid: tickData.bid, ask: tickData.ask, t: serverTimestamp }, { minSampleMs: LTP_HISTORY_SAMPLE_MS });
+
     for (const leg of INDEX_TOKEN_KITE_TO_LEGACY[nTok] || []) {
       const alias = { ...tickData, token: String(leg) };
       marketData[String(leg)] = alias;
       updates[String(leg)] = alias;
+      recordLtpPoint(String(leg), { ltp: alias.ltp, bid: alias.bid, ask: alias.ask, t: serverTimestamp }, { minSampleMs: LTP_HISTORY_SAMPLE_MS });
     }
   }
 
+  if (!isMcxSessionLiveSync()) {
+    void runMcxSessionEndIfNeeded(marketData, { io }).catch((err) =>
+      console.error('[McxSession] end handler:', err?.message || err)
+    );
+  }
+
+  // Live ticks to UI always; admin MCX window only adds mcxTradingWindowClosed flag (no price freeze).
+  const broadcastUpdates = applyMcxFreezeToMarketUpdates(updates);
+
   // PHASE 2: IMMEDIATE BROADCAST - Send to clients FIRST (NO DELAY)
-  if (io && Object.keys(updates).length > 0) {
-    console.log('[ZerodhaWebSocket] Emitting market_tick with tokens:', Object.keys(updates));
-    io.emit('market_tick', updates);
+  if (io && Object.keys(broadcastUpdates).length > 0) {
+    io.emit('market_tick', broadcastUpdates);
   }
 
   // Check and trigger stoploss for all updated instruments
@@ -420,9 +445,21 @@ const processTicks = async (ticks) => {
       TradingService.checkAndTriggerStopLoss({
         token: tok,
         ltp: tickData.ltp,
-        bid: tickData.ltp,
-        ask: tickData.ltp,
+        bid: tickData.bid || tickData.ltp,
+        ask: tickData.ask || tickData.ltp,
       }).catch((err) => console.error('checkAndTriggerStopLoss:', err?.message || err));
+
+      if (isMcxTokenKey(tok) && tickData.ltp > 0) {
+        const mcxLtp = Number(tickData.ltp) || 0;
+        MarginMonitorService.onPriceTick(tok, mcxLtp, {
+          bid: Number(tickData.bid) > 0 ? Number(tickData.bid) : mcxLtp,
+          ask: Number(tickData.ask) > 0 ? Number(tickData.ask) : mcxLtp,
+          ltp: mcxLtp,
+          token: tok,
+          symbol: tickData.symbol,
+          exchange: 'MCX',
+        }).catch((err) => console.error('marginMonitor(mcx):', err?.message || err));
+      }
     }
 
     const now = Date.now();

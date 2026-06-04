@@ -19,6 +19,7 @@ import zerodhaRoutes, { setSocketIO } from './routes/zerodhaRoutes.js';
 import { initZerodhaWebSocket, getTickerStatus } from './services/zerodhaWebSocket.js';
 import zerodhaController from './controllers/zerodhaController.js';
 import { initBinanceWebSocket } from './services/binanceWebSocket.js';
+import { setAppSocket } from './utils/appSocket.js';
 import { initForexMarketService } from './services/forexMarketService.js';
 import forexRoutes from './routes/forexRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
@@ -70,6 +71,29 @@ function buildAllowedOrigins() {
   add('http://localhost:5173');
   return list;
 }
+
+function corsOriginCheck(origin, callback) {
+  if (!origin || origin === 'null') {
+    callback(null, true);
+    return;
+  }
+  const normalized = String(origin).replace(/\/$/, '');
+  if (allowedOrigins.includes(normalized)) {
+    callback(null, true);
+    return;
+  }
+  // Mobile WebView + LAN dev (Vite 5173, Expo, etc.)
+  if (
+    /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/i.test(
+      normalized
+    )
+  ) {
+    callback(null, true);
+    return;
+  }
+  callback(null, false);
+}
+
 const allowedOrigins = buildAllowedOrigins();
 
 const app = express();
@@ -77,7 +101,7 @@ const server = createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: corsOriginCheck,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -96,13 +120,26 @@ await zerodhaController.initialize(io);
 
 // Initialize Binance WebSocket for real-time crypto data
 initBinanceWebSocket(io);
+setAppSocket(io);
 // Synthetic forex quotes (USD base API → pairs, INR wallet on trade side)
 initForexMarketService(io);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-  
+
+  /** Join room = Mongo user _id so ledger_autosquare / wallet events reach the right client. */
+  socket.on('register_user', (payload) => {
+    const userId =
+      typeof payload === 'string'
+        ? payload
+        : payload?.userId ?? payload?._id ?? payload?.id;
+    if (!userId) return;
+    const room = String(userId);
+    socket.join(room);
+    socket.data.stockexUserId = room;
+  });
+
   socket.on('get_zerodha_status', () => {
     const status = zerodhaController.getConnectionStatus();
     socket.emit('zerodha_status', { connected: status.connected });
@@ -120,7 +157,7 @@ console.log('✅ Price system ready — live prices from Zerodha WebSocket only'
 
 // Middleware - CORS for production
 app.use(cors({
-  origin: allowedOrigins,
+  origin: corsOriginCheck,
   credentials: true
 }));
 // Bump body limits to handle larger admin create-user payloads
@@ -251,7 +288,7 @@ const PORT = process.env.PORT || 5001;
     btcJackpotAutoTick().catch((e) => console.warn('[btcJackpot]', e?.message || e));
     setInterval(() => {
       btcJackpotAutoTick().catch((e) => console.warn('[btcJackpot]', e?.message || e));
-    }, 30 * 1000);
+    }, 1000);
   });
 })().catch((err) => {
   console.error('Fatal startup error:', err);

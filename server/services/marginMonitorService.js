@@ -5,6 +5,9 @@ import RiskConfig from '../models/RiskConfig.js';
 import Notification from '../models/Notification.js';
 import WalletService from './walletService.js';
 import { setLTPInRedis } from './ltpResolutionService.js';
+import CircuitBreakerService from './circuitBreakerService.js';
+import { isCryptoSessionActiveForUser } from '../utils/cryptoSessionTiming.js';
+import { isMcxSessionActiveForUser } from '../utils/mcxSessionTiming.js';
 
 /** Invalidate after open/close trade so margin logic resumes immediately */
 export function invalidateMarginOpenTradesCache() {
@@ -22,9 +25,40 @@ let _openTokenSetAt = 0;
 let _distinctRefreshPromise = null;
 
 async function refreshOpenTokenSet() {
-  const tokens = await Trade.distinct('token', { status: 'OPEN' });
-  _openTokenSet = new Set(tokens.map((t) => String(t)));
+  const trades = await Trade.find({ status: 'OPEN' }).select('token pair symbol').lean();
+  const keys = new Set();
+  for (const t of trades) {
+    for (const k of [t.token, t.pair, t.symbol]) {
+      if (k != null && String(k).trim()) keys.add(String(k).trim());
+    }
+    const pair = String(t.pair || '').trim();
+    if (pair.toUpperCase().endsWith('USDT')) {
+      keys.add(pair.slice(0, -4));
+    }
+  }
+  _openTokenSet = keys;
   _openTokenSetAt = Date.now();
+}
+
+function buildTickMatchKeys(tokenStr, tickData = {}) {
+  const keys = new Set();
+  if (tokenStr) keys.add(tokenStr);
+  for (const k of [tickData.pair, tickData.symbol, tickData.token]) {
+    if (k != null && String(k).trim()) keys.add(String(k).trim());
+  }
+  if (tokenStr.toUpperCase().endsWith('USDT')) {
+    keys.add(tokenStr.slice(0, -4));
+  }
+  return keys;
+}
+
+function buildPositionQueryForTick(tokenStr, tickData = {}) {
+  const keys = [...buildTickMatchKeys(tokenStr, tickData)];
+  const or = [];
+  for (const k of keys) {
+    or.push({ token: k }, { pair: k }, { symbol: k });
+  }
+  return { status: 'OPEN', $or: or };
 }
 
 async function ensureOpenTokenSetFresh() {
@@ -81,12 +115,10 @@ class MarginMonitorService {
       if (!_anyOpenCached) return;
 
       await ensureOpenTokenSetFresh();
-      if (!_openTokenSet.has(tokenStr)) return;
+      const tickKeys = buildTickMatchKeys(tokenStr, tickData);
+      if (![...tickKeys].some((k) => _openTokenSet.has(k))) return;
 
-      const positions = await Trade.find({
-        token: tokenStr,
-        status: 'OPEN',
-      }).lean();
+      const positions = await Trade.find(buildPositionQueryForTick(tokenStr, tickData)).lean();
 
       if (positions.length === 0) return;
 
@@ -131,24 +163,79 @@ class MarginMonitorService {
       
       // Get segment from first position
       const segment = positions[0].segment;
-      const segUpper = String(segment || '').toUpperCase();
-      
+      const walletField = WalletService.getWalletFieldFromTrade(positions[0]);
+
       // Get segment-specific settings for autosquare/notification (inherit from admin hierarchy)
-      // Use TradeService.getUserSegmentSettings to get merged settings with inheritance
       const TradeService = (await import('./tradeService.js')).default;
       const segmentSettings = await TradeService.getUserSegmentSettings(user, segment);
-      const segmentAutosquarePercent = segmentSettings?.lotSettings?.autosquarePercent;
       const segmentNotificationPercent = segmentSettings?.lotSettings?.notificationPercent;
-      
-      console.log(`[MarginMonitor] Segment: ${segUpper}, Autosquare: ${segmentAutosquarePercent}%, Notification: ${segmentNotificationPercent}%`);
-      
-      // Build risk config with segment-specific settings only if set (no hardcoded fallbacks)
-      const riskConfig = {
-        STOP_OUT_LEVEL: segmentAutosquarePercent != null && segmentAutosquarePercent > 0 ? segmentAutosquarePercent : null,
-        MARGIN_CALL_LEVEL: segmentNotificationPercent != null && segmentNotificationPercent > 0 ? segmentNotificationPercent : null,
-        HEALTHY_LEVEL: null
+      const segmentAutosquarePercent =
+        segmentSettings?.lotSettings?.autosquarePercent ??
+        segmentSettings?.quantityModeSettings?.autosquarePercent;
+      const isUsdSpotWallet = walletField === 'cryptoWallet' || walletField === 'forexWallet';
+      const isMcxWallet = walletField === 'mcxWallet';
+      const hasBidAsk = Number(tickData?.bid) > 0 || Number(tickData?.ask) > 0;
+      const preferBidAsk = (isUsdSpotWallet || isMcxWallet) && hasBidAsk;
+
+      const runLedgerAutosquareOnly = async () => {
+        const { checkAndRunLedgerAutosquare } = await import('./ledgerAutosquareService.js');
+        return checkAndRunLedgerAutosquare(userId, walletField, {
+          preferBidAsk,
+          segment,
+          autosquarePercent: segmentAutosquarePercent,
+        });
       };
-      
+
+      // Crypto: off-session skip live MTM; segment autosquare% (e.g. 70) still runs
+      if (walletField === 'cryptoWallet') {
+        let sessionUser = user;
+        if (!sessionUser.admin?.segmentPermissions) {
+          sessionUser = await User.findById(userId)
+            .populate('admin', 'segmentPermissions')
+            .lean();
+        }
+        if (sessionUser?.admin?.segmentPermissions) {
+          sessionUser.parentSegmentPermissions = sessionUser.admin.segmentPermissions;
+        }
+        const sessionActive = await isCryptoSessionActiveForUser(sessionUser);
+        if (!sessionActive) {
+          try {
+            await runLedgerAutosquareOnly();
+          } catch (ledgerErr) {
+            console.error('[MarginMonitor] crypto ledger autosquare (off-session):', ledgerErr.message);
+          }
+          return;
+        }
+      }
+
+      // MCX: off-session skip live MTM; segment autosquare% (e.g. 90) still runs
+      if (isMcxWallet) {
+        let sessionUser = user;
+        if (!sessionUser.admin?.segmentPermissions) {
+          sessionUser = await User.findById(userId)
+            .populate('admin', 'segmentPermissions')
+            .lean();
+        }
+        if (sessionUser?.admin?.segmentPermissions) {
+          sessionUser.parentSegmentPermissions = sessionUser.admin.segmentPermissions;
+        }
+        const sessionActive = await isMcxSessionActiveForUser(sessionUser);
+        if (!sessionActive) {
+          try {
+            const ledgerResult = await runLedgerAutosquareOnly();
+            if (ledgerResult?.triggered) {
+              console.log(
+                `[MarginMonitor] MCX autosquare (off-session) user=${userId} ` +
+                  `loss=${ledgerResult.snapshot?.lossPercent}%`
+              );
+            }
+          } catch (ledgerErr) {
+            console.error('[MarginMonitor] MCX ledger autosquare (off-session):', ledgerErr.message);
+          }
+          return;
+        }
+      }
+
       // 4a. Update PnL for each position
       const bulkOps = [];
       for (const pos of positions) {
@@ -172,7 +259,6 @@ class MarginMonitorService {
       }
       
       // 4b. Recalculate wallet for this user
-      const walletField = WalletService.getWalletFieldFromTrade(positions[0]);
       const walletState = await WalletService.recalculateWallet(userId, segment);
       
       const currentWalletState = walletState[walletField];
@@ -180,30 +266,46 @@ class MarginMonitorService {
       
       let marginStatus = { action: 'NONE', status: 'HEALTHY', marginLevel: currentWalletState.marginLevel };
 
-      // NSE/BSE: ledger balance % autosquare (e.g. 90% loss → square all to nil)
-      if (walletField === 'nseBseWallet') {
+      // Intraday autosquare when equity loss >= segment autosquarePercent (70 / 90 etc.)
+      let ledgerTriggered = false;
+      if (['nseBseWallet', 'mcxWallet', 'cryptoWallet', 'forexWallet'].includes(walletField)) {
         try {
-          const { checkAndRunLedgerAutosquare } = await import('./nseBseLedgerAutosquareService.js');
-          const ledgerResult = await checkAndRunLedgerAutosquare(userId, { preferBidAsk: false });
+          const { checkAndRunLedgerAutosquare, computeLedgerRealBalance } = await import(
+            './ledgerAutosquareService.js'
+          );
+          const ledgerResult = await checkAndRunLedgerAutosquare(userId, walletField, {
+            preferBidAsk,
+            segment,
+            autosquarePercent: segmentAutosquarePercent,
+          });
           if (ledgerResult?.triggered) {
+            ledgerTriggered = true;
             marginStatus = { action: 'STOP_OUT', status: 'CRITICAL', marginLevel: 0 };
             const refreshed = await WalletService.recalculateWallet(userId, segment);
             Object.assign(currentWalletState, refreshed[walletField] || {});
+          } else if (!ledgerTriggered) {
+            const snapshot = await computeLedgerRealBalance(userId, walletField, {
+              preferBidAsk,
+              segment,
+            });
+            const notifyPct = Number(segmentNotificationPercent);
+            const cushion = Number(snapshot?.marginCushion) || 0;
+            const warnFloor =
+              cushion > 0 && Number.isFinite(notifyPct) && notifyPct > 0
+                ? cushion * ((100 - notifyPct) / 100)
+                : null;
+            if (
+              snapshot &&
+              warnFloor != null &&
+              Number(snapshot.availableMargin) <= warnFloor + 0.01
+            ) {
+              await this.triggerLowMarginWarning(userId, walletField, snapshot, notifyPct);
+            } else if (currentWalletState.marginCallActive) {
+              await this.handleMarginCallRecovery(userId, walletField, currentWalletState);
+            }
           }
         } catch (ledgerErr) {
-          console.error('[MarginMonitor] NSE/BSE ledger autosquare:', ledgerErr.message);
-        }
-      } else {
-        // Other segments: margin-level stop-out / margin call
-        marginStatus = WalletService.checkMarginStatus(currentWalletState, riskConfig);
-
-        if (marginStatus.action === 'STOP_OUT') {
-          console.log(`STOP-OUT triggered for user ${user.userId}. Margin Level: ${marginStatus.marginLevel}%`);
-          await this.triggerStopOut(userId, walletField, currentWalletState, riskConfig);
-        } else if (marginStatus.action === 'MARGIN_CALL') {
-          await this.triggerMarginCall(userId, walletField, currentWalletState, riskConfig);
-        } else if (currentWalletState.marginCallActive && marginStatus.action === 'NONE') {
-          await this.handleMarginCallRecovery(userId, walletField, currentWalletState);
+          console.error('[MarginMonitor] ledger autosquare:', ledgerErr.message);
         }
       }
       
@@ -222,55 +324,31 @@ class MarginMonitorService {
    * @returns {Number} - Validated price (capped at circuit limits)
    */
   static validateCircuitLimits(instrument, newPrice) {
-    const upperCircuit = instrument.upperCircuit || 0;
-    const lowerCircuit = instrument.lowerCircuit || 0;
-    
-    // Skip if circuits not set
-    if (upperCircuit === 0 && lowerCircuit === 0) {
-      return newPrice;
-    }
-    
-    let validatedPrice = newPrice;
-    let circuitHit = false;
-    let circuitType = null;
-    
-    if (upperCircuit > 0 && newPrice >= upperCircuit) {
-      validatedPrice = upperCircuit;
-      circuitHit = true;
-      circuitType = 'UPPER';
-      
-      if (!instrument.upperCircuitHit) {
-        // First time hitting upper circuit
-        instrument.upperCircuitHit = true;
-        instrument.allowBuy = false;
-        instrument.allowSell = true;
-        instrument.save().catch(err => console.error('Error saving circuit state:', err));
-        
-        this.notifyCircuitHit(instrument, 'UPPER', upperCircuit);
-      }
-    } else if (lowerCircuit > 0 && newPrice <= lowerCircuit) {
-      validatedPrice = lowerCircuit;
-      circuitHit = true;
-      circuitType = 'LOWER';
-      
-      if (!instrument.lowerCircuitHit) {
-        // First time hitting lower circuit
-        instrument.lowerCircuitHit = true;
-        instrument.allowBuy = true;
-        instrument.allowSell = false;
-        instrument.save().catch(err => console.error('Error saving circuit state:', err));
-        
-        this.notifyCircuitHit(instrument, 'LOWER', lowerCircuit);
-      }
-    } else {
-      // Price back within range - reset circuit flags
-      if (instrument.upperCircuitHit || instrument.lowerCircuitHit) {
-        instrument.upperCircuitHit = false;
-        instrument.lowerCircuitHit = false;
-        instrument.allowBuy = true;
-        instrument.allowSell = true;
-        instrument.save().catch(err => console.error('Error saving circuit state:', err));
-      }
+    const { validatedPrice, circuitHit, circuitType } = CircuitBreakerService.validatePrice(
+      instrument,
+      newPrice
+    );
+
+    if (circuitHit && circuitType === 'UPPER' && !instrument.upperCircuitHit) {
+      instrument.upperCircuitHit = true;
+      instrument.lowerCircuitHit = false;
+      instrument.allowBuy = false;
+      instrument.allowSell = true;
+      instrument.save().catch((err) => console.error('Error saving circuit state:', err));
+      this.notifyCircuitHit(instrument, 'UPPER', instrument.upperCircuit);
+    } else if (circuitHit && circuitType === 'LOWER' && !instrument.lowerCircuitHit) {
+      instrument.upperCircuitHit = false;
+      instrument.lowerCircuitHit = true;
+      instrument.allowBuy = true;
+      instrument.allowSell = false;
+      instrument.save().catch((err) => console.error('Error saving circuit state:', err));
+      this.notifyCircuitHit(instrument, 'LOWER', instrument.lowerCircuit);
+    } else if (!circuitHit && (instrument.upperCircuitHit || instrument.lowerCircuitHit)) {
+      instrument.upperCircuitHit = false;
+      instrument.lowerCircuitHit = false;
+      instrument.allowBuy = true;
+      instrument.allowSell = true;
+      instrument.save().catch((err) => console.error('Error saving circuit state:', err));
     }
     
     return validatedPrice;
@@ -298,6 +376,46 @@ class MarginMonitorService {
     console.log(`CIRCUIT HIT: ${instrument.symbol} hit ${type} circuit at ₹${price}`);
   }
   
+  /**
+   * Warn when available margin is low (notification % of initial cushion before zero).
+   */
+  static async triggerLowMarginWarning(userId, walletField, snapshot, notificationPercent) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) return;
+
+      const wallet = user[walletField];
+      if (wallet?.marginCallActive) return;
+
+      await WalletService.setMarginCallStatus(userId, walletField, true);
+
+      await Notification.create({
+        title: 'Low Margin Warning',
+        subject: `⚠️ Available margin low (notify at ${notificationPercent}% cushion used)`,
+        description:
+          `Available margin is ₹${Number(snapshot.availableMargin).toLocaleString('en-IN')}. ` +
+          `All positions will be auto-squared when available margin reaches ₹0.`,
+        senderType: 'SYSTEM',
+        targetType: 'SINGLE_USER',
+        targetUserId: userId,
+        priority: 'HIGH',
+      });
+
+      if (io) {
+        io.to(userId).emit('margin_call', {
+          walletField,
+          availableMargin: snapshot.availableMargin,
+          marginCushion: snapshot.marginCushion,
+          notificationPercent,
+          realBalance: snapshot.realBalance,
+          timestamp: new Date(),
+        });
+      }
+    } catch (error) {
+      console.error('Error triggering low margin warning:', error);
+    }
+  }
+
   /**
    * Trigger margin call for user
    * @param {String} userId - User ID

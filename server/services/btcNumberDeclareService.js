@@ -1,7 +1,7 @@
 import User from '../models/User.js';
 import GameSettings from '../models/GameSettings.js';
 import BtcNumberBet from '../models/BtcNumberBet.js';
-import { closingPriceToDecimalPart } from '../utils/niftyNumberResult.js';
+import { closingPriceToLeftTwoDigits } from '../utils/niftyNumberResult.js';
 import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.js';
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
@@ -24,9 +24,9 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
 
   let num;
   if (closingPrice != null && closingPrice !== '' && Number.isFinite(Number(closingPrice))) {
-    const derived = closingPriceToDecimalPart(closingPrice);
+    const derived = closingPriceToLeftTwoDigits(closingPrice);
     if (derived === null) {
-      throw new Error('Could not derive .00–.99 from closingPrice');
+      throw new Error('Could not derive left-side 2 digits (00–99) from closingPrice');
     }
     num = derived;
   } else if (resultNumber != null && resultNumber !== '') {
@@ -195,7 +195,7 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
   }
 
   return {
-    message: `Result declared: .${num.toString().padStart(2, '0')}`,
+    message: `Result declared: ${num.toString().padStart(2, '0')} (2 digits left of decimal)`,
     resultNumber: num,
     date,
     closingPrice: closingNum,
