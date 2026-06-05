@@ -129,6 +129,9 @@ export async function declareNiftyJackpotResult(date) {
 
       if (user) {
         const winnerRoundPnL = parseFloat((grossPrize - bid.amount).toFixed(2));
+        const { profitAllowedForWallet } = await import('../utils/walletBlock.js');
+        const allowedPnL = profitAllowedForWallet(user, 'games', winnerRoundPnL);
+        const balanceCredit = parseFloat((bid.amount + allowedPnL).toFixed(2));
         const poolPay = await debitBtcUpDownSuperAdminPool(
           prizeCredit,
           `Nifty Jackpot — pay winner gross prize (rank ${bid.rank})`
@@ -143,10 +146,10 @@ export async function declareNiftyJackpotResult(date) {
           { _id: bid.user },
           {
             $inc: {
-              'gamesWallet.balance': prizeCredit,
+              'gamesWallet.balance': balanceCredit,
               'gamesWallet.usedMargin': -bid.amount,
-              'gamesWallet.realizedPnL': winnerRoundPnL,
-              'gamesWallet.todayRealizedPnL': winnerRoundPnL,
+              'gamesWallet.realizedPnL': allowedPnL,
+              'gamesWallet.todayRealizedPnL': allowedPnL,
             },
           }
         );
@@ -157,7 +160,7 @@ export async function declareNiftyJackpotResult(date) {
         await recordGamesWalletLedger(bid.user, {
           gameId: 'niftyJackpot',
           entryType: 'credit',
-          amount: prizeCredit,
+          amount: balanceCredit,
           balanceAfter: balAfter,
           description: 'Nifty Jackpot — prize payout (gross; stake not returned; hierarchy from pool)',
           orderPlacedAt: bid.createdAt,

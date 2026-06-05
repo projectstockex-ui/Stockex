@@ -142,7 +142,9 @@ class AdminSegmentSettingsController {
 
         if (currentAdmin.role !== 'SUPER_ADMIN') {
           const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+          const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
           plain = stripMcxSessionTimingFromSegmentMap(plain);
+          plain = stripNseBseSessionTimingFromSegmentMap(plain);
         }
 
         // Validate all segment permission fields against parent's limits
@@ -420,6 +422,14 @@ class AdminSegmentSettingsController {
               aligned[segName] = aligned[segName] || {};
               aligned[segName].mcxClosingTime = segData.mcxClosingTime;
             }
+            if (segData.nseStartTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].nseStartTime = segData.nseStartTime;
+            }
+            if (segData.nseClosingTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].nseClosingTime = segData.nseClosingTime;
+            }
             if (segData.closingTime !== undefined) {
               aligned[segName] = aligned[segName] || {};
               aligned[segName].closingTime = segData.closingTime;
@@ -471,7 +481,9 @@ class AdminSegmentSettingsController {
         let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
         if (currentAdmin.role !== 'SUPER_ADMIN' && sanitized) {
           const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
+          const { stripNseBseKeysFromSegmentExplicitKeys } = await import('../utils/nseBseSessionTiming.js');
           sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
+          sanitized = stripNseBseKeysFromSegmentExplicitKeys(sanitized);
         }
         if (sanitized !== undefined) {
           updateFields.segmentExplicitKeys = sanitized;
@@ -612,6 +624,54 @@ class AdminSegmentSettingsController {
             settings.markModified('adminSegmentDefaults');
             await settings.save();
             console.log('[AdminSegmentSettings] Updated SystemSettings MCXFUT timing');
+          }
+        }
+
+        const nseFutData = updateFields.segmentPermissions.NSEFUT;
+        if (
+          nseFutData &&
+          (nseFutData.nseStartTime !== undefined ||
+            nseFutData.nseClosingTime !== undefined ||
+            nseFutData.startTime !== undefined ||
+            nseFutData.closingTime !== undefined)
+        ) {
+          const nseStart =
+            nseFutData.nseStartTime !== undefined ? nseFutData.nseStartTime : nseFutData.startTime;
+          const nseClose =
+            nseFutData.nseClosingTime !== undefined ? nseFutData.nseClosingTime : nseFutData.closingTime;
+          console.log(
+            `[AdminSegmentSettings] Super Admin updating NSEFUT timing: start=${nseStart}, close=${nseClose}`
+          );
+
+          const SystemSettings = (await import('../models/SystemSettings.js')).default;
+          const settings = await SystemSettings.findOne({ settingsType: 'global' });
+
+          if (settings && settings.adminSegmentDefaults) {
+            const updateNseTiming = (segMap, segName) => {
+              if (segMap instanceof Map) {
+                const seg = segMap.get(segName) || {};
+                if (nseStart !== undefined) seg.nseStartTime = nseStart;
+                if (nseClose !== undefined) {
+                  seg.nseClosingTime = nseClose;
+                  seg.closingTime = nseClose;
+                }
+                segMap.set(segName, seg);
+              } else if (segMap && typeof segMap === 'object') {
+                segMap[segName] = segMap[segName] || {};
+                if (nseStart !== undefined) segMap[segName].nseStartTime = nseStart;
+                if (nseClose !== undefined) {
+                  segMap[segName].nseClosingTime = nseClose;
+                  segMap[segName].closingTime = nseClose;
+                }
+              }
+            };
+
+            for (const segName of ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT']) {
+              updateNseTiming(settings.adminSegmentDefaults, segName);
+            }
+            settings.markModified('adminSegmentDefaults');
+            await settings.save();
+            console.log('[AdminSegmentSettings] Updated SystemSettings NSEFUT timing');
           }
         }
       }

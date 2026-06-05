@@ -1,66 +1,66 @@
 import React, { useState, useEffect } from 'react';
 import { normalizeCryptoIstClock24, formatStoredCryptoIstClock } from '../utils/cryptoUtils';
 
-/** MCX (MCXFUT): IST session gates — Super Admin sets on franchise admin; flows to full hierarchy. */
-function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = false }) {
+/** NSE/BSE (NSEFUT): IST session gates — Super Admin sets on franchise admin; flows to full hierarchy. */
+function NseBseSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = false }) {
   const [startDraft, setStartDraft] = useState(() =>
-    formatStoredCryptoIstClock(slice?.mcxStartTime || slice?.startTime)
+    formatStoredCryptoIstClock(slice?.nseStartTime || slice?.startTime)
   );
   const [closeDraft, setCloseDraft] = useState(() =>
-    formatStoredCryptoIstClock(slice?.mcxClosingTime || slice?.closingTime)
+    formatStoredCryptoIstClock(slice?.nseClosingTime || slice?.closingTime)
   );
 
   useEffect(() => {
-    setStartDraft(formatStoredCryptoIstClock(slice?.mcxStartTime || slice?.startTime));
-  }, [slice?.mcxStartTime, slice?.startTime]);
+    setStartDraft(formatStoredCryptoIstClock(slice?.nseStartTime || slice?.startTime));
+  }, [slice?.nseStartTime, slice?.startTime]);
 
   useEffect(() => {
-    setCloseDraft(formatStoredCryptoIstClock(slice?.mcxClosingTime || slice?.closingTime));
-  }, [slice?.mcxClosingTime, slice?.closingTime]);
+    setCloseDraft(formatStoredCryptoIstClock(slice?.nseClosingTime || slice?.closingTime));
+  }, [slice?.nseClosingTime, slice?.closingTime]);
 
   const commitStartBlur = () => {
     if (!canEdit) return;
     const n = normalizeCryptoIstClock24(startDraft);
     if (n === null) {
-      setStartDraft(formatStoredCryptoIstClock(slice?.mcxStartTime || slice?.startTime));
+      setStartDraft(formatStoredCryptoIstClock(slice?.nseStartTime || slice?.startTime));
       return;
     }
     setStartDraft(n);
     const prev =
-      slice?.mcxStartTime != null
-        ? String(slice.mcxStartTime).trim()
+      slice?.nseStartTime != null
+        ? String(slice.nseStartTime).trim()
         : slice?.startTime != null
           ? String(slice.startTime).trim()
           : '';
-    if ((n || '') !== prev) onFieldChange('mcxStartTime', n);
+    if ((n || '') !== prev) onFieldChange('nseStartTime', n);
   };
 
   const commitCloseBlur = () => {
     if (!canEdit) return;
     const n = normalizeCryptoIstClock24(closeDraft);
     if (n === null) {
-      setCloseDraft(formatStoredCryptoIstClock(slice?.mcxClosingTime || slice?.closingTime));
+      setCloseDraft(formatStoredCryptoIstClock(slice?.nseClosingTime || slice?.closingTime));
       return;
     }
     setCloseDraft(n);
     const prev =
-      slice?.mcxClosingTime != null
-        ? String(slice.mcxClosingTime).trim()
+      slice?.nseClosingTime != null
+        ? String(slice.nseClosingTime).trim()
         : slice?.closingTime != null
           ? String(slice.closingTime).trim()
           : '';
     if ((n || '') !== prev) {
-      onFieldChange('mcxClosingTime', n);
+      onFieldChange('nseClosingTime', n);
       if (!slice?.closingTime || String(slice.closingTime).trim() === '') {
         onFieldChange('closingTime', n);
       }
     }
   };
 
-  if (segmentKey === 'MCXOPT') {
+  if (segmentKey !== 'NSEFUT') {
     return (
       <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
-        <p className="text-xs text-gray-400">MCX timing is managed in MCXFUT settings only.</p>
+        <p className="text-xs text-gray-400">NSE/BSE timing is managed in NSEFUT settings only.</p>
       </div>
     );
   }
@@ -68,23 +68,23 @@ function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = fal
   const readOnly = !canEdit;
 
   return (
-    <div className="mb-4 rounded-lg border border-yellow-700/40 bg-dark-800/60 p-3 space-y-3">
+    <div className="mb-4 rounded-lg border border-green-700/40 bg-dark-800/60 p-3 space-y-3">
       {canEdit ? (
-        <p className="text-xs text-yellow-400/90">
+        <p className="text-xs text-green-400/90">
           Super Admin only. Session times apply to this admin and all users/brokers below. End time triggers carry-forward + wallet update.
         </p>
       ) : (
-        <p className="text-xs text-gray-400">MCX session timing (set by Super Admin on franchise admin)</p>
+        <p className="text-xs text-gray-400">NSE/BSE session timing (set by Super Admin on franchise admin)</p>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
         <div>
-          <label className="block text-xs text-gray-400 mb-1">MCX start time (IST, 24h HH:mm:ss)</label>
+          <label className="block text-xs text-gray-400 mb-1">NSE/BSE start time (IST, 24h HH:mm:ss)</label>
           <input
             type="text"
             inputMode="numeric"
             autoComplete="off"
             spellCheck={false}
-            placeholder="09:00:00"
+            placeholder="09:15:00"
             value={startDraft}
             onChange={(e) => canEdit && setStartDraft(e.target.value)}
             onBlur={commitStartBlur}
@@ -94,13 +94,13 @@ function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = fal
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-400 mb-1">MCX session close (IST, 24h HH:mm:ss)</label>
+          <label className="block text-xs text-gray-400 mb-1">NSE/BSE session close (IST, 24h HH:mm:ss)</label>
           <input
             type="text"
             inputMode="numeric"
             autoComplete="off"
             spellCheck={false}
-            placeholder="23:30:00"
+            placeholder="15:30:00"
             value={closeDraft}
             onChange={(e) => canEdit && setCloseDraft(e.target.value)}
             onBlur={commitCloseBlur}
@@ -114,4 +114,4 @@ function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = fal
   );
 }
 
-export default McxSegmentAdminExtras;
+export default NseBseSegmentAdminExtras;

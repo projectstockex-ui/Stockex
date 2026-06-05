@@ -37,8 +37,28 @@ export function touchGamesWallet(user) {
  * @returns {Object}           – the updated gamesWallet sub-document
  */
 export async function atomicGamesWalletUpdate(User, userId, increments) {
+  let effectiveIncrements = increments;
+  const user = await User.findById(userId)
+    .select('gamesWallet.profitBlocked wallet.tradingWalletBlocked')
+    .lean();
+  const { isWalletProfitBlocked, applyProfitBlockToIncrements } = await import('./walletBlock.js');
+  if (isWalletProfitBlocked(user, 'games')) {
+    const hasCredit = Object.values(increments || {}).some((v) => Number(v) > 0);
+    if (hasCredit) {
+      throw new Error('Games wallet is disabled. Contact admin.');
+    }
+    effectiveIncrements = applyProfitBlockToIncrements(user, 'games', increments);
+  } else {
+    const hasPositiveProfit = ['balance', 'realizedPnL', 'todayRealizedPnL', 'totalRealizedPnL'].some(
+      (k) => Number(increments?.[k]) > 0
+    );
+    if (hasPositiveProfit) {
+      effectiveIncrements = applyProfitBlockToIncrements(user, 'games', increments);
+    }
+  }
+
   const $inc = {};
-  for (const [key, val] of Object.entries(increments)) {
+  for (const [key, val] of Object.entries(effectiveIncrements)) {
     if (Number.isFinite(val) && val !== 0) {
       $inc[`gamesWallet.${key}`] = val;
     }
@@ -66,6 +86,14 @@ export async function atomicGamesWalletUpdate(User, userId, increments) {
  * @returns {Object|null}       – updated gamesWallet, or null if insufficient balance
  */
 export async function atomicGamesWalletDebit(User, userId, amount, extraInc = {}) {
+  const user = await User.findById(userId)
+    .select('gamesWallet.profitBlocked wallet.tradingWalletBlocked')
+    .lean();
+  const { isWalletProfitBlocked } = await import('./walletBlock.js');
+  if (isWalletProfitBlocked(user, 'games')) {
+    throw new Error('Games wallet is disabled. Contact admin.');
+  }
+
   const $inc = { 'gamesWallet.balance': -amount };
   for (const [key, val] of Object.entries(extraInc)) {
     if (Number.isFinite(val) && val !== 0) {
@@ -88,6 +116,14 @@ export async function atomicGamesWalletDebit(User, userId, amount, extraInc = {}
 export async function atomicGamesWalletDebitForTransfer(User, userId, amount) {
   const amt = Number(amount);
   if (!Number.isFinite(amt) || amt <= 0) return null;
+
+  const user = await User.findById(userId)
+    .select('gamesWallet.profitBlocked wallet.tradingWalletBlocked')
+    .lean();
+  const { isWalletProfitBlocked } = await import('./walletBlock.js');
+  if (isWalletProfitBlocked(user, 'games')) {
+    throw new Error('Games wallet is disabled. Contact admin.');
+  }
 
   const updated = await User.findOneAndUpdate(
     { _id: userId, 'gamesWallet.balance': { $gte: amt } },

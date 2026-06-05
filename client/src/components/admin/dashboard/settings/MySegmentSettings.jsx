@@ -4,9 +4,10 @@ import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
 import { normalizeMongoMapOfObjects, isCryptoQtyOnlySegment } from '../utils';
 import { computeSegmentExplicitKeys } from '../../../../utils/segmentExplicitKeys';
-import { canManageLimitPendingSegmentGate, canEditMcxSessionTiming, LIMIT_PENDING_HELP_TEXT } from '../../../../lib/adminSegmentRoleGates';
+import { canManageLimitPendingSegmentGate, canEditMcxSessionTiming, canEditNseBseSessionTiming, LIMIT_PENDING_HELP_TEXT } from '../../../../lib/adminSegmentRoleGates';
 import CryptoSegmentAdminExtras from '../ui/CryptoSegmentAdminExtras';
 import McxSegmentAdminExtras from '../ui/McxSegmentAdminExtras';
+import NseBseSegmentAdminExtras from '../ui/NseBseSegmentAdminExtras';
 import SegmentBrokerageFields from '../../segment/SegmentBrokerageFields.jsx';
 import { normalizeSegmentCommissionFields } from '../../../../utils/segmentCommissionType.js';
 import { numInputValue, parseNumInput } from '../../../../utils/segmentFormValues.js';
@@ -281,6 +282,17 @@ const MySegmentSettings = () => {
                           segmentKey={segment}
                           slice={segmentPermissions[segment]}
                           canEdit={canEditMcxSessionTiming(admin?.role)}
+                          onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
+                        />
+                      </div>
+                    )}
+
+                    {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(segment) && (
+                      <div className="col-span-2 md:col-span-4">
+                        <NseBseSegmentAdminExtras
+                          segmentKey={segment}
+                          slice={segmentPermissions[segment]}
+                          canEdit={canEditNseBseSessionTiming(admin?.role)}
                           onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
                         />
                       </div>

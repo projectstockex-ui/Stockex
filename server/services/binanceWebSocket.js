@@ -30,6 +30,7 @@ const CRYPTO_SYMBOLS = [
 export const initBinanceWebSocket = (socketIO) => {
   io = socketIO;
   startCryptoSessionTimingWatcher();
+  import('./ledgerAutosquareService.js').then((m) => m.initLedgerAutosquare(socketIO));
   console.log('Binance WebSocket service initialized');
   connectWebSocket();
 };

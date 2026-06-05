@@ -4,20 +4,26 @@
  */
 
 import Trade from '../models/Trade.js';
-import { checkAndRunLedgerAutosquare } from './ledgerAutosquareService.js';
+import {
+  checkAndRunLedgerAutosquare,
+  SEGMENT_QUERIES_BY_WALLET,
+} from './ledgerAutosquareService.js';
 
 const WALLET_POLL_CONFIG = [
+  {
+    walletField: 'nseBseWallet',
+    label: 'NSE/BSE',
+    query: {
+      status: 'OPEN',
+      ...SEGMENT_QUERIES_BY_WALLET.nseBseWallet,
+    },
+  },
   {
     walletField: 'mcxWallet',
     label: 'MCX',
     query: {
       status: 'OPEN',
-      $or: [
-        { exchange: 'MCX' },
-        { segment: 'MCX' },
-        { segment: 'MCXFUT' },
-        { segment: 'MCXOPT' },
-      ],
+      ...SEGMENT_QUERIES_BY_WALLET.mcxWallet,
     },
   },
   {
@@ -25,13 +31,7 @@ const WALLET_POLL_CONFIG = [
     label: 'CRYPTO',
     query: {
       status: 'OPEN',
-      $or: [
-        { isCrypto: true },
-        { exchange: 'BINANCE' },
-        { segment: 'CRYPTO' },
-        { segment: 'CRYPTOFUT' },
-        { segment: 'CRYPTOOPT' },
-      ],
+      ...SEGMENT_QUERIES_BY_WALLET.cryptoWallet,
     },
   },
 ];
@@ -78,7 +78,7 @@ export function startSegmentLedgerAutosquarePoll() {
   if (pollTimer) return;
   void pollAll();
   pollTimer = setInterval(() => void pollAll(), POLL_MS);
-  console.log(`[SegmentLedgerAutosquarePoll] MCX + Crypto every ${POLL_MS}ms`);
+  console.log(`[SegmentLedgerAutosquarePoll] NSE/BSE + MCX + Crypto every ${POLL_MS}ms`);
 }
 
 export function stopSegmentLedgerAutosquarePoll() {

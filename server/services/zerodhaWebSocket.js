@@ -8,6 +8,12 @@ import {
   startMcxSessionTimingWatcher,
   isMcxTokenKey,
 } from './mcxSessionCloseService.js';
+import {
+  isNseBseSessionLiveSync,
+  runNseBseSessionEndIfNeeded,
+  applyNseBseFreezeToMarketUpdates,
+  startNseBseSessionTimingWatcher,
+} from './nseBseSessionCloseService.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -35,7 +41,7 @@ export const initZerodhaWebSocket = (socketIO) => {
   // Initialize margin monitor with same Socket.IO instance
   MarginMonitorService.init(socketIO);
   startMcxSessionTimingWatcher();
-  import('./nseBseLedgerAutosquareService.js').then((m) => m.initNseBseLedgerAutosquare(socketIO));
+  startNseBseSessionTimingWatcher();
   import('./ledgerAutosquareService.js').then((m) => m.initLedgerAutosquare(socketIO));
   
   // Clear any stale subscriptions from previous session
@@ -178,7 +184,6 @@ export const connectTicker = (apiKey, accessToken) => {
   });
 
   ticker.on('ticks', (ticks) => {
-    console.log('[ZerodhaWebSocket] Received ticks from Kite:', ticks.length);
     processTicks(ticks);
   });
 
@@ -405,6 +410,7 @@ const processTicks = async (ticks) => {
       ...(streamTickDepth() ? { depth: tick.depth } : {}),
       lastUpdated: new Date(),
       serverTimestamp,
+      source: 'zerodha_tick',
     };
 
     marketData[token] = tickData;
@@ -415,7 +421,7 @@ const processTicks = async (ticks) => {
     recordLtpPoint(token, { ltp: tickData.ltp, bid: tickData.bid, ask: tickData.ask, t: serverTimestamp }, { minSampleMs: LTP_HISTORY_SAMPLE_MS });
 
     for (const leg of INDEX_TOKEN_KITE_TO_LEGACY[nTok] || []) {
-      const alias = { ...tickData, token: String(leg) };
+      const alias = { ...tickData, token: String(leg), source: 'zerodha_tick' };
       marketData[String(leg)] = alias;
       updates[String(leg)] = alias;
       recordLtpPoint(String(leg), { ltp: alias.ltp, bid: alias.bid, ask: alias.ask, t: serverTimestamp }, { minSampleMs: LTP_HISTORY_SAMPLE_MS });
@@ -428,8 +434,14 @@ const processTicks = async (ticks) => {
     );
   }
 
-  // Live ticks to UI always; admin MCX window only adds mcxTradingWindowClosed flag (no price freeze).
-  const broadcastUpdates = applyMcxFreezeToMarketUpdates(updates);
+  if (!isNseBseSessionLiveSync()) {
+    void runNseBseSessionEndIfNeeded(marketData, { io }).catch((err) =>
+      console.error('[NseBseSession] end handler:', err?.message || err)
+    );
+  }
+
+  let broadcastUpdates = applyMcxFreezeToMarketUpdates(updates);
+  broadcastUpdates = applyNseBseFreezeToMarketUpdates(broadcastUpdates);
 
   // PHASE 2: IMMEDIATE BROADCAST - Send to clients FIRST (NO DELAY)
   if (io && Object.keys(broadcastUpdates).length > 0) {
@@ -449,16 +461,17 @@ const processTicks = async (ticks) => {
         ask: tickData.ask || tickData.ltp,
       }).catch((err) => console.error('checkAndTriggerStopLoss:', err?.message || err));
 
-      if (isMcxTokenKey(tok) && tickData.ltp > 0) {
-        const mcxLtp = Number(tickData.ltp) || 0;
-        MarginMonitorService.onPriceTick(tok, mcxLtp, {
-          bid: Number(tickData.bid) > 0 ? Number(tickData.bid) : mcxLtp,
-          ask: Number(tickData.ask) > 0 ? Number(tickData.ask) : mcxLtp,
-          ltp: mcxLtp,
+      if (tickData.ltp > 0) {
+        const ltp = Number(tickData.ltp) || 0;
+        const exchange = isMcxTokenKey(tok) ? 'MCX' : String(tickData.exchange || 'NSE').toUpperCase();
+        MarginMonitorService.onPriceTick(tok, ltp, {
+          bid: Number(tickData.bid) > 0 ? Number(tickData.bid) : ltp,
+          ask: Number(tickData.ask) > 0 ? Number(tickData.ask) : ltp,
+          ltp,
           token: tok,
           symbol: tickData.symbol,
-          exchange: 'MCX',
-        }).catch((err) => console.error('marginMonitor(mcx):', err?.message || err));
+          exchange,
+        }).catch((err) => console.error('marginMonitor:', err?.message || err));
       }
     }
 

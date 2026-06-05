@@ -12,6 +12,8 @@ import {
 
   canEditMcxSessionTiming,
 
+  canEditNseBseSessionTiming,
+
   showLimitPendingHierarchyTarget,
 
   LIMIT_PENDING_HELP_TEXT,
@@ -62,9 +64,12 @@ import InstrumentSegmentDefaultsModal from '../components/admin/instruments/Inst
 import InstrumentRulesModal from '../components/admin/instruments/InstrumentRulesModal.jsx';
 import SegmentGroupingAdmin from '../components/admin/segment/SegmentGroupingAdmin.jsx';
 import McxSegmentAdminExtras from '../components/admin/dashboard/ui/McxSegmentAdminExtras.jsx';
+import NseBseSegmentAdminExtras from '../components/admin/dashboard/ui/NseBseSegmentAdminExtras.jsx';
 import TradeCloseBreakdownPanel from '../components/trading/TradeCloseBreakdownPanel.jsx';
 import IndividualPattiSharingModal from '../components/admin/dashboard/modals/IndividualPattiSharingModal.jsx';
 import ReferralGamesTradingToggles from '../components/admin/dashboard/modals/ReferralGamesTradingToggles.jsx';
+import WalletProfitBlockToggles from '../components/admin/dashboard/ui/WalletProfitBlockToggles.jsx';
+import { buildWalletBlocksState } from '../lib/walletProfitBlock.js';
 
 import {
 
@@ -10758,6 +10763,15 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           />
                         )}
 
+                        {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(expandedSeg) && (
+                          <NseBseSegmentAdminExtras
+                            segmentKey={expandedSeg}
+                            slice={s}
+                            canEdit={canEditNseBseSessionTiming(viewerRole)}
+                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
+                          />
+                        )}
+
                         {/* Super Admin Brokerage & Incentive - Only for MCX FUT segments */}
 
                         {['MCXFUT', 'MCX'].includes(expandedSeg) && (
@@ -19805,16 +19819,15 @@ const InstrumentManagement = () => {
 
   const [segmentRulesCategory, setSegmentRulesCategory] = useState('');
 
-  // Kept only for backward compatibility with existing UI state; expiry filter UI is hidden now.
-  const [expiryRange, setExpiryRange] = useState({ start: '', end: '' });
-
   /** User trading panel show window (saved to DB via bulk or per-row Apply). */
   const [userPanelRange, setUserPanelRange] = useState({ from: '', until: '' });
   const adminSegmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
   const [panelRangeSegment, setPanelRangeSegment] = useState('NSEFUT');
   const [userPanelRangeBySegment, setUserPanelRangeBySegment] = useState({});
+  const [savedPanelWindowsBySegment, setSavedPanelWindowsBySegment] = useState({});
 
   const [bulkPanelSaving, setBulkPanelSaving] = useState(false);
+  const [segmentPanelDeleting, setSegmentPanelDeleting] = useState(null);
 
   const [instrumentSearch, setInstrumentSearch] = useState('');
 
@@ -19833,6 +19846,110 @@ const InstrumentManagement = () => {
     return () => clearTimeout(t);
 
   }, [instrumentSearch]);
+
+  const formatPanelWindowDate = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(`${iso}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const padPanelDatePart = (n) => String(n).padStart(2, '0');
+
+  const lastDayOfPanelMonth = (year, month) => new Date(year, month, 0).getDate();
+
+  const clampPanelDateToMonth = (value) => {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+    const [y, m, d] = value.split('-').map(Number);
+    const maxDay = lastDayOfPanelMonth(y, m);
+    if (d < 1) return `${y}-${padPanelDatePart(m)}-01`;
+    if (d > maxDay) return `${y}-${padPanelDatePart(m)}-${padPanelDatePart(maxDay)}`;
+    return value;
+  };
+
+  const panelDateMonthBounds = (value) => {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return { min: undefined, max: undefined };
+    }
+    const [y, m] = value.split('-').map(Number);
+    const maxDay = lastDayOfPanelMonth(y, m);
+    return {
+      min: `${y}-${padPanelDatePart(m)}-01`,
+      max: `${y}-${padPanelDatePart(m)}-${padPanelDatePart(maxDay)}`,
+    };
+  };
+
+  const applyUserPanelDateChange = (field, rawValue) => {
+    const clamped = clampPanelDateToMonth(rawValue);
+    setUserPanelRange((r) => {
+      const next = { ...r, [field]: clamped };
+      setUserPanelRangeBySegment((m) => ({ ...(m || {}), [panelRangeSegment]: next }));
+      return next;
+    });
+  };
+
+  const handlePanelRowDateInput = (e) => {
+    const clamped = clampPanelDateToMonth(e.target.value);
+    e.target.value = clamped;
+    const bounds = panelDateMonthBounds(clamped);
+    if (bounds.min) e.target.min = bounds.min;
+    else e.target.removeAttribute('min');
+    if (bounds.max) e.target.max = bounds.max;
+    else e.target.removeAttribute('max');
+  };
+
+  const isValidPanelDateInput = (value) => {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [y, m, d] = value.split('-').map(Number);
+    const probe = new Date(y, m - 1, d);
+    return probe.getFullYear() === y && probe.getMonth() === m - 1 && probe.getDate() === d;
+  };
+
+  const validateUserPanelRange = () => {
+    const from = userPanelRange.from?.trim() || '';
+    const until = userPanelRange.until?.trim() || '';
+    if (!from && !until) {
+      alert('Set Panel from and/or Panel until above, then apply.');
+      return false;
+    }
+    if (from && !isValidPanelDateInput(from)) {
+      alert(`Panel from galat date hai: ${from}`);
+      return false;
+    }
+    if (until && !isValidPanelDateInput(until)) {
+      alert(
+        `Panel until galat date hai: ${until || '(khali)'}. June mein 30 din hote hain — 31 invalid hai. 2026-06-30 use karo.`
+      );
+      return false;
+    }
+    if (from && until && from > until) {
+      alert('Panel from, Panel until se pehle ya equal hona chahiye.');
+      return false;
+    }
+    return true;
+  };
+
+  const loadPanelWindowsBySegment = async () => {
+    if (!admin?.token) return;
+    try {
+      const { data } = await axios.get('/api/instruments/admin/panel-window-by-segment', {
+        headers: { Authorization: `Bearer ${admin.token}` },
+      });
+      const bySeg = data && typeof data === 'object' ? data : {};
+      setSavedPanelWindowsBySegment(bySeg);
+      const rangeMap = {};
+      for (const [seg, row] of Object.entries(bySeg)) {
+        rangeMap[seg] = { from: row?.panelFrom || '', until: row?.panelUntil || '' };
+      }
+      setUserPanelRangeBySegment((prev) => ({ ...prev, ...rangeMap }));
+    } catch (e) {
+      console.error('Failed to load panel windows by segment:', e);
+    }
+  };
+
+  useEffect(() => {
+    void loadPanelWindowsBySegment();
+  }, [admin?.token]);
 
   useEffect(() => {
 
@@ -19900,8 +20017,6 @@ const InstrumentManagement = () => {
       if (debouncedInstrumentSearch) {
         url += `&search=${encodeURIComponent(debouncedInstrumentSearch)}`;
       }
-
-
 
       const { data } = await axios.get(url, {
 
@@ -19990,13 +20105,15 @@ const InstrumentManagement = () => {
 
   const saveInstrumentPanelVisibility = async (id, fromDate, untilDate) => {
     if (!admin?.token) return;
+    const from = fromDate ? clampPanelDateToMonth(fromDate) : '';
+    const until = untilDate ? clampPanelDateToMonth(untilDate) : '';
     setPanelSavingId(id);
     try {
       await axios.put(
         `/api/instruments/admin/${id}`,
         {
-          tradingPanelVisibleFrom: fromDate || null,
-          tradingPanelVisibleUntil: untilDate || null,
+          tradingPanelVisibleFrom: from || null,
+          tradingPanelVisibleUntil: until || null,
         },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
@@ -20010,12 +20127,9 @@ const InstrumentManagement = () => {
 
   const applyBulkPanelVisibility = async ({ applyToFilteredList = false, pageOnly = false } = {}) => {
     if (!admin?.token) return;
+    if (!validateUserPanelRange()) return;
     const from = userPanelRange.from?.trim() || '';
     const until = userPanelRange.until?.trim() || '';
-    if (!from && !until) {
-      alert('Set Panel from and/or Panel until above, then apply.');
-      return;
-    }
     if (applyToFilteredList && !panelRangeSegment && !debouncedInstrumentSearch) {
       alert('Select a segment and/or set expiry date range and/or search to choose which instruments to update.');
       return;
@@ -20048,6 +20162,25 @@ const InstrumentManagement = () => {
         headers: { Authorization: `Bearer ${admin.token}` },
       });
       alert(data.message || 'Panel visibility saved');
+      if (applyToFilteredList && !pageOnly && panelRangeSegment) {
+        const row = data?.segmentPanelWindow || {
+          panelFrom: from || null,
+          panelUntil: until || null,
+          updatedAt: new Date().toISOString(),
+        };
+        setSavedPanelWindowsBySegment((prev) => ({
+          ...prev,
+          [panelRangeSegment]: row,
+        }));
+        setUserPanelRangeBySegment((prev) => ({
+          ...prev,
+          [panelRangeSegment]: {
+            from: row.panelFrom || from || '',
+            until: row.panelUntil || until || '',
+          },
+        }));
+      }
+      await loadPanelWindowsBySegment();
       await fetchInstruments();
     } catch (e) {
       alert(e.response?.data?.message || e.message || 'Bulk apply failed');
@@ -20055,6 +20188,55 @@ const InstrumentManagement = () => {
       setBulkPanelSaving(false);
     }
   };
+
+  const deleteSegmentPanelWindow = async (seg) => {
+    if (!admin?.token) return;
+    if (
+      !confirm(
+        `Delete ${seg} saved panel window?\n\nIs segment ki panel dates list se hat jayengi aur us segment ke instruments par se bhi clear ho jayengi.`
+      )
+    ) {
+      return;
+    }
+    setSegmentPanelDeleting(seg);
+    try {
+      const { data } = await axios.delete(
+        `/api/instruments/admin/panel-window-by-segment/${encodeURIComponent(seg)}`,
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+      );
+      setSavedPanelWindowsBySegment((prev) => {
+        const next = { ...prev };
+        delete next[seg];
+        return next;
+      });
+      setUserPanelRangeBySegment((prev) => {
+        const next = { ...prev };
+        delete next[seg];
+        return next;
+      });
+      if (panelRangeSegment === seg) {
+        setUserPanelRange({ from: '', until: '' });
+      }
+      await fetchInstruments();
+      alert(data?.message || `${seg} removed`);
+    } catch (e) {
+      alert(e.response?.data?.message || e.message || 'Delete failed');
+    } finally {
+      setSegmentPanelDeleting(null);
+    }
+  };
+
+  const savedPanelWindowSegments = Object.keys(savedPanelWindowsBySegment)
+    .filter(
+      (seg) =>
+        savedPanelWindowsBySegment[seg]?.panelFrom || savedPanelWindowsBySegment[seg]?.panelUntil
+    )
+    .sort((a, b) => {
+      const ta = new Date(savedPanelWindowsBySegment[a]?.updatedAt || 0).getTime();
+      const tb = new Date(savedPanelWindowsBySegment[b]?.updatedAt || 0).getTime();
+      if (ta !== tb) return ta - tb;
+      return adminSegmentKeys.indexOf(a) - adminSegmentKeys.indexOf(b);
+    });
 
   const saveInstrumentSchedule = async (id, datetimeLocalValue) => {
 
@@ -20479,99 +20661,13 @@ const InstrumentManagement = () => {
 
 
 
-      <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 mb-4">
-
-        <div className="text-sm font-medium text-gray-200 mb-3">Expiry date range</div>
-
-        <div className="flex flex-wrap items-end gap-4">
-
-          <div className="flex flex-col gap-1">
-
-            <label className="text-xs text-gray-400">Start date</label>
-
-            <input
-
-              type="date"
-
-              value={expiryRange.start}
-
-              onChange={(e) => {
-
-                setExpiryRange((r) => ({ ...r, start: e.target.value }));
-
-                setPagination((p) => ({ ...p, page: 1 }));
-
-              }}
-
-              className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200"
-
-            />
-
-          </div>
-
-          <div className="flex flex-col gap-1">
-
-            <label className="text-xs text-gray-400">End date</label>
-
-            <input
-
-              type="date"
-
-              value={expiryRange.end}
-
-              onChange={(e) => {
-
-                setExpiryRange((r) => ({ ...r, end: e.target.value }));
-
-                setPagination((p) => ({ ...p, page: 1 }));
-
-              }}
-
-              className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200"
-
-            />
-
-          </div>
-
-          <button
-
-            type="button"
-
-            onClick={() => {
-
-              setExpiryRange({ start: '', end: '' });
-
-              setPagination((p) => ({ ...p, page: 1 }));
-
-            }}
-
-            className="px-3 py-2 text-sm rounded bg-dark-600 text-gray-300 hover:bg-dark-500"
-
-          >
-
-            Clear
-
-          </button>
-
-        </div>
-
-        <p className="text-xs text-gray-500 mt-2">
-
-          Contract expiry filter — sirf admin list ke liye. User panel par apply karne ke liye neeche &quot;User panel window&quot; use karo.
-
-        </p>
-
-      </div>
-
-
-
       <div className="bg-dark-800 border border-sky-700/40 rounded-lg p-4 mb-4">
 
         <div className="text-sm font-medium text-sky-200 mb-3">User panel window (save to database)</div>
 
         <p className="text-xs text-gray-500 mb-3">
 
-          Ye dates user trading panel par dikhai denge. Khali = no limit on that side.
+          Ye dates user panel par contract expiry filter hain (Panel from–until ke beech expiry wale contracts). Khali = no limit on that side. June = 30 din (31 invalid).
 
         </p>
 
@@ -20607,13 +20703,11 @@ const InstrumentManagement = () => {
 
               value={userPanelRange.from}
 
-              onChange={(e) =>
-                setUserPanelRange((r) => {
-                  const next = { ...r, from: e.target.value };
-                  setUserPanelRangeBySegment((m) => ({ ...(m || {}), [panelRangeSegment]: next }));
-                  return next;
-                })
-              }
+              min={panelDateMonthBounds(userPanelRange.from).min}
+
+              max={panelDateMonthBounds(userPanelRange.from).max}
+
+              onChange={(e) => applyUserPanelDateChange('from', e.target.value)}
 
               className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200"
 
@@ -20631,39 +20725,17 @@ const InstrumentManagement = () => {
 
               value={userPanelRange.until}
 
-              onChange={(e) =>
-                setUserPanelRange((r) => {
-                  const next = { ...r, until: e.target.value };
-                  setUserPanelRangeBySegment((m) => ({ ...(m || {}), [panelRangeSegment]: next }));
-                  return next;
-                })
-              }
+              min={panelDateMonthBounds(userPanelRange.until).min}
+
+              max={panelDateMonthBounds(userPanelRange.until).max}
+
+              onChange={(e) => applyUserPanelDateChange('until', e.target.value)}
 
               className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200"
 
             />
 
           </div>
-
-          <button
-
-            type="button"
-
-            disabled={bulkPanelSaving}
-
-            onClick={() =>
-
-              setUserPanelRange({ from: expiryRange.start || '', until: expiryRange.end || '' })
-
-            }
-
-            className="hidden px-3 py-2 text-sm rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50"
-
-          >
-
-            Copy from expiry filter
-
-          </button>
 
           <button
 
@@ -20698,6 +20770,50 @@ const InstrumentManagement = () => {
           </button>
 
         </div>
+
+        {savedPanelWindowSegments.length > 0 ? (
+          <div className="mt-4 pt-4 border-t border-sky-700/30">
+            <div className="text-xs font-medium text-sky-200 mb-2">Saved segment windows</div>
+            <div className="space-y-2">
+              {savedPanelWindowSegments.map((seg) => {
+                const row = savedPanelWindowsBySegment[seg] || {};
+                return (
+                  <div
+                    key={seg}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs bg-dark-900/50 border border-sky-800/30 rounded px-3 py-2"
+                  >
+                    <span className="font-semibold text-sky-300 min-w-[5.5rem]">{seg}</span>
+                    <span className="text-gray-400">
+                      Panel from:{' '}
+                      <span className="text-gray-200">{formatPanelWindowDate(row.panelFrom)}</span>
+                    </span>
+                    <span className="text-gray-400">
+                      Panel until:{' '}
+                      <span className="text-gray-200">{formatPanelWindowDate(row.panelUntil)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={segmentPanelDeleting === seg || bulkPanelSaving}
+                      onClick={() => void deleteSegmentPanelWindow(seg)}
+                      className="ml-auto p-1.5 rounded text-red-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                      title={`Delete ${seg} panel window`}
+                    >
+                      {segmentPanelDeleting === seg ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={14} />
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-500 mt-3">
+            Abhi koi segment save nahi — segment choose karo, dates set karo, phir &quot;Save &amp; apply to all&quot; dabao.
+          </p>
+        )}
 
       </div>
 
@@ -21088,6 +21204,12 @@ const InstrumentManagement = () => {
 
                           defaultValue={toDateInputValue(inst.tradingPanelVisibleFrom)}
 
+                          min={panelDateMonthBounds(toDateInputValue(inst.tradingPanelVisibleFrom)).min}
+
+                          max={panelDateMonthBounds(toDateInputValue(inst.tradingPanelVisibleFrom)).max}
+
+                          onChange={handlePanelRowDateInput}
+
                           disabled={panelSavingId === inst._id}
 
                           className="w-full max-w-[11rem] text-[11px] bg-dark-700 border border-dark-600 rounded px-1 py-1 text-gray-200 disabled:opacity-50"
@@ -21167,6 +21289,12 @@ const InstrumentManagement = () => {
                           type="date"
 
                           defaultValue={toDateInputValue(inst.tradingPanelVisibleUntil)}
+
+                          min={panelDateMonthBounds(toDateInputValue(inst.tradingPanelVisibleUntil)).min}
+
+                          max={panelDateMonthBounds(toDateInputValue(inst.tradingPanelVisibleUntil)).max}
+
+                          onChange={handlePanelRowDateInput}
 
                           disabled={panelSavingId === inst._id}
 
@@ -35159,6 +35287,15 @@ const SystemDefaultSettings = () => {
 
                     {['MCXFUT', 'MCX', 'MCXOPT'].includes(adminDefExpandedSeg) && (
                       <McxSegmentAdminExtras
+                        segmentKey={adminDefExpandedSeg}
+                        slice={s}
+                        canEdit
+                        onFieldChange={(field, value) => handleAdminSegDefChange(adminDefExpandedSeg, field, value)}
+                      />
+                    )}
+
+                    {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(adminDefExpandedSeg) && (
+                      <NseBseSegmentAdminExtras
                         segmentKey={adminDefExpandedSeg}
                         slice={s}
                         canEdit
@@ -50280,9 +50417,9 @@ const AllUsersManagement = () => {
 
       {/* Users Table */}
 
-      <div className="bg-dark-800 rounded-lg overflow-hidden">
+      <div className="bg-dark-800 rounded-lg">
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-lg">
 
           <table className="w-full">
 
@@ -50290,7 +50427,7 @@ const AllUsersManagement = () => {
 
               <tr>
 
-                <th className="px-4 py-3 text-left text-sm">User</th>
+                <th className="sticky left-0 z-20 px-4 py-3 text-left text-sm bg-dark-700 border-r border-dark-600 min-w-[180px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.45)]">User</th>
 
                 <th className="px-4 py-3 text-left text-sm">Admin</th>
 
@@ -50324,9 +50461,9 @@ const AllUsersManagement = () => {
 
               {paginatedUsers.map(user => (
 
-                <tr key={user._id} className="hover:bg-dark-700/50">
+                <tr key={user._id} className="group hover:bg-dark-700/50">
 
-                  <td className="px-4 py-3">
+                  <td className="sticky left-0 z-10 px-4 py-3 bg-dark-800 group-hover:bg-dark-700/50 border-r border-dark-600 min-w-[180px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.45)]">
 
                     <div>
 
@@ -54301,6 +54438,58 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
   const [success, setSuccess] = useState('');
 
+  const [walletBlocks, setWalletBlocks] = useState(() => buildWalletBlocksState(user));
+
+  const [blockLoading, setBlockLoading] = useState(null);
+
+
+
+  useEffect(() => {
+
+    setWalletBlocks(buildWalletBlocksState(user));
+
+  }, [user]);
+
+
+
+  const handleToggleWalletBlock = async (walletType, blocked) => {
+
+    setBlockLoading(walletType);
+
+    setError('');
+
+    try {
+
+      const { data } = await axios.put(
+
+        `/api/admin/manage/users/${user._id}/wallet-block`,
+
+        { walletType, blocked },
+
+        { headers: { Authorization: `Bearer ${token}` } }
+
+      );
+
+      if (data.walletBlocks) setWalletBlocks(data.walletBlocks);
+
+      else setWalletBlocks((prev) => ({ ...prev, [walletType]: blocked }));
+
+      setSuccess(data.message || 'Wallet block updated');
+
+      onSuccess();
+
+    } catch (err) {
+
+      setError(err.response?.data?.message || 'Error updating wallet block');
+
+    } finally {
+
+      setBlockLoading(null);
+
+    }
+
+  };
+
 
 
   const handleSubmit = async (e) => {
@@ -54582,6 +54771,18 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
             </div>
 
           </div>
+
+
+
+          <WalletProfitBlockToggles
+
+            blocks={walletBlocks}
+
+            blockLoading={blockLoading}
+
+            onToggle={handleToggleWalletBlock}
+
+          />
 
 
 
@@ -57110,6 +57311,15 @@ const UserManagement = () => {
 
                     {['MCXFUT', 'MCX', 'MCXOPT'].includes(segmentKey) && (
                       <McxSegmentAdminExtras
+                        segmentKey={segmentKey}
+                        slice={s}
+                        canEdit={isSuperAdmin}
+                        onFieldChange={(field, value) => handleEditSegmentPermissionChange(segmentKey, field, value)}
+                      />
+                    )}
+
+                    {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(segmentKey) && (
+                      <NseBseSegmentAdminExtras
                         segmentKey={segmentKey}
                         slice={s}
                         canEdit={isSuperAdmin}

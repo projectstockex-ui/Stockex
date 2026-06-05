@@ -172,8 +172,8 @@ export async function applyMainNseBseTransfer(userId, amount, direction) {
       throw new Error(`Insufficient balance in Main Wallet. Available: ₹${before.mainBalance.toLocaleString('en-IN')}`);
     }
     const afterIn = await readNseBseWalletFromDb(userId);
-    const { bumpLedgerReferenceOnCredit } = await import('../services/nseBseLedgerAutosquareService.js');
-    await bumpLedgerReferenceOnCredit(userId, afterIn.balance);
+    const { bumpWalletLedgerReferenceOnCredit } = await import('../services/ledgerAutosquareService.js');
+    await bumpWalletLedgerReferenceOnCredit(userId, 'nseBseWallet', afterIn.balance);
   } else {
     const available = before.balance - before.usedMargin;
     if (amt > available) {

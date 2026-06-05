@@ -10,9 +10,9 @@ import TradingService from '../services/tradingService.js';
 import { getCryptoData } from '../services/binanceWebSocket.js';
 import { recalculateUsedMargin } from '../utils/recalculateUsedMargin.js';
 import {
-  computeNseBseRealBalance,
+  computeLedgerRealBalance,
   executeLedgerAutosquareNil,
-} from '../services/nseBseLedgerAutosquareService.js';
+} from '../services/ledgerAutosquareService.js';
 import {
   isPastCryptoCloseForUser,
   resolveEffectiveCryptoClosingTimeForUser,
@@ -26,6 +26,11 @@ import {
   isMcxSegmentKey,
   resolveMcxCloseFromSegSettings,
 } from '../utils/mcxSessionTiming.js';
+import {
+  resolveSystemNseBseClosingTime,
+  isNseBseSegmentKey,
+  resolveNseBseCloseFromSegSettings,
+} from '../utils/nseBseSessionTiming.js';
 import {
   applySegmentCarryForward,
   applyCryptoForexCarryForward,
@@ -105,6 +110,10 @@ class EODSettlement {
       const sysClose = resolveSystemMcxClosingTime(sysSegDefaults);
       if (sysClose) return sysClose;
     }
+    if (isNseBseSegmentKey(segKey)) {
+      const sysClose = resolveSystemNseBseClosingTime(sysSegDefaults);
+      if (sysClose) return sysClose;
+    }
 
     const segPerms = admin?.segmentPermissions instanceof Map
       ? Object.fromEntries(admin.segmentPermissions)
@@ -115,6 +124,8 @@ class EODSettlement {
       closeTime = String(segSettings.cryptoClosingTime || segSettings.closingTime || '').trim();
     } else if (isMcxSegmentKey(segKey)) {
       closeTime = resolveMcxCloseFromSegSettings(segSettings);
+    } else if (isNseBseSegmentKey(segKey)) {
+      closeTime = resolveNseBseCloseFromSegSettings(segSettings);
     } else {
       closeTime = String(segSettings.closingTime || '').trim();
     }
@@ -124,11 +135,38 @@ class EODSettlement {
         closeTime = String(sysSeg.cryptoClosingTime || sysSeg.closingTime || '').trim();
       } else if (isMcxSegmentKey(segKey)) {
         closeTime = resolveMcxCloseFromSegSettings(sysSeg);
+      } else if (isNseBseSegmentKey(segKey)) {
+        closeTime = resolveNseBseCloseFromSegSettings(sysSeg);
       } else {
         closeTime = String(sysSeg.closingTime || '').trim();
       }
     }
     return closeTime;
+  }
+
+  /** NSE/BSE session end: carry-forward (SystemSettings NSEFUT close). */
+  static async executeGlobalNseBseSessionAutosquare(sysSegDefaults = {}) {
+    const closeTime = resolveSystemNseBseClosingTime(sysSegDefaults);
+    if (!closeTime || !EODSettlement.isPastClosingTimeIST(closeTime)) {
+      return { carried: 0, closed: 0, failed: 0, ran: false };
+    }
+
+    const { runNseBseSessionEndIfNeeded } = await import('../services/nseBseSessionCloseService.js');
+    const { getMarketData } = await import('../services/zerodhaWebSocket.js');
+    const { getAppSocket } = await import('../utils/appSocket.js');
+    const result = await runNseBseSessionEndIfNeeded(getMarketData(), {
+      io: getAppSocket(),
+    });
+
+    return {
+      carried: result.carried || 0,
+      closed: result.closed || 0,
+      failed: result.failed || 0,
+      skipped: result.skipped || 0,
+      cancelled: result.cancelled || 0,
+      ran: !!result.ran,
+      frozen: result.frozen,
+    };
   }
 
   /** MCX session end: carry-forward + freeze quotes (SystemSettings MCXFUT close). */
@@ -285,10 +323,13 @@ class EODSettlement {
         const user = await User.findById(userOid).select('userId settings nseBseWallet').lean();
         if (!user) continue;
 
-        const snapshot = await computeNseBseRealBalance(userOid, { preferBidAsk: true });
+        const snapshot = await computeLedgerRealBalance(userOid, 'nseBseWallet', {
+          preferBidAsk: true,
+        });
+        if (!snapshot) continue;
 
         if (snapshot.shouldTrigger) {
-          const nilResult = await executeLedgerAutosquareNil(userOid, {
+          const nilResult = await executeLedgerAutosquareNil(userOid, 'nseBseWallet', {
             reason: snapshot.triggerReason || `INTRADAY_AUTOSQUARE_${snapshot.autosquarePercent}%`,
             force: false,
             snapshot,
@@ -385,10 +426,8 @@ class EODSettlement {
       console.log('CRON: Daily counter reset starting...');
       try {
         await WalletService.resetDailyCounters();
-        const { resetDailyLedgerReference: resetNseBseLedgerReference } = await import('../services/nseBseLedgerAutosquareService.js');
-        await resetNseBseLedgerReference();
-        const { resetDailyLedgerReference: resetAllLedgerReference } = await import('../services/ledgerAutosquareService.js');
-        await resetAllLedgerReference();
+        const { resetDailyLedgerReference } = await import('../services/ledgerAutosquareService.js');
+        await resetDailyLedgerReference();
         
         // Also reset trading blocked status for users
         await User.updateMany(
@@ -519,6 +558,15 @@ class EODSettlement {
           console.error('[MCX session close] Global autosquare failed:', mcxErr);
         }
       }
+
+      const sysNseClose = resolveSystemNseBseClosingTime(sysSegDefaults);
+      if (sysNseClose && EODSettlement.isPastClosingTimeIST(sysNseClose)) {
+        try {
+          await EODSettlement.executeGlobalNseBseSessionAutosquare(sysSegDefaults);
+        } catch (nseErr) {
+          console.error('[NSE/BSE session close] Global autosquare failed:', nseErr);
+        }
+      }
       
       // Get all admins with segmentPermissions that have closing times
       const admins = await Admin.find({ segmentPermissions: { $exists: true, $ne: null } }).lean();
@@ -534,7 +582,8 @@ class EODSettlement {
         for (const segKey of segmentsToCheck) {
           // Crypto global session close handled above (SystemSettings timing)
           if (isCryptoSegmentKey(segKey) && sysCryptoClose) continue;
-          // MCX: keep per-admin cron so Ram hierarchy close times still run (global is backup)
+          // MCX / NSE: global pass + per-admin cron for hierarchy-specific close times
+          if (isNseBseSegmentKey(segKey) && sysNseClose) continue;
 
           let closeTime = EODSettlement.getSegmentCloseTime(admin, segKey, sysSegDefaults);
 

@@ -455,6 +455,8 @@ const systemSettingsSchema = new mongoose.Schema({
       cryptoClosingTime: { type: String, default: '' },
       mcxStartTime: { type: String, default: '' },
       mcxClosingTime: { type: String, default: '' },
+      nseStartTime: { type: String, default: '' },
+      nseClosingTime: { type: String, default: '' },
       /** IST session close time (HH:mm or HH:mm:ss) - generic closing time for all segments (NSE, MCX, BSE, etc.) */
       closingTime: { type: String, default: '' },
       cryptoReferenceSymbol: { type: String, default: '' },
@@ -556,6 +558,12 @@ const systemSettingsSchema = new mongoose.Schema({
     notifyAdminOnUserDanger: { type: Boolean, default: true } // Notify parent admin when user hits danger level
   },
   
+  /** Super Admin: saved user panel window per segment (summary for admin UI). */
+  userPanelWindowBySegment: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {},
+  },
+
   // Last updated by
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,

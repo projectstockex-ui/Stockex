@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import Instrument from '../models/Instrument.js';
+import SystemSettings from '../models/SystemSettings.js';
 import Watchlist from '../models/Watchlist.js';
 import Admin from '../models/Admin.js';
 import User from '../models/User.js';
@@ -16,11 +17,20 @@ import { sanitizeInstrumentTradingDefaultsCommission } from '../middleware/commi
 import { manualCheckExpiredInstruments } from '../services/instrumentExpiryService.js';
 import {
   addActiveDerivExpiryToQuery,
+  applyContractExpiryRangeToQuery,
+  instrumentMatchesContractExpiryRange,
   isExpiredDerivative,
-  watchlistItemIsExpired
+  watchlistItemIsExpired,
 } from '../utils/derivativeExpiry.js';
 import {
+  getSavedSegmentPanelWindows,
+  inferInstrumentSegmentKey,
+  invalidateSegmentPanelWindowsCache,
+  resolveSegmentPanelWindow,
+} from '../utils/segmentPanelExpiryFilter.js';
+import {
   applyTradingPanelVisibilityToQuery,
+  panelDateToStorageString,
   sanitizeTradingPanelVisibilityBody,
 } from '../utils/tradingPanelVisibility.js';
 import {
@@ -449,7 +459,10 @@ router.get('/search', protectUser, async (req, res) => {
 });
 
 /** Shared visibility + segment filters for `/user` and `/client/closed-search` (no isEnabled filter). */
-function buildUserInstrumentListQuery(adminCode, { segment, category, search, displaySegment }) {
+function buildUserInstrumentListQuery(
+  adminCode,
+  { segment, category, search, displaySegment, segmentPanelWindow } = {}
+) {
   const visibilityOr = [
     { visibleToAdmins: { $exists: false } },
     { visibleToAdmins: null },
@@ -548,6 +561,12 @@ function buildUserInstrumentListQuery(adminCode, { segment, category, search, di
   }
   addActiveDerivExpiryToQuery(query);
   applyTradingPanelVisibilityToQuery(query);
+  if (segmentPanelWindow?.panelFrom || segmentPanelWindow?.panelUntil) {
+    applyContractExpiryRangeToQuery(query, {
+      startDate: segmentPanelWindow.panelFrom,
+      endDate: segmentPanelWindow.panelUntil,
+    });
+  }
   return query;
 }
 
@@ -577,7 +596,15 @@ router.get('/client/closed-search', protectUser, async (req, res) => {
     }
     const adminCode = req.user.adminCode;
     await ensureInstrumentTabsForUserSegment(segment, displaySegment);
-    const query = buildUserInstrumentListQuery(adminCode, { segment, category, search, displaySegment });
+    const panelWindows = await getSavedSegmentPanelWindows();
+    const segmentPanelWindow = resolveSegmentPanelWindow(panelWindows, segment, displaySegment);
+    const query = buildUserInstrumentListQuery(adminCode, {
+      segment,
+      category,
+      search,
+      displaySegment,
+      segmentPanelWindow,
+    });
     query.isEnabled = false;
     query.adminLockedClosed = { $ne: true };
 
@@ -660,7 +687,15 @@ router.get('/user', protectUser, async (req, res) => {
     const adminCode = req.user.adminCode;
 
     await ensureInstrumentTabsForUserSegment(segment, displaySegment);
-    const query = buildUserInstrumentListQuery(adminCode, { segment, category, search, displaySegment });
+    const panelWindows = await getSavedSegmentPanelWindows();
+    const segmentPanelWindow = resolveSegmentPanelWindow(panelWindows, segment, displaySegment);
+    const query = buildUserInstrumentListQuery(adminCode, {
+      segment,
+      category,
+      search,
+      displaySegment,
+      segmentPanelWindow,
+    });
     // Match admin Market Watch: include Super Admin "forced close" rows (LIST TRADING off) so users still see the contract, not only enabled rows.
     if (!query.$and) query.$and = [];
     query.$and.push({
@@ -687,6 +722,49 @@ router.get('/user', protectUser, async (req, res) => {
 });
 
 // ==================== ADMIN ROUTES ====================
+
+router.get('/admin/panel-window-by-segment', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const settings = await SystemSettings.findOne({ settingsType: 'global' })
+      .select('userPanelWindowBySegment')
+      .lean();
+    res.json(settings?.userPanelWindowBySegment || {});
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.delete('/admin/panel-window-by-segment/:segment', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const seg = String(req.params.segment || '').trim();
+    if (!seg) {
+      return res.status(400).json({ message: 'Segment required' });
+    }
+
+    const settings = await SystemSettings.getSettings();
+    if (settings.userPanelWindowBySegment?.[seg]) {
+      delete settings.userPanelWindowBySegment[seg];
+      settings.markModified('userPanelWindowBySegment');
+      if (req.admin?._id) settings.updatedBy = req.admin._id;
+      await settings.save();
+    }
+
+    const filter = buildAdminBulkExpirySearchQuery({});
+    applyAdminDisplaySegmentFilterToQuery(filter, seg);
+    const result = await Instrument.updateMany(filter, {
+      $set: { tradingPanelVisibleFrom: null, tradingPanelVisibleUntil: null },
+    });
+    invalidateSegmentPanelWindowsCache();
+
+    res.json({
+      message: `Removed ${seg} panel window (${result.modifiedCount} instrument(s) cleared)`,
+      segment: seg,
+      modifiedCount: result.modifiedCount,
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
 
 // Get all instruments (admin view)
 router.get('/admin', protectAdmin, async (req, res) => {
@@ -1019,6 +1097,39 @@ router.put('/admin/bulk-toggle', protectAdmin, superAdminOnly, async (req, res) 
   }
 });
 
+async function persistSegmentPanelWindow(displaySegment, tradingPanelVisibleFrom, tradingPanelVisibleUntil, updatedBy) {
+  const seg = String(displaySegment || '').trim();
+  if (!seg) return null;
+  const settings = await SystemSettings.getSettings();
+  const panelFrom = panelDateToStorageString(tradingPanelVisibleFrom);
+  const panelUntil = panelDateToStorageString(tradingPanelVisibleUntil);
+  if (tradingPanelVisibleFrom && !panelFrom) {
+    throw new Error(`Invalid panel start date: ${tradingPanelVisibleFrom}`);
+  }
+  if (tradingPanelVisibleUntil && !panelUntil) {
+    throw new Error(
+      `Invalid panel end date: ${tradingPanelVisibleUntil} (check month days — e.g. June has 30 days, not 31)`
+    );
+  }
+  if (!settings.userPanelWindowBySegment || typeof settings.userPanelWindowBySegment !== 'object') {
+    settings.userPanelWindowBySegment = {};
+  }
+  if (!panelFrom && !panelUntil) {
+    delete settings.userPanelWindowBySegment[seg];
+  } else {
+    settings.userPanelWindowBySegment[seg] = {
+      panelFrom,
+      panelUntil,
+      updatedAt: new Date(),
+    };
+  }
+  settings.markModified('userPanelWindowBySegment');
+  if (updatedBy) settings.updatedBy = updatedBy;
+  await settings.save();
+  invalidateSegmentPanelWindowsCache();
+  return settings.userPanelWindowBySegment[seg] || null;
+}
+
 /** Super Admin: set user trading panel visibility dates on many instruments at once. */
 router.put('/admin/bulk-panel-visibility', protectAdmin, superAdminOnly, async (req, res) => {
   try {
@@ -1052,6 +1163,16 @@ router.put('/admin/bulk-panel-visibility', protectAdmin, superAdminOnly, async (
     }
 
     const MAX_BULK = 15000;
+    let segmentPanelWindow = null;
+    if (applyToFilteredList && displaySegment) {
+      segmentPanelWindow = await persistSegmentPanelWindow(
+        displaySegment,
+        tradingPanelVisibleFrom,
+        tradingPanelVisibleUntil,
+        req.admin?._id
+      );
+    }
+
     let filter;
 
     if (applyToFilteredList) {
@@ -1082,20 +1203,45 @@ router.put('/admin/bulk-panel-visibility', protectAdmin, superAdminOnly, async (
     }
 
     const matchCount = await Instrument.countDocuments(filter);
+    const segLabel = displaySegment ? String(displaySegment).trim() : 'segment';
+
     if (matchCount === 0) {
-      return res.status(404).json({ message: 'No instruments match this filter' });
+      return res.json({
+        message: segmentPanelWindow
+          ? `Saved panel window for ${segLabel}. No instruments matched for bulk update.`
+          : 'No instruments match this filter',
+        matchedCount: 0,
+        modifiedCount: 0,
+        displaySegment: applyToFilteredList && displaySegment ? segLabel : undefined,
+        segmentPanelWindow,
+        segmentSaved: Boolean(segmentPanelWindow),
+      });
     }
     if (matchCount > MAX_BULK) {
-      return res.status(400).json({
-        message: `Too many instruments (${matchCount}). Narrow expiry range or search (max ${MAX_BULK}).`,
+      return res.json({
+        message: segmentPanelWindow
+          ? `Saved panel window for ${segLabel}. ${matchCount} instruments match — too many for one bulk update (max ${MAX_BULK}). Use search or apply page by page.`
+          : `Too many instruments (${matchCount}). Narrow expiry range or search (max ${MAX_BULK}).`,
+        matchedCount: matchCount,
+        modifiedCount: 0,
+        displaySegment: applyToFilteredList && displaySegment ? segLabel : undefined,
+        segmentPanelWindow,
+        segmentSaved: Boolean(segmentPanelWindow),
+        warning: true,
       });
     }
 
     const result = await Instrument.updateMany(filter, { $set: panelFields });
+
     res.json({
-      message: `Panel visibility updated for ${result.modifiedCount} instrument(s)`,
+      message: segmentPanelWindow
+        ? `Saved panel window for ${segLabel} and updated ${result.modifiedCount} instrument(s)`
+        : `Panel visibility updated for ${result.modifiedCount} instrument(s)`,
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
+      displaySegment: applyToFilteredList && displaySegment ? segLabel : undefined,
+      segmentPanelWindow,
+      segmentSaved: Boolean(segmentPanelWindow),
     });
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -2359,6 +2505,18 @@ router.get('/watchlist', protectUser, async (req, res) => {
       }
     }
     
+    const panelWindows = await getSavedSegmentPanelWindows();
+
+    const passesSegmentExpiryWindow = (inst, segmentKey) => {
+      const win = resolveSegmentPanelWindow(panelWindows, segmentKey);
+      if (!win) return true;
+      const db = inst.token ? instrumentDataMap[inst.token] : null;
+      return instrumentMatchesContractExpiryRange(
+        { expiry: db?.expiry ?? inst.expiry },
+        { startDate: win.panelFrom, endDate: win.panelUntil }
+      );
+    };
+
     // Build result with refreshed lot sizes and last bid/ask (split legacy FOREX into FOREXFUT / FOREXOPT)
     for (const wl of watchlists) {
       if (wl.segment === 'FOREX') {
@@ -2366,6 +2524,7 @@ router.get('/watchlist', protectUser, async (req, res) => {
           const it = String(inst.instrumentType || '').toUpperCase();
           const key = it === 'OPTIONS' || it === 'OPT' ? 'FOREXOPT' : 'FOREXFUT';
           if (!result[key]) result[key] = [];
+          if (!passesSegmentExpiryWindow(inst, key)) continue;
           const out =
             inst.token && !inst.isCrypto && instrumentDataMap[inst.token]
               ? { ...inst, lotSize: instrumentDataMap[inst.token].lotSize, lastBid: instrumentDataMap[inst.token].lastBid, lastAsk: instrumentDataMap[inst.token].lastAsk }
@@ -2374,7 +2533,11 @@ router.get('/watchlist', protectUser, async (req, res) => {
         }
         continue;
       }
-      result[wl.segment] = (wl.instruments || []).map((inst) => {
+      const wlSegKey = wl.segment === 'FAVORITES' ? null : wl.segment;
+      result[wl.segment] = (wl.instruments || []).filter((inst) => {
+        const segKey = wlSegKey || inferInstrumentSegmentKey(inst);
+        return passesSegmentExpiryWindow(inst, segKey);
+      }).map((inst) => {
         if (inst.token && !inst.isCrypto && instrumentDataMap[inst.token]) {
           return {
             ...inst,

@@ -12,7 +12,13 @@ import {
   Landmark,
   ChevronDown,
   ChevronUp,
+  Lock,
 } from 'lucide-react';
+import {
+  walletCardBlockedClass,
+  walletActionsDisabledClass,
+  WALLET_DISABLED_ALERT,
+} from '../lib/walletProfitBlock.js';
 import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGameLedgerPanel.jsx';
 import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
 import { fmtTransferInr, validateTransferAmount } from '../lib/walletTransferLimits.js';
@@ -23,6 +29,15 @@ import {
   MAX_SANE_WALLET_DISPLAY_INR,
 } from '../utils/walletDisplaySanity.js';
 import PeerTransferModal from '../components/PeerTransferModal.jsx';
+
+function WalletBlockedBanner() {
+  return (
+    <div className="absolute top-3 right-12 z-10 flex items-center gap-1 px-2 py-0.5 rounded bg-red-950/90 border border-red-800/70 text-[10px] font-semibold text-red-300 uppercase tracking-wide">
+      <Lock size={10} />
+      Blocked
+    </div>
+  );
+}
 
 /** MCX-only wallet row (commodity), excluding crypto/forex. */
 function isMcxWalletTrade(row) {
@@ -153,11 +168,32 @@ const UserAccounts = () => {
     return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
   }, [fetchWallet, fetchNseBseWallet]);
 
+  const nseBseProfitBlocked =
+    !!walletData?.walletBlocks?.nseBse ||
+    !!walletData?.nseBseWallet?.profitBlocked ||
+    !!nseBseWalletSnapshot?.profitBlocked;
+  const mcxProfitBlocked =
+    !!walletData?.walletBlocks?.mcx || !!walletData?.mcxWallet?.profitBlocked;
+  const gamesProfitBlocked =
+    !!walletData?.walletBlocks?.games || !!walletData?.gamesWallet?.profitBlocked;
+  const cryptoProfitBlocked =
+    !!walletData?.walletBlocks?.crypto || !!walletData?.cryptoWallet?.profitBlocked;
+  const forexProfitBlocked =
+    !!walletData?.walletBlocks?.forex || !!walletData?.forexWallet?.profitBlocked;
+
   const opestockexRoom = () => {
+    if (nseBseProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     navigate('/user/trader-room');
   };
 
   const openTransfer = (direction) => {
+    if (nseBseProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     setTransferDirection(direction);
     setShowTransferModal(true);
   };
@@ -230,11 +266,19 @@ const UserAccounts = () => {
   };
 
   const openMcxTransfer = (direction) => {
+    if (mcxProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     setMcxTransferDirection(direction);
     setShowMcxTransferModal(true);
   };
 
   const openMcxTrading = () => {
+    if (mcxProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     navigate('/user/trader-room?mode=mcx');
   };
 
@@ -266,6 +310,10 @@ const UserAccounts = () => {
   }, [user?.token]);
 
   const toggleMcxOrders = () => {
+    if (mcxProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     setShowMcxOrders((prev) => !prev);
   };
 
@@ -475,36 +523,68 @@ const UserAccounts = () => {
   }, [user?.token]);
 
   const openGamesTransfer = (direction) => {
+    if (gamesProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     setGamesTransferDirection(direction);
     setShowGamesTransferModal(true);
   };
 
   const openGamesTrading = () => {
+    if (gamesProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     navigate('/user/games');
   };
 
   const openCryptoTrading = () => {
+    if (cryptoProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     navigate('/user/trader-room?mode=crypto');
   };
 
   const openCryptoOrders = () => {
+    if (cryptoProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     navigate('/user/orders?mode=crypto');
   };
 
   const openCryptoTransfer = (direction) => {
+    if (cryptoProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     setCryptoTransferDirection(direction);
     setShowCryptoTransferModal(true);
   };
 
   const openForexTrading = () => {
+    if (forexProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     navigate('/user/trader-room?mode=forex');
   };
 
   const openForexOrders = () => {
+    if (forexProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     navigate('/user/orders?mode=forex');
   };
 
   const openForexTransfer = (direction) => {
+    if (forexProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     setForexTransferDirection(direction);
     setShowForexTransferModal(true);
   };
@@ -528,8 +608,45 @@ const UserAccounts = () => {
   }, [user?.token, gamesLedgerGameFilter]);
 
   const toggleGamesLedger = () => {
+    if (gamesProfitBlocked) {
+      alert(WALLET_DISABLED_ALERT);
+      return;
+    }
     setShowGamesLedger((prev) => !prev);
   };
+
+  useEffect(() => {
+    if (nseBseProfitBlocked) {
+      setShowTradingWalletLedger(false);
+      setShowTradingTransferLedger(false);
+    }
+  }, [nseBseProfitBlocked]);
+
+  useEffect(() => {
+    if (mcxProfitBlocked) {
+      setShowMcxOrders(false);
+      setShowMcxTransferLedger(false);
+    }
+  }, [mcxProfitBlocked]);
+
+  useEffect(() => {
+    if (gamesProfitBlocked) {
+      setShowGamesLedger(false);
+      setShowGamesTransferLedger(false);
+    }
+  }, [gamesProfitBlocked]);
+
+  useEffect(() => {
+    if (cryptoProfitBlocked) {
+      setShowCryptoTransferLedger(false);
+    }
+  }, [cryptoProfitBlocked]);
+
+  useEffect(() => {
+    if (forexProfitBlocked) {
+      setShowForexTransferLedger(false);
+    }
+  }, [forexProfitBlocked]);
 
   useEffect(() => {
     if (showGamesLedger) fetchGamesLedger();
@@ -573,7 +690,8 @@ const UserAccounts = () => {
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="grid grid-cols-1 min-[520px]:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* NSE & BSE Wallet */}
-        <div className="bg-dark-800 rounded-xl overflow-hidden">
+        <div className={`bg-dark-800 rounded-xl overflow-hidden relative ${walletCardBlockedClass(nseBseProfitBlocked)}`}>
+          {nseBseProfitBlocked && <WalletBlockedBanner />}
           {/* Account Header */}
           <div className="p-4 border-b border-dark-600">
             <div className="flex items-center justify-between">
@@ -614,9 +732,12 @@ const UserAccounts = () => {
               </div>
             )}
 
+            <div className={walletActionsDisabledClass(nseBseProfitBlocked)}>
             <button
               type="button"
+              disabled={nseBseProfitBlocked}
               onClick={() => {
+                if (nseBseProfitBlocked) return;
                 setShowTradingWalletLedger((prev) => {
                   const next = !prev;
                   if (next) {
@@ -626,13 +747,13 @@ const UserAccounts = () => {
                   return next;
                 });
               }}
-              className="mt-4 w-full py-2.5 text-sm font-medium text-green-200 border border-green-500/35 rounded-lg hover:bg-green-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-4 w-full py-2.5 text-sm font-medium text-green-200 border border-green-500/35 rounded-lg hover:bg-green-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <History size={16} />
               {showTradingWalletLedger ? 'Hide' : 'View'} transaction history
             </button>
 
-            {showTradingWalletLedger && (
+            {showTradingWalletLedger && !nseBseProfitBlocked && (
               <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden max-h-72 overflow-y-auto">
                 <div className="flex flex-col gap-2 px-3 py-2 border-b border-dark-600 bg-dark-800/80 sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
@@ -725,21 +846,23 @@ const UserAccounts = () => {
 
             <button
               type="button"
+              disabled={nseBseProfitBlocked}
               onClick={() => {
+                if (nseBseProfitBlocked) return;
                 setShowTradingTransferLedger((prev) => {
                   const next = !prev;
                   if (next) fetchTradingTransferLedger();
                   return next;
                 });
               }}
-              className="mt-4 w-full py-2 text-sm font-medium text-green-300/90 border border-green-500/25 rounded-lg hover:bg-green-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-4 w-full py-2 text-sm font-medium text-green-300/90 border border-green-500/25 rounded-lg hover:bg-green-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <History size={16} />
               Transfer ledger
               {showTradingTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
 
-            {showTradingTransferLedger && (
+            {showTradingTransferLedger && !nseBseProfitBlocked && (
               <div className="mt-2 rounded-lg border border-green-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
                 {tradingTransferLedgerLoading ? (
                   <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
@@ -779,10 +902,11 @@ const UserAccounts = () => {
                 )}
               </div>
             )}
+            </div>
           </div>
 
           {/* Account Actions */}
-          <div className="p-4 flex gap-2 relative">
+          <div className={`p-4 flex gap-2 relative ${walletActionsDisabledClass(nseBseProfitBlocked)}`}>
             <button 
               onClick={opestockexRoom}
               className="flex-1 flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 py-3 rounded-lg font-medium transition"
@@ -857,7 +981,8 @@ const UserAccounts = () => {
         </div>
 
         {/* MCX Account */}
-        <div className="bg-dark-800 rounded-xl overflow-hidden">
+        <div className={`bg-dark-800 rounded-xl overflow-hidden relative ${walletCardBlockedClass(mcxProfitBlocked)}`}>
+          {mcxProfitBlocked && <WalletBlockedBanner />}
           {/* Account Header */}
           <div className="p-4 border-b border-dark-600">
             <div className="flex items-center justify-between">
@@ -898,16 +1023,18 @@ const UserAccounts = () => {
               </div>
             )}
 
+            <div className={walletActionsDisabledClass(mcxProfitBlocked)}>
             <button
               type="button"
+              disabled={mcxProfitBlocked}
               onClick={toggleMcxOrders}
-              className="mt-4 w-full py-2.5 text-sm font-medium text-yellow-200 border border-yellow-500/35 rounded-lg hover:bg-yellow-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-4 w-full py-2.5 text-sm font-medium text-yellow-200 border border-yellow-500/35 rounded-lg hover:bg-yellow-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <History size={16} />
               {showMcxOrders ? 'Hide' : 'View'} transaction history
             </button>
 
-            {showMcxOrders && (
+            {showMcxOrders && !mcxProfitBlocked && (
               <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden">
                 <div className="flex flex-col gap-2 px-3 py-2 border-b border-dark-600 bg-dark-800/80 sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
@@ -959,13 +1086,16 @@ const UserAccounts = () => {
                       </thead>
                       <tbody className="divide-y divide-dark-700">
                         {mcxOrders.map((row) => {
-                          const t = row.createdAt ? new Date(row.createdAt) : null;
+                          const t = row.openedAt || row.createdAt ? new Date(row.openedAt || row.createdAt) : null;
                           const timeStr = t
                             ? t.toLocaleString('en-IN', {
                                 day: '2-digit',
                                 month: 'short',
                                 hour: '2-digit',
                                 minute: '2-digit',
+                                second: '2-digit',
+                                hour12: true,
+                                timeZone: 'Asia/Kolkata',
                               })
                             : '—';
                           const pnl =
@@ -975,7 +1105,7 @@ const UserAccounts = () => {
                           const { qtyText, lotsText } = getTradeQtyLotsDisplay(row);
                           return (
                             <tr key={row._id} className="hover:bg-dark-800/60">
-                              <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{timeStr}</td>
+                              <td className="px-2 py-2 text-yellow-400 whitespace-nowrap align-top tabular-nums">{timeStr}</td>
                               <td className="px-2 py-2 align-top">
                                 <div className="text-gray-200 font-medium">{row.symbol || '—'}</div>
                                 <div className="text-[10px] text-gray-600">
@@ -1028,7 +1158,9 @@ const UserAccounts = () => {
                                 )}
                               </td>
                               <td className="px-2 py-2 align-top">
-                                {row.closeReason === 'AUTO_SQUARE' ? (
+                                {['AUTO_SQUARE', 'TIME_BASED', 'AUTO_SQUARE_330', 'EOD_SQUAREOFF'].includes(
+                                  String(row.closeReason || '').toUpperCase()
+                                ) ? (
                                   <span className="text-orange-400 text-xs font-medium">Yes</span>
                                 ) : (
                                   <span className="text-gray-600 text-xs">No</span>
@@ -1046,21 +1178,23 @@ const UserAccounts = () => {
 
             <button
               type="button"
+              disabled={mcxProfitBlocked}
               onClick={() => {
+                if (mcxProfitBlocked) return;
                 setShowMcxTransferLedger((prev) => {
                   const next = !prev;
                   if (next) fetchMcxTransferLedger();
                   return next;
                 });
               }}
-              className="mt-2 w-full py-2 text-sm font-medium text-yellow-300/90 border border-yellow-500/25 rounded-lg hover:bg-yellow-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-2 w-full py-2 text-sm font-medium text-yellow-300/90 border border-yellow-500/25 rounded-lg hover:bg-yellow-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <History size={16} />
               Transfer ledger
               {showMcxTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
 
-            {showMcxTransferLedger && (
+            {showMcxTransferLedger && !mcxProfitBlocked && (
               <div className="mt-2 rounded-lg border border-yellow-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
                 {mcxTransferLedgerLoading ? (
                   <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
@@ -1119,10 +1253,11 @@ const UserAccounts = () => {
                 )}
               </div>
             )}
+            </div>
           </div>
 
           {/* Account Actions */}
-          <div className="p-4 flex gap-2 relative">
+          <div className={`p-4 flex gap-2 relative ${walletActionsDisabledClass(mcxProfitBlocked)}`}>
             <button 
               onClick={openMcxTrading}
               className="flex-1 flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-700 py-3 rounded-lg font-medium transition"
@@ -1197,7 +1332,8 @@ const UserAccounts = () => {
         </div>
 
         {/* Games Account */}
-        <div className="bg-dark-800 rounded-xl overflow-hidden">
+        <div className={`bg-dark-800 rounded-xl overflow-hidden relative ${walletCardBlockedClass(gamesProfitBlocked)}`}>
+          {gamesProfitBlocked && <WalletBlockedBanner />}
           {/* Account Header */}
           <div className="p-4 border-b border-dark-600">
             <div className="flex items-center justify-between">
@@ -1238,16 +1374,18 @@ const UserAccounts = () => {
               </div>
             )}
 
+            <div className={walletActionsDisabledClass(gamesProfitBlocked)}>
             <button
               type="button"
+              disabled={gamesProfitBlocked}
               onClick={toggleGamesLedger}
-              className="mt-4 w-full py-2.5 text-sm font-medium text-purple-200 border border-purple-500/35 rounded-lg hover:bg-purple-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-4 w-full py-2.5 text-sm font-medium text-purple-200 border border-purple-500/35 rounded-lg hover:bg-purple-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <History size={16} />
               {showGamesLedger ? 'Hide' : 'View'} transaction history
             </button>
 
-            {showGamesLedger && (
+            {showGamesLedger && !gamesProfitBlocked && (
               <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden">
                 <div className="flex flex-col gap-2 px-3 py-2 border-b border-dark-600 bg-dark-800/80 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-col gap-1 min-w-0 flex-1">
@@ -1354,21 +1492,23 @@ const UserAccounts = () => {
 
             <button
               type="button"
+              disabled={gamesProfitBlocked}
               onClick={() => {
+                if (gamesProfitBlocked) return;
                 setShowGamesTransferLedger((prev) => {
                   const next = !prev;
                   if (next) fetchGamesTransferLedger();
                   return next;
                 });
               }}
-              className="mt-2 w-full py-2 text-sm font-medium text-purple-300/90 border border-purple-500/25 rounded-lg hover:bg-purple-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-2 w-full py-2 text-sm font-medium text-purple-300/90 border border-purple-500/25 rounded-lg hover:bg-purple-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <History size={16} />
               Transfer ledger
               {showGamesTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
 
-            {showGamesTransferLedger && (
+            {showGamesTransferLedger && !gamesProfitBlocked && (
               <div className="mt-2 rounded-lg border border-purple-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
                 {gamesTransferLedgerLoading ? (
                   <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
@@ -1416,10 +1556,11 @@ const UserAccounts = () => {
                 )}
               </div>
             )}
+            </div>
           </div>
 
           {/* Account Actions */}
-          <div className="p-4 flex gap-2 relative">
+          <div className={`p-4 flex gap-2 relative ${walletActionsDisabledClass(gamesProfitBlocked)}`}>
             <button 
               onClick={openGamesTrading}
               className="flex-1 flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-medium transition"
@@ -1495,7 +1636,8 @@ const UserAccounts = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          <div className="bg-dark-800 rounded-xl overflow-hidden w-full min-w-0">
+          <div className={`bg-dark-800 rounded-xl overflow-hidden w-full min-w-0 relative ${walletCardBlockedClass(cryptoProfitBlocked)}`}>
+          {cryptoProfitBlocked && <WalletBlockedBanner />}
           <div className="p-4 border-b border-dark-600">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1529,10 +1671,12 @@ const UserAccounts = () => {
               </div>
             )}
 
+            <div className={walletActionsDisabledClass(cryptoProfitBlocked)}>
             <button
               type="button"
+              disabled={cryptoProfitBlocked}
               onClick={openCryptoOrders}
-              className="mt-4 w-full py-2.5 text-sm font-medium text-orange-200 border border-orange-500/35 rounded-lg hover:bg-orange-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-4 w-full py-2.5 text-sm font-medium text-orange-200 border border-orange-500/35 rounded-lg hover:bg-orange-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ClipboardList size={16} />
               View crypto orders
@@ -1540,21 +1684,23 @@ const UserAccounts = () => {
 
             <button
               type="button"
+              disabled={cryptoProfitBlocked}
               onClick={() => {
+                if (cryptoProfitBlocked) return;
                 setShowCryptoTransferLedger((prev) => {
                   const next = !prev;
                   if (next) fetchCryptoTransferLedger();
                   return next;
                 });
               }}
-              className="mt-2 w-full py-2 text-sm font-medium text-orange-300/90 border border-orange-500/25 rounded-lg hover:bg-orange-500/10 flex items-center justify-center gap-2 transition"
+              className="mt-2 w-full py-2 text-sm font-medium text-orange-300/90 border border-orange-500/25 rounded-lg hover:bg-orange-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <History size={16} />
               Transfer ledger
               {showCryptoTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
 
-            {showCryptoTransferLedger && (
+            {showCryptoTransferLedger && !cryptoProfitBlocked && (
               <div className="mt-2 rounded-lg border border-orange-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
                 {cryptoTransferLedgerLoading ? (
                   <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
@@ -1617,13 +1763,14 @@ const UserAccounts = () => {
                 )}
               </div>
             )}
+            </div>
 
             <div className="mt-3 text-[11px] text-gray-500 leading-snug">
               Deposit moves Indian Rupees (₹) from your Main Wallet into this crypto trading wallet (also ₹). Use Trade for Binance spot pairs in the terminal.
             </div>
           </div>
 
-          <div className="p-4 flex gap-2 relative">
+          <div className={`p-4 flex gap-2 relative ${walletActionsDisabledClass(cryptoProfitBlocked)}`}>
             <button
               type="button"
               onClick={openCryptoTrading}
@@ -1700,7 +1847,8 @@ const UserAccounts = () => {
           </div>
         </div>
 
-          <div className="bg-dark-800 rounded-xl overflow-hidden w-full min-w-0">
+          <div className={`bg-dark-800 rounded-xl overflow-hidden w-full min-w-0 relative ${walletCardBlockedClass(forexProfitBlocked)}`}>
+            {forexProfitBlocked && <WalletBlockedBanner />}
             <div className="p-4 border-b border-dark-600">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -1734,10 +1882,12 @@ const UserAccounts = () => {
                 </div>
               )}
 
+              <div className={walletActionsDisabledClass(forexProfitBlocked)}>
               <button
                 type="button"
+                disabled={forexProfitBlocked}
                 onClick={openForexOrders}
-                className="mt-4 w-full py-2.5 text-sm font-medium text-cyan-200 border border-cyan-500/35 rounded-lg hover:bg-cyan-500/10 flex items-center justify-center gap-2 transition"
+                className="mt-4 w-full py-2.5 text-sm font-medium text-cyan-200 border border-cyan-500/35 rounded-lg hover:bg-cyan-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ClipboardList size={16} />
                 View forex orders
@@ -1745,21 +1895,23 @@ const UserAccounts = () => {
 
               <button
                 type="button"
+                disabled={forexProfitBlocked}
                 onClick={() => {
+                  if (forexProfitBlocked) return;
                   setShowForexTransferLedger((prev) => {
                     const next = !prev;
                     if (next) fetchForexTransferLedger();
                     return next;
                   });
                 }}
-                className="mt-2 w-full py-2 text-sm font-medium text-cyan-300/90 border border-cyan-500/25 rounded-lg hover:bg-cyan-500/10 flex items-center justify-center gap-2 transition"
+                className="mt-2 w-full py-2 text-sm font-medium text-cyan-300/90 border border-cyan-500/25 rounded-lg hover:bg-cyan-500/10 flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <History size={16} />
                 Transfer ledger
                 {showForexTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
 
-              {showForexTransferLedger && (
+              {showForexTransferLedger && !forexProfitBlocked && (
                 <div className="mt-2 rounded-lg border border-cyan-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
                   {forexTransferLedgerLoading ? (
                     <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
@@ -1822,13 +1974,14 @@ const UserAccounts = () => {
                   )}
                 </div>
               )}
+              </div>
 
               <div className="mt-3 text-[11px] text-gray-500 leading-snug">
                 Move Indian Rupees (₹) from your Main Wallet into this forex wallet. Trade major FX pairs in the terminal (USD quotes, INR wallet).
               </div>
             </div>
 
-            <div className="p-4 flex gap-2 relative">
+            <div className={`p-4 flex gap-2 relative ${walletActionsDisabledClass(forexProfitBlocked)}`}>
               <button
                 type="button"
                 onClick={openForexTrading}

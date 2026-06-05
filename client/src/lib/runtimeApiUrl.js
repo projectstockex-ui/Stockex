@@ -37,13 +37,15 @@ export function isMobileEmbed() {
 /** Socket.io options tuned for React Native WebView (polling first). */
 export function getSocketClientOptions() {
   return {
-    transports: ['polling', 'websocket'],
+    // WebSocket first — faster tick delivery than long-polling (Kite-like speed).
+    transports: ['websocket', 'polling'],
     path: '/socket.io/',
     reconnection: true,
     reconnectionAttempts: 25,
     reconnectionDelay: 1000,
     timeout: 25000,
     withCredentials: true,
+    upgrade: true,
   };
 }
 

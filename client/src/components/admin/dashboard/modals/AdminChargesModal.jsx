@@ -5,6 +5,7 @@ import { computeSegmentExplicitKeys } from '../../../../utils/segmentExplicitKey
 import {
   canManageLimitPendingSegmentGate,
   canEditMcxSessionTiming,
+  canEditNseBseSessionTiming,
   showLimitPendingHierarchyTarget,
   LIMIT_PENDING_HELP_TEXT,
 } from '../../../../lib/adminSegmentRoleGates.js';
@@ -26,6 +27,7 @@ import {
 } from '../../../../utils/segmentFormValues.js';
 import SegmentNumberInput from '../../segment/SegmentNumberInput.jsx';
 import McxSegmentAdminExtras from '../ui/McxSegmentAdminExtras.jsx';
+import NseBseSegmentAdminExtras from '../ui/NseBseSegmentAdminExtras.jsx';
 
 function normalizeCryptoIstClock24(inputStr) {
   const s = String(inputStr ?? '').trim();
@@ -630,6 +632,15 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                             segmentKey={expandedSeg}
                             slice={s}
                             canEdit={canEditMcxSessionTiming(viewerRole)}
+                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
+                          />
+                        )}
+
+                        {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(expandedSeg) && (
+                          <NseBseSegmentAdminExtras
+                            segmentKey={expandedSeg}
+                            slice={s}
+                            canEdit={canEditNseBseSessionTiming(viewerRole)}
                             onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
                           />
                         )}

@@ -851,7 +851,9 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
       }
       if (req.admin.role !== 'SUPER_ADMIN') {
         const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+        const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
         plain = stripMcxSessionTimingFromSegmentMap(plain);
+        plain = stripNseBseSessionTimingFromSegmentMap(plain);
       }
       updateFields.segmentPermissions = alignSegmentDefaultsMapPreservingSessionTiming(plain);
     }
@@ -862,7 +864,9 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
       let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
       if (req.admin.role !== 'SUPER_ADMIN' && sanitized) {
         const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
+        const { stripNseBseKeysFromSegmentExplicitKeys } = await import('../utils/nseBseSessionTiming.js');
         sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
+        sanitized = stripNseBseKeysFromSegmentExplicitKeys(sanitized);
       }
       if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
     }
@@ -947,7 +951,9 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
         segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
       {
         const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+        const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
         plain = stripMcxSessionTimingFromSegmentMap(plain);
+        plain = stripNseBseSessionTimingFromSegmentMap(plain);
       }
       if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
         const existingSeg =

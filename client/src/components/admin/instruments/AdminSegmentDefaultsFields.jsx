@@ -9,6 +9,7 @@ import { LIMIT_PENDING_HELP_TEXT } from '../../../lib/adminSegmentRoleGates.js';
 import { isCryptoQtyOnlySegment } from '../dashboard/utils/cryptoUtils.js';
 import CryptoSegmentAdminExtras from '../dashboard/ui/CryptoSegmentAdminExtras.jsx';
 import McxSegmentAdminExtras from '../dashboard/ui/McxSegmentAdminExtras.jsx';
+import NseBseSegmentAdminExtras from '../dashboard/ui/NseBseSegmentAdminExtras.jsx';
 import OptionBuySellFields from '../segment/OptionBuySellFields.jsx';
 import SegmentBrokerageFields from '../segment/SegmentBrokerageFields.jsx';
 import {
@@ -280,6 +281,10 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
 
       {['MCXFUT', 'MCXOPT', 'MCX'].includes(segmentKey) && (
         <McxSegmentAdminExtras segmentKey={segmentKey} slice={s} canEdit onFieldChange={handleChange} />
+      )}
+
+      {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(segmentKey) && (
+        <NseBseSegmentAdminExtras segmentKey={segmentKey} slice={s} canEdit onFieldChange={handleChange} />
       )}
 
       <div>

@@ -178,6 +178,8 @@ const SESSION_TIMING_KEYS = [
   'cryptoClosingTime',
   'mcxStartTime',
   'mcxClosingTime',
+  'nseStartTime',
+  'nseClosingTime',
   'startTime',
   'closingTime',
 ];

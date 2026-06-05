@@ -10,6 +10,7 @@ import {
   computeAdminBookPoolForPatti,
   roundMoney,
 } from '../utils/bookPnL.js';
+import { profitAllowedForWallet, walletTypeFromWalletField } from '../utils/walletBlock.js';
 
 /**
  * TradePro Trading Engine - Stop-Out Service
@@ -261,16 +262,19 @@ class StopOutService {
       // Update wallet balance
       const walletField = WalletService.getWalletFieldFromTrade(position);
       const marginToRelease = position.marginUsed || position.requiredMargin || 0;
+      const blockKind = walletTypeFromWalletField(walletField);
+      const balancePnL =
+        blockKind != null ? profitAllowedForWallet(user, blockKind, netPnL) : netPnL;
       
       await User.updateOne(
         { _id: user._id },
         {
           $inc: {
-            [`${walletField}.tradingBalance`]: netPnL,
-            [`${walletField}.balance`]: netPnL,
+            [`${walletField}.tradingBalance`]: balancePnL,
+            [`${walletField}.balance`]: balancePnL,
             [`${walletField}.usedMargin`]: -marginToRelease,
-            [`${walletField}.totalRealizedPnL`]: netPnL,
-            [`${walletField}.todayRealizedPnL`]: netPnL
+            [`${walletField}.totalRealizedPnL`]: balancePnL,
+            [`${walletField}.todayRealizedPnL`]: balancePnL
           }
         }
       );
@@ -280,10 +284,10 @@ class StopOutService {
         ownerType: 'USER',
         ownerId: user._id,
         adminCode: user.adminCode,
-        type: netPnL >= 0 ? 'CREDIT' : 'DEBIT',
+        type: balancePnL >= 0 ? 'CREDIT' : 'DEBIT',
         reason: 'TRADE_PNL',
-        amount: Math.abs(netPnL),
-        balanceAfter: (user[walletField]?.tradingBalance || user[walletField]?.balance || 0) + netPnL,
+        amount: Math.abs(balancePnL),
+        balanceAfter: (user[walletField]?.tradingBalance || user[walletField]?.balance || 0) + balancePnL,
         reference: { type: 'Trade', id: position._id },
         description: `Auto-square: ${position.symbol} ${position.side} closed`
       });

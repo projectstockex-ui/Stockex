@@ -945,6 +945,10 @@ router.get('/nse-bse-wallet', protectUser, async (req, res) => {
     const recalculated = await recalculateUsedMargin(req.user._id);
     const usedMargin = recalculated.nseBseWallet ?? recalculated.wallet ?? live.usedMargin;
     const available = Math.max(0, live.balance - usedMargin);
+    const walletUser = await User.findById(req.user._id)
+      .select('nseBseWallet.profitBlocked wallet.tradingWalletBlocked')
+      .lean();
+    const { isWalletProfitBlocked } = await import('../utils/walletBlock.js');
     res.json({
       balance: live.balance,
       usedMargin,
@@ -952,6 +956,7 @@ router.get('/nse-bse-wallet', protectUser, async (req, res) => {
       transferableBalance: available,
       mainBalance: live.mainBalance,
       balanceRepaired: repaired,
+      profitBlocked: isWalletProfitBlocked(walletUser, 'nseBse'),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -1024,6 +1029,9 @@ router.post('/crypto-transfer', protectUser, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    const { assertWalletOperationsAllowed } = await import('../utils/walletBlock.js');
+    assertWalletOperationsAllowed(user, 'cryptoWallet');
     
     // Get current balances
     let mainWalletBalance = user.wallet?.cashBalance || 0;
@@ -1110,6 +1118,9 @@ router.post('/forex-transfer', protectUser, async (req, res) => {
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
+    const { assertWalletOperationsAllowed: assertForexWallet } = await import('../utils/walletBlock.js');
+    assertForexWallet(user, 'forexWallet');
+
     let mainWalletBalance = user.wallet?.cashBalance || 0;
     if (mainWalletBalance === 0 && user.wallet?.balance > 0) {
       mainWalletBalance = user.wallet.balance;
@@ -1188,6 +1199,9 @@ router.post('/mcx-transfer', protectUser, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    const { assertWalletOperationsAllowed: assertMcxWallet } = await import('../utils/walletBlock.js');
+    assertMcxWallet(user, 'mcxWallet');
     
     // Get current balances
     let mainWalletBalance = user.wallet?.cashBalance || 0;
@@ -1283,6 +1297,9 @@ router.post('/games-transfer', protectUser, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    const { assertWalletOperationsAllowed: assertGamesWallet } = await import('../utils/walletBlock.js');
+    assertGamesWallet(user, 'gamesWallet');
     
     // Get current balances
     let mainWalletBalance = user.wallet?.cashBalance || 0;

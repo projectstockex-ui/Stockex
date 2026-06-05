@@ -128,10 +128,10 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade, marketData, merge
           <div className="divide-y divide-dark-700">
             {filteredInstruments.map(inst => {
               const liveData = getLivePrice(inst);
-              const currentPrice = liveData?.last_price || liveData?.ltp || inst.ltp || 0;
-              const change = liveData?.change || 0;
-              const changePercent = liveData?.change_percent || 0;
-              const isLive = !!liveData?.last_price;
+              const currentPrice = liveData?.ltp || liveData?.last_price || inst.ltp || 0;
+              const change = liveData?.change || inst.change || 0;
+              const changePercent = liveData?.changePercent || liveData?.change_percent || inst.changePercent || 0;
+              const isLive = !!(liveData?.ltp || liveData?.last_price);
               
               return (
               <div
@@ -201,7 +201,7 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade, marketData, merge
       {/* Footer Stats */}
       <div className="px-3 py-2 border-t border-dark-600 text-xs text-gray-500 flex justify-between">
         <span>{filteredInstruments.length} instruments</span>
-        <span>Auto-refresh: 5s</span>
+        <span>Live: WebSocket · list refresh 5s</span>
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ import {
   getNseBseUsedMargin,
 } from '../utils/nseBseWallet.js';
 import { tradeIsIndianMarket } from '../utils/tradingUsdSpot.js';
+import { profitAllowedForWallet, walletTypeFromTrade } from '../utils/walletBlock.js';
 
 function scaleCharges(charges, ratio) {
   if (!charges || ratio <= 0) return { total: 0, exchange: 0, gst: 0, stt: 0, sebi: 0, stamp: 0, brokerage: 0 };
@@ -293,6 +294,7 @@ export async function executePartialClose(userId, tradeId, body = {}) {
     trade.segment === 'MCX' ||
     trade.segment === 'MCXFUT' ||
     trade.segment === 'MCXOPT';
+  const balancePnL = profitAllowedForWallet(user, walletTypeFromTrade(trade), walletPnL);
 
   const updateFields = {};
   let newCryptoBalance,
@@ -307,34 +309,34 @@ export async function executePartialClose(userId, tradeId, body = {}) {
 
   if (trade.isCrypto) {
     newCryptoUsedMargin = Math.max(0, (user.cryptoWallet?.usedMargin || 0) - marginRelease);
-    newCryptoBalance = roundMoney((user.cryptoWallet?.balance || 0) + walletPnL);
+    newCryptoBalance = roundMoney((user.cryptoWallet?.balance || 0) + balancePnL);
     updateFields['cryptoWallet.usedMargin'] = newCryptoUsedMargin;
     updateFields['cryptoWallet.balance'] = Math.max(0, newCryptoBalance);
     updateFields['cryptoWallet.realizedPnL'] = roundMoney(
-      (user.cryptoWallet?.realizedPnL || 0) + walletPnL
+      (user.cryptoWallet?.realizedPnL || 0) + balancePnL
     );
   } else if (trade.isForex) {
     newForexUsedMargin = Math.max(0, (user.forexWallet?.usedMargin || 0) - marginRelease);
-    newForexBalance = roundMoney((user.forexWallet?.balance || 0) + walletPnL);
+    newForexBalance = roundMoney((user.forexWallet?.balance || 0) + balancePnL);
     updateFields['forexWallet.usedMargin'] = newForexUsedMargin;
     updateFields['forexWallet.balance'] = Math.max(0, newForexBalance);
     updateFields['forexWallet.realizedPnL'] = roundMoney(
-      (user.forexWallet?.realizedPnL || 0) + walletPnL
+      (user.forexWallet?.realizedPnL || 0) + balancePnL
     );
   } else if (isMCXTrade) {
     newMcxUsedMargin = Math.max(0, (user.mcxWallet?.usedMargin || 0) - marginRelease);
-    newMcxBalance = roundMoney((user.mcxWallet?.balance || 0) + walletPnL);
+    newMcxBalance = roundMoney((user.mcxWallet?.balance || 0) + balancePnL);
     updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
     updateFields['mcxWallet.balance'] = Math.max(0, newMcxBalance);
-    updateFields['mcxWallet.realizedPnL'] = roundMoney((user.mcxWallet?.realizedPnL || 0) + walletPnL);
+    updateFields['mcxWallet.realizedPnL'] = roundMoney((user.mcxWallet?.realizedPnL || 0) + balancePnL);
   } else {
     newUsedMargin = Math.max(0, getNseBseUsedMargin(user) - marginRelease);
     newBlocked = Math.max(0, (user.wallet?.blocked || 0) - marginRelease);
-    newTradingBalance = roundMoney(getNseBseBalance(user) + walletPnL);
+    newTradingBalance = roundMoney(getNseBseBalance(user) + balancePnL);
     updateFields['nseBseWallet.usedMargin'] = newUsedMargin;
     updateFields['wallet.blocked'] = newBlocked;
     updateFields['nseBseWallet.balance'] = Math.max(0, newTradingBalance);
-    updateFields['wallet.realizedPnL'] = roundMoney((user.wallet?.realizedPnL || 0) + walletPnL);
+    updateFields['wallet.realizedPnL'] = roundMoney((user.wallet?.realizedPnL || 0) + balancePnL);
   }
 
   if (pledgeRelease > 0) {
@@ -346,6 +348,10 @@ export async function executePartialClose(userId, tradeId, body = {}) {
   }
 
   const remainingQty = roundMoney(totalQty - qty);
+  if (remainingQty <= 1e-9) {
+    const effectiveExit = await resolveExitPrice(trade, { exitPrice, bidPrice, askPrice });
+    return TradingService.squareOffPosition(tradeId, 'MANUAL', effectiveExit, bidPrice, askPrice);
+  }
   const lotSize = Number(trade.lotSize) || 1;
   const remainingLots = lotSize > 0 ? roundMoney(remainingQty / lotSize) : trade.lots;
 
@@ -364,7 +370,8 @@ export async function executePartialClose(userId, tradeId, body = {}) {
 
   await User.updateOne({ _id: user._id }, { $set: updateFields });
 
-  if (Math.abs(walletPnL) >= 0.01) {
+  const ledgerPnL = balancePnL;
+  if (Math.abs(ledgerPnL) >= 0.01) {
     const pnlSegment = trade.isCrypto
       ? 'CRYPTO'
       : trade.isForex
@@ -385,9 +392,9 @@ export async function executePartialClose(userId, tradeId, body = {}) {
       ownerType: 'USER',
       ownerId: user._id,
       adminCode: user.adminCode,
-      type: walletPnL >= 0 ? 'CREDIT' : 'DEBIT',
+      type: ledgerPnL >= 0 ? 'CREDIT' : 'DEBIT',
       reason: 'TRADE_PNL',
-      amount: Math.abs(walletPnL),
+      amount: Math.abs(ledgerPnL),
       balanceAfter: balAfter,
       reference: { type: 'Trade', id: trade._id },
       description:

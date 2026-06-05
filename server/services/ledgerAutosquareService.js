@@ -128,6 +128,71 @@ export async function bumpWalletLedgerReferenceOnCredit(userId, walletField, new
 
 export { shouldTriggerLedgerAutosquare };
 
+/** Skip autosquare briefly after a new position opens (avoids 0s instant cut on stale reference). */
+const AUTOSQUARE_OPEN_GRACE_MS = 2500;
+
+/**
+ * When wallet has no open positions, reset reference to current cash so 70/90% starts fresh.
+ */
+export async function reseedLedgerReferenceWhenFlat(userId, walletField) {
+  const wf = String(walletField || '').trim();
+  const segQ = SEGMENT_QUERIES_BY_WALLET[wf];
+  if (!segQ) return { reseeded: false };
+
+  const openCount = await Trade.countDocuments({ user: userId, status: 'OPEN', ...segQ });
+  if (openCount > 0) return { reseeded: false, openCount };
+
+  const user = await User.findById(userId).select(userSelectForWalletField(wf)).lean();
+  if (!user) return { reseeded: false };
+
+  const cash = walletCashBalance(user, wf);
+  const ref = Math.round(Math.max(0, cash) * 100) / 100;
+  await User.updateOne(
+    { _id: userId },
+    {
+      $set: {
+        [`${wf}.ledgerReferenceBalance`]: ref,
+        [`${wf}.ledgerAutosquareActive`]: false,
+      },
+      $unset: { [`${wf}.ledgerAutosquaredAt`]: 1 },
+    }
+  );
+  return { reseeded: true, referenceBalance: ref };
+}
+
+/** Before new order: reseed if flat; block only when existing open book already breached limit. */
+export async function assertLedgerAutosquareAllowsNewOrder(
+  userId,
+  walletField,
+  { segment = null, segmentSettings = null, user = null } = {}
+) {
+  const wf = String(walletField || '').trim();
+  await reseedLedgerReferenceWhenFlat(userId, wf);
+
+  const segQ = SEGMENT_QUERIES_BY_WALLET[wf];
+  if (!segQ) return;
+
+  const openCount = await Trade.countDocuments({ user: userId, status: 'OPEN', ...segQ });
+  if (openCount === 0) return;
+
+  let u = user;
+  if (!u) {
+    u = await User.findById(userId).select(`settings ${wf}`).lean();
+  }
+  const autosquarePercent = resolveAutosquarePercentFromSettings(segmentSettings, u);
+  const snapshot = await computeLedgerRealBalance(userId, wf, {
+    preferBidAsk: false,
+    segment,
+    autosquarePercent,
+  });
+  if (snapshot?.shouldTrigger) {
+    throw new Error(
+      `Auto-square risk: equity loss already ${snapshot.lossPercent}% (limit ${snapshot.autosquarePercent}%). ` +
+        `Close existing positions or add funds before opening more.`
+    );
+  }
+}
+
 async function resolveAutosquarePercentForWallet(user, segment, positions) {
   const segHint = segment || positions?.[0]?.segment || null;
   if (!segHint) return resolveAutosquarePercentFromSettings(null, user);
@@ -462,6 +527,16 @@ export async function checkAndRunLedgerAutosquare(
     autosquarePercent,
   });
   if (!snapshot?.openPositions) return null;
+
+  const graceSince = new Date(Date.now() - AUTOSQUARE_OPEN_GRACE_MS);
+  const justOpened = await Trade.exists({
+    user: userId,
+    status: 'OPEN',
+    ...segQ,
+    $or: [{ openedAt: { $gte: graceSince } }, { createdAt: { $gte: graceSince } }],
+  });
+  if (justOpened) return { triggered: false, snapshot, graceSkipped: true };
+
   if (!snapshot.shouldTrigger) return { triggered: false, snapshot };
 
   const reason = snapshot.triggerReason || `INTRADAY_AUTOSQUARE_${snapshot.autosquarePercent}%`;
@@ -477,6 +552,37 @@ export async function checkAndRunLedgerAutosquare(
     snapshot,
   });
   return { triggered: true, snapshot, result };
+}
+
+/** Wallet ledger autosquare status for user API (NSE/BSE, MCX, crypto — same engine). */
+export async function getLedgerStatusForApi(userId, walletField = 'nseBseWallet') {
+  const wf = String(walletField || 'nseBseWallet').trim();
+  const user = await User.findById(userId).select(`settings ${wf}`).lean();
+  const snapshot = await computeLedgerRealBalance(userId, wf, { preferBidAsk: false });
+  const fallbackPct = wf === 'cryptoWallet' ? 70 : 90;
+  if (!snapshot) {
+    return {
+      cashBalance: 0,
+      usedMargin: 0,
+      marginCushion: 0,
+      equityBasis: 0,
+      totalMtm: 0,
+      realBalance: 0,
+      availableMargin: 0,
+      autosquarePercent: fallbackPct,
+      lossPercent: 0,
+      shouldTrigger: false,
+      openPositions: 0,
+      ledgerAutosquareActive: !!user?.[wf]?.ledgerAutosquareActive,
+      ledgerAutosquaredAt: user?.[wf]?.ledgerAutosquaredAt || null,
+    };
+  }
+  const { priceMap: _priceMap, positions: _positions, ...safe } = snapshot;
+  return {
+    ...safe,
+    ledgerAutosquareActive: !!user?.[wf]?.ledgerAutosquareActive,
+    ledgerAutosquaredAt: user?.[wf]?.ledgerAutosquaredAt || null,
+  };
 }
 
 /** Reset autosquare flags; refresh ledger reference to current cash per wallet. */
@@ -507,5 +613,8 @@ export default {
   checkAndRunLedgerAutosquare,
   executeLedgerAutosquareNil,
   walletEquityBasis,
+  getLedgerStatusForApi,
+  reseedLedgerReferenceWhenFlat,
+  assertLedgerAutosquareAllowsNewOrder,
   resetDailyLedgerReference,
 };

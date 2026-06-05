@@ -17,6 +17,11 @@ import {
   subwalletMarginReleaseOnClose,
 } from '../utils/subwalletCashWallet.js';
 import {
+  profitAllowedForWallet,
+  walletTypeFromTrade,
+  assertOrderWalletAllowed,
+} from '../utils/walletBlock.js';
+import {
   alignCryptoExitToEntryUnit,
   computeAdminBookPoolForPatti,
   computeMarkToMarketPnL,
@@ -25,6 +30,7 @@ import {
   resolveTradeCloseQuantity,
   roundMoney as roundBookMoney,
 } from '../utils/bookPnL.js';
+import { normalizeCloseTimeKey } from '../utils/autosquareSessionTime.js';
 import leverageValidationService from './leverageValidationService.js';
 import {
   orderIsCrypto,
@@ -56,6 +62,89 @@ import {
   getNseBseBalance,
   getNseBseUsedMargin,
 } from '../utils/nseBseWallet.js';
+
+/** Close reasons that count as intraday / ledger / session autosquare (not manual user close). */
+const AUTOSQUARE_CLOSE_REASONS = new Set([
+  'TIME_BASED',
+  'AUTO_SQUARE',
+  'AUTO_SQUARE_330',
+  'EOD_SQUAREOFF',
+]);
+
+function isAutosquareCloseReason(reason) {
+  return AUTOSQUARE_CLOSE_REASONS.has(String(reason || '').toUpperCase());
+}
+
+function sameISTDay(a, b) {
+  const fmt = (d) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(d));
+  return fmt(a) === fmt(b);
+}
+
+function autosquareSquaredQtyFromEvent(ev, origQty) {
+  const closed = Number(ev?.closedQtyAtCarry);
+  if (Number.isFinite(closed) && closed > 0) return closed;
+  const next = Number(ev?.nextDayQty);
+  if (Number.isFinite(next) && origQty > 0) return Math.max(0, origQty - next);
+  return origQty;
+}
+
+function stampFullCloseAutosquareHistory(trade, {
+  closedAt,
+  exitPrice,
+  closeQuantity,
+  grossPnL,
+}) {
+  if (!isAutosquareCloseReason(trade.closeReason)) return;
+  trade.isAutoSquared = true;
+  if (!trade.autoSquaredAt) trade.autoSquaredAt = closedAt;
+  if (trade.autoSquareLtp == null) trade.autoSquareLtp = exitPrice;
+  if (trade.originalQty == null) trade.originalQty = closeQuantity;
+  if (trade.pnlAtAutoSquare == null) trade.pnlAtAutoSquare = grossPnL;
+  trade.carryForwardQty = 0;
+
+  const historyEntry = {
+    autoSquaredAt: closedAt,
+    closeTime: '',
+    autoSquareLtp: exitPrice,
+    originalQty: closeQuantity,
+    nextDayQty: 0,
+    pnlAtAutoSquare: grossPnL,
+  };
+  if (!Array.isArray(trade.autoSquareHistory)) trade.autoSquareHistory = [];
+  const closedMs = new Date(closedAt).getTime();
+  const already = trade.autoSquareHistory.some((e) => {
+    if (!e?.autoSquaredAt) return false;
+    return Math.abs(new Date(e.autoSquaredAt).getTime() - closedMs) < 3000;
+  });
+  if (already) return;
+
+  const sessionEv = (trade.autoSquareHistory || []).find(
+    (e) =>
+      normalizeCloseTimeKey(e?.closeTime) &&
+      sameISTDay(e.autoSquaredAt || closedAt, closedAt)
+  );
+  if (sessionEv) {
+    const idx = trade.autoSquareHistory.indexOf(sessionEv);
+    const prevSq = Math.max(0, Number(sessionEv.closedQtyAtCarry) || 0);
+    const prevPnl = Number(sessionEv.pnlAtAutoSquare) || 0;
+    const merged = {
+      ...sessionEv,
+      nextDayQty: 0,
+      autoSquaredAt: closedAt,
+      autoSquareLtp: exitPrice,
+      closedQtyAtCarry: prevSq + closeQuantity,
+      pnlAtAutoSquare: Math.round((prevPnl + grossPnL) * 100) / 100,
+    };
+    if (idx >= 0) {
+      trade.autoSquareHistory[idx] = merged;
+    }
+    trade.carryForwardQty = 0;
+    return;
+  }
+
+  trade.autoSquareHistory.push(historyEntry);
+}
 
 /** Read one segment entry from User.segmentPermissions (Map or plain object after lean). */
 function getUserSegmentPerm(user, segmentKey) {
@@ -379,6 +468,25 @@ class TradingService {
             : { open: false, reason: fallback.reason || result.reason };
         }
       }
+
+      if (user && (exchange === 'NSE' || exchange === 'NFO' || exchange === 'BSE' || exchange === 'BFO')) {
+        const { isNseBseSessionActiveForUser } = await import('../utils/nseBseSessionTiming.js');
+        let sessionUser = user;
+        if (!sessionUser.admin?.segmentPermissions) {
+          const User = (await import('../models/User.js')).default;
+          sessionUser = await User.findById(user._id || user.id)
+            .populate('admin', 'segmentPermissions')
+            .lean();
+        }
+        if (sessionUser?.admin?.segmentPermissions) {
+          sessionUser.parentSegmentPermissions = sessionUser.admin.segmentPermissions;
+        }
+        const nseActive = await isNseBseSessionActiveForUser(sessionUser);
+        if (!nseActive) {
+          return { open: false, reason: 'NSE/BSE trading session is closed (admin timing)' };
+        }
+      }
+
       return { open: result.allowed, reason: result.reason };
     } catch (error) {
       console.error('Error checking market state:', error);
@@ -778,6 +886,8 @@ class TradingService {
     if (!user.isActive) {
       throw new Error('Account is suspended/inactive. Contact admin.');
     }
+
+    assertOrderWalletAllowed(user, orderData);
     
     // Check if trading is blocked until a specific time (daily loss limit)
     if (user.tradingBlockedUntil && new Date() < new Date(user.tradingBlockedUntil)) {
@@ -1033,6 +1143,9 @@ class TradingService {
     }
 
     if (!(totalQuantity > 0)) {
+      const flatWalletField = WalletService.getWalletFieldFromTrade(orderData);
+      const { reseedLedgerReferenceWhenFlat } = await import('./ledgerAutosquareService.js');
+      await reseedLedgerReferenceWhenFlat(userId, flatWalletField);
       return {
         success: true,
         trade: nettingResult.lastTrade || null,
@@ -1048,6 +1161,14 @@ class TradingService {
         availableBalance: 0,
       };
     }
+
+    const orderWalletField = WalletService.getWalletFieldFromTrade(orderData);
+    const { assertLedgerAutosquareAllowsNewOrder } = await import('./ledgerAutosquareService.js');
+    await assertLedgerAutosquareAllowsNewOrder(userId, orderWalletField, {
+      segment: orderData.segment,
+      segmentSettings,
+      user,
+    });
 
     // Skip lot validation for USD spot (uses INR notional, not lots)
     // Also skip for MCX - uses quantity-based validation
@@ -2063,6 +2184,7 @@ class TradingService {
     // Close-leg brokerage: OPTIONS only (FUT/EQ prepaid open+close at entry).
     const prepaidRoundTrip = !!trade.brokeragePrepaidRoundTrip;
     const walletPnL = subwalletCloseBalancePnL(trade, grossPnL, netPnL);
+    const balancePnL = profitAllowedForWallet(user, walletTypeFromTrade(trade), walletPnL);
     let closeLegBrokerage = 0;
     if (!prepaidRoundTrip) {
       closeLegBrokerage = Math.round((Number(trade.commission) || 0) * 100) / 100;
@@ -2112,6 +2234,12 @@ class TradingService {
     trade.status = 'CLOSED';
     trade.closeReason = reason;
     trade.closedAt = new Date();
+    stampFullCloseAutosquareHistory(trade, {
+      closedAt: trade.closedAt,
+      exitPrice: effectiveExitPrice,
+      closeQuantity,
+      grossPnL,
+    });
     trade.realizedPnL = grossPnL;
     trade.pnl = grossPnL;
     trade.unrealizedPnL = 0;
@@ -2153,8 +2281,8 @@ class TradingService {
       newBlocked = user.wallet.blocked || 0;
       newTradingBalance = getNseBseBalance(user);
       newCryptoUsedMargin = Math.max(0, (user.cryptoWallet?.usedMargin || 0) - tradeCostReturned);
-      newCryptoBalance = (user.cryptoWallet?.balance || 0) + walletPnL - closeLegBrokerage;
-      newCryptoRealizedPnL = (user.cryptoWallet?.realizedPnL || 0) + walletPnL;
+      newCryptoBalance = (user.cryptoWallet?.balance || 0) + balancePnL - closeLegBrokerage;
+      newCryptoRealizedPnL = (user.cryptoWallet?.realizedPnL || 0) + balancePnL;
       newForexBalance = user.forexWallet?.balance || 0;
       newForexRealizedPnL = user.forexWallet?.realizedPnL || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
@@ -2168,8 +2296,8 @@ class TradingService {
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
       newForexUsedMargin = Math.max(0, (user.forexWallet?.usedMargin || 0) - tradeCostReturned);
-      newForexBalance = (user.forexWallet?.balance || 0) + walletPnL - closeLegBrokerage;
-      newForexRealizedPnL = (user.forexWallet?.realizedPnL || 0) + walletPnL;
+      newForexBalance = (user.forexWallet?.balance || 0) + balancePnL - closeLegBrokerage;
+      newForexRealizedPnL = (user.forexWallet?.realizedPnL || 0) + balancePnL;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       newMcxRealizedPnL = user.mcxWallet?.realizedPnL || 0;
@@ -2182,8 +2310,8 @@ class TradingService {
       newForexBalance = user.forexWallet?.balance || 0;
       newForexRealizedPnL = user.forexWallet?.realizedPnL || 0;
       newMcxUsedMargin = Math.max(0, (user.mcxWallet?.usedMargin || 0) - marginRelease);
-      newMcxBalance = (user.mcxWallet?.balance || 0) + walletPnL - closeLegBrokerage;
-      newMcxRealizedPnL = (user.mcxWallet?.realizedPnL || 0) + walletPnL;
+      newMcxBalance = (user.mcxWallet?.balance || 0) + balancePnL - closeLegBrokerage;
+      newMcxRealizedPnL = (user.mcxWallet?.realizedPnL || 0) + balancePnL;
     } else {
       // NEW DELIVERY PLEDGE LOGIC:
       // Release wallet margin (marginUsed) - pledge margin is tracked separately
@@ -2193,7 +2321,7 @@ class TradingService {
       
       // P&L is applied to wallet balance (losses come from wallet, not pledge)
       // Pledge margin is only for margin requirement, not for covering losses
-      newTradingBalance = getNseBseBalance(user) + walletPnL - closeLegBrokerage;
+      newTradingBalance = getNseBseBalance(user) + balancePnL - closeLegBrokerage;
       
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
@@ -2211,7 +2339,7 @@ class TradingService {
     
     const newRealizedPnL = (trade.isCrypto || trade.isForex || isMCXTrade)
       ? (user.wallet.realizedPnL || 0)
-      : (user.wallet.realizedPnL || 0) + walletPnL;
+      : (user.wallet.realizedPnL || 0) + balancePnL;
     
     const updateFields = {};
 
@@ -2286,7 +2414,7 @@ class TradingService {
       { $set: updateFields }
     );
 
-    if (Math.abs(walletPnL) >= 0.01) {
+    if (Math.abs(balancePnL) >= 0.01) {
       const isAutoSquare = trade.closeReason === 'AUTO_SQUARE' || trade.closeReason === 'TIME_BASED';
       const autoSquareTime = isAutoSquare ? trade.closedAt : null;
       const autoSquareTimeStr = autoSquareTime
@@ -2318,9 +2446,9 @@ class TradingService {
         ownerType: 'USER',
         ownerId: user._id,
         adminCode: user.adminCode,
-        type: walletPnL >= 0 ? 'CREDIT' : 'DEBIT',
+        type: balancePnL >= 0 ? 'CREDIT' : 'DEBIT',
         reason: 'TRADE_PNL',
-        amount: Math.abs(walletPnL),
+        amount: Math.abs(balancePnL),
         balanceAfter: pnlBalanceAfter,
         reference: { type: 'Trade', id: trade._id },
         description: `${trade.symbol} ${trade.side} P&L${pnlWalletTag}${isAutoSquare ? ` (Auto-square${autoSquareTimeStr})` : ''}`,
@@ -2513,7 +2641,26 @@ class TradingService {
 
   // Get positions - optimized with lean() for faster response
   static async getPositions(userId, status = 'OPEN') {
-    return Trade.find({ user: userId, status })
+    if (status === 'OPEN') {
+      await Trade.updateMany(
+        { user: userId, status: 'OPEN', quantity: { $lte: 0 } },
+        {
+          $set: {
+            status: 'CLOSED',
+            marginUsed: 0,
+            requiredMargin: 0,
+            unrealizedPnL: 0,
+            closedAt: new Date(),
+            closeReason: 'ZERO_QTY_CLEANUP',
+          },
+        }
+      );
+    }
+    const query = { user: userId, status };
+    if (status === 'OPEN') {
+      query.quantity = { $gt: 0 };
+    }
+    return Trade.find(query)
       .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots orderType entryPrice limitPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target isAutoSquared autoSquaredAt autoSquareLtp originalQty brokerageAtAutoSquare pnlAtAutoSquare carryForwardQty netBalanceAtAutoSquare closeReason')
       .sort({ openedAt: -1 })
       .lean();
@@ -2546,6 +2693,10 @@ class TradingService {
         { 'autoSquareHistory.0': { $exists: true } },
         { isAutoSquared: true, autoSquaredAt: { $ne: null } },
         { pnlAtAutoSquare: { $ne: null } },
+        {
+          status: 'CLOSED',
+          closeReason: { $in: [...AUTOSQUARE_CLOSE_REASONS] },
+        },
       ],
     })
       .select(
@@ -2559,7 +2710,7 @@ class TradingService {
     const dedupeBest = new Map();
 
     for (const t of trades) {
-      const events =
+      let events =
         Array.isArray(t.autoSquareHistory) && t.autoSquareHistory.length > 0
           ? t.autoSquareHistory
           : t.autoSquaredAt
@@ -2576,8 +2727,38 @@ class TradingService {
               ]
             : [];
 
+      if (
+        !events.length &&
+        t.status === 'CLOSED' &&
+        isAutosquareCloseReason(t.closeReason) &&
+        t.closedAt
+      ) {
+        events = [
+          {
+            autoSquaredAt: t.closedAt,
+            closeTime: '',
+            autoSquareLtp: t.exitPrice ?? t.autoSquareLtp,
+            originalQty: t.originalQty ?? t.quantity,
+            nextDayQty: 0,
+            pnlAtAutoSquare: t.pnlAtAutoSquare ?? t.realizedPnL ?? t.netPnL,
+            netBalanceAtAutoSquare: t.netBalanceAtAutoSquare,
+          },
+        ];
+      }
+
+      const sessionEventsToday = events.filter((e) => normalizeCloseTimeKey(e?.closeTime));
+
       for (const ev of events) {
         if (!ev?.autoSquaredAt) continue;
+        const ct = normalizeCloseTimeKey(ev.closeTime);
+        if (
+          !ct &&
+          sessionEventsToday.length > 0 &&
+          t.status === 'CLOSED' &&
+          sessionEventsToday.some((se) => sameISTDay(se.autoSquaredAt, ev.autoSquaredAt))
+        ) {
+          continue;
+        }
         const dk = autosquareEventDedupeKey(t._id, ev.closeTime);
         const prev = dedupeBest.get(dk);
         if (prev) {
@@ -2603,7 +2784,9 @@ class TradingService {
           : ev.autoSquaredAt;
         const eventId = `${t._id}-${closeKeyNorm || 'legacy'}-${new Date(sessionAt).getTime()}`;
         const origQty = ev.originalQty ?? t.originalQty ?? t.quantity;
+        const sqQty = autosquareSquaredQtyFromEvent(ev, origQty);
         const markPx = ev.autoSquareLtp ?? t.autoSquareLtp ?? t.exitPrice;
+        const closeKeyNormForRow = closeKeyNorm || '';
         rows.push({
           _id: eventId,
           tradeId: t.tradeId,
@@ -2622,12 +2805,15 @@ class TradingService {
           isAutoSquared: true,
           isHistoryEvent: true,
           originalQty: origQty,
+          autosquareSqQty: sqQty,
+          closedQtyAtCarry: ev.closedQtyAtCarry ?? (sqQty < origQty ? sqQty : null),
           carryForwardQty: ev.nextDayQty,
           quantity: ev.nextDayQty,
           autoSquareLtp: markPx,
-          pnlAtAutoSquare: reconcileAutosquarePnL(t, markPx, ev.pnlAtAutoSquare, origQty),
+          pnlAtAutoSquare: reconcileAutosquarePnL(t, markPx, ev.pnlAtAutoSquare, sqQty),
           autoSquaredAt: sessionAt,
-          closeTime: closeKeyNorm || '',
+          closeTime: closeKeyNormForRow,
+          autosquareEventType: closeKeyNormForRow ? 'SESSION' : 'INTRADAY',
           netBalanceAtAutoSquare: ev.netBalanceAtAutoSquare,
           carryForwardLeverage: ev.carryForwardLeverage ?? t.leverage,
           openedAt: t.openedAt,
@@ -2647,6 +2833,8 @@ class TradingService {
         { segment: { $in: ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FNO'] } },
         { exchange: { $in: ['BINANCE', 'FOREX'] } },
         { segment: { $in: ['CRYPTOFUT', 'CRYPTOOPT', 'CRYPTO', 'FOREXFUT', 'FOREXOPT', 'FOREX'] } },
+        { exchange: 'MCX' },
+        { segment: { $in: ['MCX', 'MCXFUT', 'MCXOPT'] } },
         { isCrypto: true },
         { isForex: true },
       ],

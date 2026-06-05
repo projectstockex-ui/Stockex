@@ -317,6 +317,9 @@ class WalletTransferService {
       throw new Error('User not found');
     }
 
+    const { assertTransferWalletsAllowed } = await import('../utils/walletBlock.js');
+    assertTransferWalletsAllowed(user, sourceWallet, targetWallet);
+
     // Validate transfer
     const validation = this.validateTransfer(user, sourceWallet, targetWallet, transferAmount);
     if (!validation.valid) {

@@ -48,12 +48,14 @@ import {
   buildAdminHierarchyChain,
 } from '../utils/franchiseBrokerage.js';
 import { isAdminInActivePattiSubtree } from '../utils/pattiSubtree.js';
+import WalletService from './walletService.js';
 import { chainHasDownlinePattiEdges } from '../utils/pattiHierarchy.js';
 import {
   buildMlmAdminInrLevels,
   computeMlmLevelShareAmount,
   resolveMlmChainCommissionMeta,
 } from '../utils/mlmBrokerage.js';
+import { profitAllowedForWallet } from '../utils/walletBlock.js';
 
 class TradeService {
   
@@ -636,6 +638,8 @@ static _SEGMENT_MERGE_FALLBACK = {
   cryptoClosingTime: '',
   mcxStartTime: '',
   mcxClosingTime: '',
+  nseStartTime: '',
+  nseClosingTime: '',
   closingTime: '',
   cryptoReferenceSymbol: '',
   cryptoPricePerLotInr: 0,
@@ -726,7 +730,9 @@ static _SEGMENT_MERGE_FALLBACK = {
           k === 'cryptoStartTime' ||
           k === 'cryptoClosingTime' ||
           k === 'mcxStartTime' ||
-          k === 'mcxClosingTime'
+          k === 'mcxClosingTime' ||
+          k === 'nseStartTime' ||
+          k === 'nseClosingTime'
         ) {
           console.log(`[_mergeSegmentStack] Processing ${k}:`, vv, 'type:', typeof vv);
           // Don't overwrite with empty strings - keep existing value from hierarchy
@@ -924,6 +930,54 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
       console.log(
         `[getUserSegmentSettings] MCX timing for ${segmentKey}: start=${start}, close=${close} (parent admin slice)`
+      );
+    }
+
+    // NSE/BSE: inherit session timing from parent admin NSEFUT (same pattern as MCX)
+    if (
+      segUpper === 'NSEFUT' ||
+      segUpper === 'NSEOPT' ||
+      segUpper === 'NSE-EQ' ||
+      segUpper === 'BSE-FUT' ||
+      segUpper === 'BSE-OPT' ||
+      segUpper === 'FNO' ||
+      segUpper === 'EQUITY'
+    ) {
+      const nseFutSystem = TradeService._normalizeSegmentSlice(
+        adm.NSEFUT || adm['NSE-EQ'] || adm.FNO
+      );
+      const hierNse =
+        TradeService._sliceFromHierarchy(user, 'NSEFUT', segment) ||
+        TradeService._sliceFromHierarchy(user, 'NSE-EQ', segment);
+      let nseStart = String(
+        hierNse?.nseStartTime ||
+          hierNse?.startTime ||
+          nseFutSystem?.nseStartTime ||
+          nseFutSystem?.startTime ||
+          ''
+      ).trim();
+      let nseClose = String(
+        hierNse?.nseClosingTime ||
+          hierNse?.closingTime ||
+          nseFutSystem?.nseClosingTime ||
+          nseFutSystem?.closingTime ||
+          ''
+      ).trim();
+
+      if (!nseStart || !nseClose) {
+        const { resolveNseBseTimingFromAdminChain } = await import('../utils/nseBseSessionTiming.js');
+        const chainTiming = await resolveNseBseTimingFromAdminChain(user);
+        if (!nseStart) nseStart = chainTiming.nseStartTime || '';
+        if (!nseClose) nseClose = chainTiming.nseClosingTime || '';
+      }
+
+      if (nseStart) result.nseStartTime = nseStart;
+      if (nseClose) {
+        result.nseClosingTime = nseClose;
+        if (!String(result.closingTime || '').trim()) result.closingTime = nseClose;
+      }
+      console.log(
+        `[getUserSegmentSettings] NSE/BSE timing for ${segmentKey}: start=${nseStart}, close=${nseClose}`
       );
     }
 
@@ -1494,7 +1548,20 @@ static _SEGMENT_MERGE_FALLBACK = {
 
     const rawScriptSettings = this.getUserScriptSettings(user, tradeData.symbol, tradeData.category);
     const scriptSettings = this.mergeScriptSettingsWithInstrument(instrumentDoc, rawScriptSettings);
-    
+
+    const walletField = WalletService.getWalletFieldFromTrade({
+      isCrypto: tradeData.isCrypto,
+      isForex: tradeData.isForex,
+      exchange: tradeData.exchange,
+      segment: tradeData.segment,
+    });
+    const { assertLedgerAutosquareAllowsNewOrder } = await import('./ledgerAutosquareService.js');
+    await assertLedgerAutosquareAllowsNewOrder(userId, walletField, {
+      segment: tradeData.segment,
+      segmentSettings,
+      user,
+    });
+
     // 4. Validate segment is enabled for user
     // For crypto/forex, skip enabled check if segmentSettings is null or not explicitly set
     const isCryptoOrForex = tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
@@ -1847,19 +1914,19 @@ static _SEGMENT_MERGE_FALLBACK = {
     // 11. Validate margin + brokerage headroom (cash free + open MTM — matches dashboard)
     const { computeOrderAvailableBalance } = await import('../utils/orderAvailableMargin.js');
     const need = requiredMargin + openLegBrokerage;
-    let walletField = 'nseBseWallet';
+    let marginWalletField = 'nseBseWallet';
     let walletLabel = 'NSE & BSE Wallet';
     if (isMcx) {
-      walletField = 'mcxWallet';
+      marginWalletField = 'mcxWallet';
       walletLabel = 'MCX Account';
     } else if (isCrypto) {
-      walletField = 'cryptoWallet';
+      marginWalletField = 'cryptoWallet';
       walletLabel = 'Crypto Account';
     } else if (isForex) {
-      walletField = 'forexWallet';
+      marginWalletField = 'forexWallet';
       walletLabel = 'Forex Account';
     }
-    const available = await computeOrderAvailableBalance(userId, user, walletField);
+    const available = await computeOrderAvailableBalance(userId, user, marginWalletField);
     if (need > available) {
       throw new Error(
         `Insufficient margin in ${walletLabel}. Required: ${need.toFixed(2)} ` +
@@ -3610,6 +3677,7 @@ static _SEGMENT_MERGE_FALLBACK = {
           ? (exitPrice - trade.entryPrice) 
           : (trade.entryPrice - exitPrice);
         const closedPnL = pnlPerUnit * quantityToClose;
+        const balancePnL = profitAllowedForWallet(user, 'nseBse', closedPnL);
         
         // Update user wallet - release margin for closed portion, add P&L
         // Use separate wallets for crypto and forex
@@ -3660,7 +3728,7 @@ static _SEGMENT_MERGE_FALLBACK = {
             {
               $inc: {
                 'wallet.usedMargin': -marginToRelease,
-                'wallet.cashBalance': closedPnL
+                'wallet.cashBalance': balancePnL
               }
             }
           );
@@ -3699,16 +3767,17 @@ static _SEGMENT_MERGE_FALLBACK = {
           partialCloseBalance = (user.forexWallet?.balance || 0) + closedPnL;
           walletDesc = ' (Forex)';
         } else {
-          partialCloseBalance = user.wallet.cashBalance + closedPnL;
+          partialCloseBalance = user.wallet.cashBalance + balancePnL;
         }
+        const ledgerPnL = isMcx || isCrypto || isForex ? closedPnL : balancePnL;
         await WalletLedger.create({
           ownerType: 'USER',
           ownerId: user._id,
           userId: user.userId,
           adminCode: user.adminCode,
-          type: closedPnL >= 0 ? 'CREDIT' : 'DEBIT',
+          type: ledgerPnL >= 0 ? 'CREDIT' : 'DEBIT',
           reason: 'PARTIAL_CLOSE',
-          amount: Math.abs(closedPnL),
+          amount: Math.abs(ledgerPnL),
           balanceAfter: partialCloseBalance,
           reference: { type: 'Trade', id: trade._id },
           description: `Partial close for carry forward conversion - ${trade.symbol} (${lotsToClose} lots)${walletDesc}`

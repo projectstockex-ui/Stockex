@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getRuntimeSocketUrl, getSocketClientOptions } from '../lib/runtimeApiUrl';
+import { applyMarketTickBatch } from '../lib/marketTickMerge.js';
 import { triggerAutosquareSound } from '../utils/tradingAlertSound';
 import {
   Home, ArrowLeft, RefreshCw, Calendar, Filter, Download,
@@ -22,7 +23,9 @@ import {
 import { getTradeQtyLotsDisplay } from '../utils/tradeQtyLotsDisplay.js';
 import {
   formatAutosquareEndClock,
+  formatAutosquareEventLabel,
   formatAutosquareSessionDate,
+  resolveAutosquareSquaredQty,
 } from '../utils/autosquareSessionDisplay.js';
 import { resolveTradeDisplayPnL } from '../utils/tradePnL.js';
 
@@ -94,11 +97,8 @@ const UserOrders = () => {
     const socket = io(socketUrl, getSocketClientOptions());
     const myUserId = String(user._id || user.id || '');
     const pending = {};
-    const MARKET_TICK_FLUSH_MS = 0;
-    let flushTimer = null;
 
     const flushBatchedTicks = () => {
-      flushTimer = null;
       const keys = Object.keys(pending);
       if (keys.length === 0) return;
       const batch = {};
@@ -106,14 +106,13 @@ const UserOrders = () => {
         batch[k] = pending[k];
         delete pending[k];
       }
-      setMarketData((prev) => ({ ...prev, ...batch }));
+      setMarketData((prev) => applyMarketTickBatch(prev, batch));
     };
 
     const queueTicks = (ticks) => {
       if (!ticks || typeof ticks !== 'object' || Array.isArray(ticks)) return;
       Object.assign(pending, ticks);
-      if (flushTimer) return;
-      flushTimer = setTimeout(flushBatchedTicks, MARKET_TICK_FLUSH_MS);
+      flushBatchedTicks();
     };
 
     socket.on('connect', () => {
@@ -128,6 +127,11 @@ const UserOrders = () => {
       fetchAllOrders();
     });
 
+    const onSessionClosed = () => fetchAllOrders();
+    socket.on('crypto_session_closed', onSessionClosed);
+    socket.on('nse_bse_session_closed', onSessionClosed);
+    socket.on('mcx_session_closed', onSessionClosed);
+
     socket.on('market_tick', (ticks) => {
       queueTicks(ticks);
     });
@@ -137,7 +141,6 @@ const UserOrders = () => {
     });
 
     return () => {
-      if (flushTimer) clearTimeout(flushTimer);
       socket.disconnect();
     };
   }, [user?.token, user?._id, user?.id]);
@@ -407,7 +410,21 @@ const UserOrders = () => {
       month: 'short',
       year: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  };
+
+  const formatTradeEntryTime = (item) => {
+    if (!item?.openedAt) return null;
+    const dt = new Date(item.openedAt);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toLocaleString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
     });
   };
 
@@ -438,6 +455,7 @@ const UserOrders = () => {
     return dt.toLocaleString('en-IN', {
       hour: '2-digit',
       minute: '2-digit',
+      second: '2-digit',
       hour12: true,
     });
   };
@@ -692,7 +710,10 @@ const UserOrders = () => {
               // Calculate live P&L for open positions using current market data
               let pnl;
               if (activeTab === 'autosquare') {
-                pnl = resolveTradeDisplayPnL(item);
+                const storedSq = Number(item.pnlAtAutoSquare);
+                pnl = Number.isFinite(storedSq)
+                  ? storedSq
+                  : resolveTradeDisplayPnL(item);
               } else if (activeTab === 'positions') {
                 const ltp = getCurrentPrice(item) || item.currentPrice || item.entryPrice;
                 pnl = item.side === 'BUY'
@@ -722,14 +743,29 @@ const UserOrders = () => {
                       </div>
                       <div>
                         <div className="font-semibold text-white">{item.symbol}</div>
-                        <div className="text-xs text-gray-500">{item.exchange || 'FOREX'}</div>
+                        <div className="text-xs text-gray-500">
+                          {item.exchange || 'FOREX'}
+                          {item.tradeId ? ` · ${item.tradeId}` : ''}
+                        </div>
+                        {activeTab === 'autosquare' && (
+                          <div className="text-[10px] text-amber-400/90 mt-0.5">
+                            {formatAutosquareEventLabel(item)}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="text-right">
                       <div className={`font-bold text-lg ${isProfitable ? 'text-green-500' : 'text-red-500'}`}>
                         {isProfitable ? '+' : ''}₹{pnl.toLocaleString()}
                       </div>
-                      <div className="text-xs text-gray-500">P&L</div>
+                      <div className="text-xs text-gray-500">
+                        P&L
+                        {activeTab === 'autosquare' && (
+                          <span className="block text-[10px] text-gray-600">
+                            on {resolveAutosquareSquaredQty(item).toLocaleString('en-IN')} sq. qty
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   
@@ -798,7 +834,14 @@ const UserOrders = () => {
                               {getTradeQtyLotsDisplay(item).lotsText}
                             </td>
                           )}
-                          <td className="py-2 text-right">₹{(item.entryPrice || item.price || 0).toLocaleString()}</td>
+                          <td className="py-2 text-right align-top">
+                            <div>₹{(item.entryPrice || item.price || 0).toLocaleString()}</div>
+                            {activeTab === 'closed' && formatTradeEntryTime(item) ? (
+                              <div className="text-[10px] text-gray-500 mt-0.5">
+                                Entry @ {formatTradeEntryTime(item)}
+                              </div>
+                            ) : null}
+                          </td>
                           {activeTab === 'autosquare' && (
                             <td className="py-2 text-right">
                               {item.autoSquareLtp && item.autoSquareLtp > 0 ? (

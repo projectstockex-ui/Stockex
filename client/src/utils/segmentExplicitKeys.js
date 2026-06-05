@@ -43,6 +43,8 @@ export function computeSegmentExplicitKeys(segDefs, systemDefaultsPlain, editorR
       for (const tk of [
         'mcxStartTime',
         'mcxClosingTime',
+        'nseStartTime',
+        'nseClosingTime',
         'cryptoStartTime',
         'cryptoClosingTime',
         'closingTime',
@@ -62,7 +64,8 @@ export function computeSegmentExplicitKeys(segDefs, systemDefaultsPlain, editorR
       }
     }
     const mcxKeys = ['mcxStartTime', 'mcxClosingTime', 'startTime', 'closingTime'];
-    out[seg] = isSuperAdmin ? keys : keys.filter((k) => !mcxKeys.includes(k));
+    const nseKeys = ['nseStartTime', 'nseClosingTime'];
+    out[seg] = isSuperAdmin ? keys : keys.filter((k) => !mcxKeys.includes(k) && !nseKeys.includes(k));
   }
   return out;
 }

@@ -8,6 +8,7 @@ import { setLTPInRedis } from './ltpResolutionService.js';
 import CircuitBreakerService from './circuitBreakerService.js';
 import { isCryptoSessionActiveForUser } from '../utils/cryptoSessionTiming.js';
 import { isMcxSessionActiveForUser } from '../utils/mcxSessionTiming.js';
+import { isNseBseSessionActiveForUser } from '../utils/nseBseSessionTiming.js';
 
 /** Invalidate after open/close trade so margin logic resumes immediately */
 export function invalidateMarginOpenTradesCache() {
@@ -174,8 +175,9 @@ class MarginMonitorService {
         segmentSettings?.quantityModeSettings?.autosquarePercent;
       const isUsdSpotWallet = walletField === 'cryptoWallet' || walletField === 'forexWallet';
       const isMcxWallet = walletField === 'mcxWallet';
+      const isNseBseWallet = walletField === 'nseBseWallet';
       const hasBidAsk = Number(tickData?.bid) > 0 || Number(tickData?.ask) > 0;
-      const preferBidAsk = (isUsdSpotWallet || isMcxWallet) && hasBidAsk;
+      const preferBidAsk = (isUsdSpotWallet || isMcxWallet || isNseBseWallet) && hasBidAsk;
 
       const runLedgerAutosquareOnly = async () => {
         const { checkAndRunLedgerAutosquare } = await import('./ledgerAutosquareService.js');
@@ -186,8 +188,13 @@ class MarginMonitorService {
         });
       };
 
-      // Crypto: off-session skip live MTM; segment autosquare% (e.g. 70) still runs
-      if (walletField === 'cryptoWallet') {
+      const walletSessionChecks = {
+        cryptoWallet: isCryptoSessionActiveForUser,
+        nseBseWallet: isNseBseSessionActiveForUser,
+        mcxWallet: isMcxSessionActiveForUser,
+      };
+      const sessionCheck = walletSessionChecks[walletField];
+      if (sessionCheck) {
         let sessionUser = user;
         if (!sessionUser.admin?.segmentPermissions) {
           sessionUser = await User.findById(userId)
@@ -197,40 +204,15 @@ class MarginMonitorService {
         if (sessionUser?.admin?.segmentPermissions) {
           sessionUser.parentSegmentPermissions = sessionUser.admin.segmentPermissions;
         }
-        const sessionActive = await isCryptoSessionActiveForUser(sessionUser);
+        const sessionActive = await sessionCheck(sessionUser);
         if (!sessionActive) {
           try {
             await runLedgerAutosquareOnly();
           } catch (ledgerErr) {
-            console.error('[MarginMonitor] crypto ledger autosquare (off-session):', ledgerErr.message);
-          }
-          return;
-        }
-      }
-
-      // MCX: off-session skip live MTM; segment autosquare% (e.g. 90) still runs
-      if (isMcxWallet) {
-        let sessionUser = user;
-        if (!sessionUser.admin?.segmentPermissions) {
-          sessionUser = await User.findById(userId)
-            .populate('admin', 'segmentPermissions')
-            .lean();
-        }
-        if (sessionUser?.admin?.segmentPermissions) {
-          sessionUser.parentSegmentPermissions = sessionUser.admin.segmentPermissions;
-        }
-        const sessionActive = await isMcxSessionActiveForUser(sessionUser);
-        if (!sessionActive) {
-          try {
-            const ledgerResult = await runLedgerAutosquareOnly();
-            if (ledgerResult?.triggered) {
-              console.log(
-                `[MarginMonitor] MCX autosquare (off-session) user=${userId} ` +
-                  `loss=${ledgerResult.snapshot?.lossPercent}%`
-              );
-            }
-          } catch (ledgerErr) {
-            console.error('[MarginMonitor] MCX ledger autosquare (off-session):', ledgerErr.message);
+            console.error(
+              `[MarginMonitor] ${walletField} ledger autosquare (off-session):`,
+              ledgerErr.message
+            );
           }
           return;
         }
@@ -270,14 +252,13 @@ class MarginMonitorService {
       let ledgerTriggered = false;
       if (['nseBseWallet', 'mcxWallet', 'cryptoWallet', 'forexWallet'].includes(walletField)) {
         try {
-          const { checkAndRunLedgerAutosquare, computeLedgerRealBalance } = await import(
-            './ledgerAutosquareService.js'
-          );
-          const ledgerResult = await checkAndRunLedgerAutosquare(userId, walletField, {
+          const ledgerSvc = await import('./ledgerAutosquareService.js');
+          const ledgerResult = await ledgerSvc.checkAndRunLedgerAutosquare(userId, walletField, {
             preferBidAsk,
             segment,
             autosquarePercent: segmentAutosquarePercent,
           });
+          const computeLedgerRealBalance = ledgerSvc.computeLedgerRealBalance;
           if (ledgerResult?.triggered) {
             ledgerTriggered = true;
             marginStatus = { action: 'STOP_OUT', status: 'CRITICAL', marginLevel: 0 };

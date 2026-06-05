@@ -966,7 +966,7 @@ router.get('/platform-charge-status', protectUser, async (req, res) => {
 // NSE/BSE ledger autosquare status (real balance = cash + MTM, 90% loss floor)
 router.get('/nse-bse-ledger-status', protectUser, async (req, res) => {
   try {
-    const { getLedgerStatusForApi } = await import('../services/nseBseLedgerAutosquareService.js');
+    const { getLedgerStatusForApi } = await import('../services/ledgerAutosquareService.js');
     const status = await getLedgerStatusForApi(req.user._id);
     res.json(status);
   } catch (error) {
@@ -1770,6 +1770,8 @@ router.get('/settings', protectUser, async (req, res) => {
       cryptoClosingTime: '',
       mcxStartTime: '',
       mcxClosingTime: '',
+      nseStartTime: '',
+      nseClosingTime: '',
       closingTime: '',
       cryptoReferenceSymbol: '',
       cryptoPricePerLotInr: 0,
@@ -1869,6 +1871,23 @@ router.get('/settings', protectUser, async (req, res) => {
       }
     } catch (mcxOverlayErr) {
       console.warn('[user/settings] MCX timing overlay failed:', mcxOverlayErr?.message);
+    }
+
+    try {
+      const { resolveNseBseTimingFromAdminChain } = await import('../utils/nseBseSessionTiming.js');
+      const chainNse = await resolveNseBseTimingFromAdminChain(user);
+      for (const nseSeg of ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT']) {
+        if (!segmentPermissions[nseSeg]) continue;
+        if (chainNse.nseStartTime) segmentPermissions[nseSeg].nseStartTime = chainNse.nseStartTime;
+        if (chainNse.nseClosingTime) {
+          segmentPermissions[nseSeg].nseClosingTime = chainNse.nseClosingTime;
+          if (!String(segmentPermissions[nseSeg].closingTime || '').trim()) {
+            segmentPermissions[nseSeg].closingTime = chainNse.nseClosingTime;
+          }
+        }
+      }
+    } catch (nseOverlayErr) {
+      console.warn('[user/settings] NSE/BSE timing overlay failed:', nseOverlayErr?.message);
     }
 
     console.log('[user/settings] Final segmentPermissions keys:', Object.keys(segmentPermissions));

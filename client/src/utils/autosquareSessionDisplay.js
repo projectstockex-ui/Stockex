@@ -31,6 +31,7 @@ export function formatAutosquareSessionDate(item) {
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      second: '2-digit',
       hour12: true,
       timeZone: 'Asia/Kolkata',
     });
@@ -46,5 +47,25 @@ export function formatAutosquareSessionDate(item) {
   const h12 = p.h % 12 || 12;
   const ampm = p.h >= 12 ? 'pm' : 'am';
   const min = String(p.min).padStart(2, '0');
-  return `${dayLabel}, ${h12}:${min} ${ampm}`;
+  const sec = String(p.sec).padStart(2, '0');
+  return `${dayLabel}, ${h12}:${min}:${sec} ${ampm}`;
+}
+
+/** Qty that was squared at this event (not next-day carry). */
+export function resolveAutosquareSquaredQty(item) {
+  const closed = Number(item?.autosquareSqQty ?? item?.closedQtyAtCarry);
+  if (Number.isFinite(closed) && closed > 0) return closed;
+  const orig = Number(item?.originalQty) || 0;
+  const next = Number(item?.carryForwardQty ?? item?.quantity);
+  if (orig > 0 && Number.isFinite(next)) return Math.max(0, orig - next);
+  return orig;
+}
+
+/** Session = admin MCX end clock; intraday = loss autosquare at real server time. */
+export function formatAutosquareEventLabel(item) {
+  const clock = formatAutosquareEndClock(item);
+  if (clock) {
+    return `Session autosquare @ ${clock}`;
+  }
+  return 'Intraday loss autosquare';
 }

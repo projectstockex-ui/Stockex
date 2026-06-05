@@ -3,11 +3,36 @@
  * Null = no limit on that side.
  */
 
+/** True only for real calendar dates (rejects e.g. 2026-06-31). */
+export function isValidCalendarDateString(yyyyMmDd) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(yyyyMmDd || ''))) return false;
+  const [y, m, d] = String(yyyyMmDd).split('-').map(Number);
+  const probe = new Date(y, m - 1, d);
+  return probe.getFullYear() === y && probe.getMonth() === m - 1 && probe.getDate() === d;
+}
+
+/** Store/read panel dates as YYYY-MM-DD in segment summary. */
+export function panelDateToStorageString(raw) {
+  if (raw === '' || raw == null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return isValidCalendarDateString(s) ? s : null;
+  }
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  const normalized = d.toISOString().slice(0, 10);
+  return isValidCalendarDateString(normalized) ? normalized : null;
+}
+
 export function parseTradingPanelDateStart(raw) {
   if (raw === '' || raw == null || raw === undefined) return null;
   const s = String(raw).trim();
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    if (!isValidCalendarDateString(s)) {
+      throw new Error(`Invalid panel start date: ${s}`);
+    }
     return new Date(`${s}T00:00:00.000`);
   }
   const d = new Date(s);
@@ -21,6 +46,9 @@ export function parseTradingPanelDateEnd(raw) {
   const s = String(raw).trim();
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    if (!isValidCalendarDateString(s)) {
+      throw new Error(`Invalid panel end date: ${s} (check month days — e.g. June has 30 days)`);
+    }
     return new Date(`${s}T23:59:59.999`);
   }
   const d = new Date(s);

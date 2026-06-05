@@ -7,9 +7,10 @@ import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { io } from 'socket.io-client';
 import { triggerAutosquareSound } from '../utils/tradingAlertSound';
 import { getRuntimeSocketUrl, getSocketClientOptions } from '../lib/runtimeApiUrl';
+import { mergeMarketTickRow, applyMarketTickBatch } from '../lib/marketTickMerge.js';
 import {
   Search, 
-  ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, RefreshCw, Settings, Share2, Wallet, X, Copy, Check, Building2, User, Home, ChevronRight, LogOut, Bell, History, ClipboardList, ListOrdered, BarChart2, TrendingUp, Plus, Star, Info, UserCircle, CreditCard, ArrowDown, Clock, Send
+  ArrowDownCircle, ArrowUpCircle, ArrowRightLeft, RefreshCw, Settings, Share2, Wallet, X, Copy, Check, Building2, User, Home, ChevronRight, ChevronDown, LogOut, Bell, History, ClipboardList, ListOrdered, BarChart2, TrendingUp, Plus, Star, Info, UserCircle, CreditCard, ArrowDown, Clock, Send
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import PartialPositionModal from '../components/trading/PartialPositionModal';
@@ -27,6 +28,11 @@ import {
 } from '../utils/ltpBracket.js';
 import { isCryptoWindowLive } from '../utils/cryptoSessionClient.js';
 import { isMcxWindowLive, formatMcxSessionRange } from '../utils/mcxSessionClient.js';
+import {
+  isNseBseWindowLive,
+  formatNseBseSessionRange,
+  isNseBseSegmentRow,
+} from '../utils/nseBseSessionClient.js';
 
 /** All watchlist buckets that should receive Zerodha tick-subscribe (keys must match watchlistBySegment). */
 const WATCHLIST_TICK_SUBSCRIBE_SEGMENTS = [
@@ -178,21 +184,11 @@ function getCryptoMarketQuote(marketData, instrument) {
   return null;
 }
 
-function marketTickTimestampMs(row) {
-  if (!row) return 0;
-  const ts = Number(row.serverTimestamp);
-  if (Number.isFinite(ts) && ts > 0) return ts;
-  const parsed = new Date(row.lastUpdated || 0).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-/** Prefer fresher socket / poll row when merging into marketData */
-function mergeMarketTickRow(existing, incoming) {
-  if (!incoming || typeof incoming !== 'object') return existing;
-  if (!existing) return incoming;
-  return marketTickTimestampMs(incoming) >= marketTickTimestampMs(existing)
-    ? { ...existing, ...incoming }
-    : existing;
+function chartAnchorLtpForInstrument(chartAnchor, instrument) {
+  if (!instrument?.token || chartAnchor?.ltp == null) return null;
+  if (String(chartAnchor.token) !== String(instrument.token)) return null;
+  const n = Number(chartAnchor.ltp);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /** Zerodha tick keys are string token ids; instruments may use number or string */
@@ -234,6 +230,20 @@ function deriveMcxBaseSymbol(raw) {
   if (alphaPrefix?.[0]) return alphaPrefix[0];
   const fallback = s.match(/^[A-Z]+/);
   return fallback?.[0] || '';
+}
+
+/** Short label for "Close Silver only" style buttons (MCX / FNO symbols). */
+function formatSymbolCloseShortLabel(symbolOrBase) {
+  const base = deriveMcxBaseSymbol(symbolOrBase) || String(symbolOrBase || '').trim().toUpperCase();
+  if (!base) return 'Symbol';
+  if (base.includes('SILVER')) return 'Silver';
+  if (base.includes('GOLD')) return 'Gold';
+  if (base.includes('CRUDEOIL') || base === 'CRUDE') return 'Crude';
+  if (base.includes('NATURALGAS')) return 'Nat Gas';
+  if (base.includes('COPPER')) return 'Copper';
+  if (base.includes('ZINC')) return 'Zinc';
+  const lower = base.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
 /** Client fallback when instrument.lotSize is 1 (sync placeholder). Matches server lotSizeResolver. */
@@ -517,10 +527,15 @@ function openPositionClubKey(pos) {
  * Club multiple fills (same symbol & side) into one row with weighted average entry.
  * Used in PositionsPanel only — pending/history stay per-trade.
  */
+function openPositionHasQty(pos) {
+  return Number(pos?.quantity) > 1e-9;
+}
+
 function clubOpenPositionsForPanel(rawList) {
   if (!Array.isArray(rawList) || rawList.length === 0) return [];
   const groups = new Map();
   for (const pos of rawList) {
+    if (!openPositionHasQty(pos)) continue;
     const key = openPositionClubKey(pos);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(pos);
@@ -533,6 +548,7 @@ function clubOpenPositionsForPanel(rawList) {
       continue;
     }
     const totalQty = legs.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+    if (totalQty <= 1e-9) continue;
     const notional = legs.reduce(
       (s, p) => s + (Number(p.entryPrice) || 0) * (Number(p.quantity) || 0),
       0
@@ -881,6 +897,7 @@ const UserDashboard = () => {
   /** Bumps on each Socket.IO connect so MCX can re-post /tick-subscribe after server is ready */
   const [socketConnectEpoch, setSocketConnectEpoch] = useState(0);
   const contractPriceEndpointMissingRef = useRef(false);
+  const lastMarketTickAtRef = useRef(0);
   const [currentTime, setCurrentTime] = useState(new Date());
   /** Last bar close from ChartPanel / mobile chart — bid/ask align to this (fixes MCX feed vs Kite chart mismatch). */
   const [chartLtpAnchor, setChartLtpAnchor] = useState({ token: null, ltp: null });
@@ -917,11 +934,14 @@ const UserDashboard = () => {
 
   const handleChartLtp = useCallback((emitToken, ltp) => {
     if (emitToken == null || emitToken === '') return;
-    if (String(selectedInstrument?.token) !== String(emitToken)) return;
+    const tok = String(emitToken);
+    const matchesSelected = String(selectedInstrument?.token) === tok;
+    const matchesTrade = String(tradeInstrument?.token) === tok;
+    if (!matchesSelected && !matchesTrade) return;
     const n = Number(ltp);
     if (!Number.isFinite(n) || n <= 0) return;
-    setChartLtpAnchor({ token: String(emitToken), ltp: n });
-  }, [selectedInstrument?.token]);
+    setChartLtpAnchor({ token: tok, ltp: n });
+  }, [selectedInstrument?.token, tradeInstrument?.token]);
 
   // Update clock every second
   useEffect(() => {
@@ -932,6 +952,8 @@ const UserDashboard = () => {
   }, []);
 
   const mcxSessionSettings = segmentPermissionsGate?.MCXFUT || segmentPermissionsGate?.MCX || {};
+  const nseBseSessionSettings = segmentPermissionsGate?.NSEFUT || {};
+  const nseBseOnly = !cryptoOnly && !mcxOnly && !forexOnly;
 
   const isCryptoTradingOpen = () => {
     if (!cryptoOnly) return true;
@@ -942,6 +964,11 @@ const UserDashboard = () => {
   const isMcxTradingOpen = () => {
     if (!mcxOnly) return true;
     return isMcxWindowLive(mcxSessionSettings);
+  };
+
+  const isNseBseTradingOpen = () => {
+    if (!nseBseOnly) return true;
+    return isNseBseWindowLive(nseBseSessionSettings);
   };
   
   // Format time as HH:MM:SS (24-hour format)
@@ -998,10 +1025,7 @@ const UserDashboard = () => {
     const socket = io(socketUrl, getSocketClientOptions());
     const myUserId = String(user._id || user.id || '');
     const pending = {};
-    const MARKET_TICK_FLUSH_MS = 0; // IMMEDIATE - no batching for tick-to-tick speed
-    let flushTimer = null;
     const flushBatchedTicks = () => {
-      flushTimer = null;
       const keys = Object.keys(pending);
       if (keys.length === 0) return;
       const batch = {};
@@ -1009,18 +1033,8 @@ const UserDashboard = () => {
         batch[k] = pending[k];
         delete pending[k];
       }
-      setMarketData((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const [k, row] of Object.entries(batch)) {
-          const merged = mergeMarketTickRow(prev[k], row);
-          if (merged !== prev[k]) {
-            next[k] = merged;
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
+      lastMarketTickAtRef.current = Date.now();
+      setMarketData((prev) => applyMarketTickBatch(prev, batch));
       const vals = Object.values(batch);
       const clientReceiveTime = Date.now();
       const nifty = vals.find((d) => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY');
@@ -1043,8 +1057,7 @@ const UserDashboard = () => {
     const queueTicks = (ticks) => {
       if (!ticks || typeof ticks !== 'object' || Array.isArray(ticks)) return;
       Object.assign(pending, ticks);
-      if (flushTimer) return;
-      flushTimer = setTimeout(flushBatchedTicks, MARKET_TICK_FLUSH_MS);
+      flushBatchedTicks();
     };
 
     socket.on('connect', () => {
@@ -1066,10 +1079,14 @@ const UserDashboard = () => {
       queueTicks(ticks);
     });
 
-    socket.on('crypto_session_closed', () => {
+    const onSessionClosed = (eventName) => {
       setPositionsRefreshKey((k) => k + 1);
-      window.dispatchEvent(new CustomEvent('stockex:crypto-session-closed'));
-    });
+      window.dispatchEvent(new CustomEvent(eventName));
+    };
+
+    socket.on('crypto_session_closed', () => onSessionClosed('stockex:crypto-session-closed'));
+    socket.on('nse_bse_session_closed', () => onSessionClosed('stockex:nse-bse-session-closed'));
+    socket.on('mcx_session_closed', () => onSessionClosed('stockex:mcx-session-closed'));
 
     socket.on('trade_update', (data) => {
       if (['PENDING_FILLED', 'NEW_TRADE', 'TRADE_CLOSED'].includes(data?.type)) {
@@ -1085,7 +1102,6 @@ const UserDashboard = () => {
     });
 
     return () => {
-      if (flushTimer) clearTimeout(flushTimer);
       socket.disconnect();
     };
   }, [user?.token, user?._id, user?.id, segmentPermissionsGate]);
@@ -1194,29 +1210,28 @@ const UserDashboard = () => {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-        setMarketData((prev) => {
-          const newData = { ...prev };
-          let changed = false;
-          Object.keys(data).forEach((key) => {
-            const merged = mergeMarketTickRow(prev[key], data[key]);
-            if (merged !== prev[key]) {
-              newData[key] = merged;
-              changed = true;
-            }
-          });
-          return changed ? newData : prev;
-        });
+        const pollBatch = {};
+        for (const [key, row] of Object.entries(data)) {
+          if (!row || typeof row !== 'object') continue;
+          pollBatch[key] = { ...row, source: row.source || 'market_data_poll' };
+        }
+        setMarketData((prev) => applyMarketTickBatch(prev, pollBatch));
       }
     } catch {
       // Zerodha may be reconnecting
     }
   }, [user?.token, cryptoOnly, forexOnly]);
 
-  // NSE/BSE/MCX: poll orchestrator cache when socket ticks are sparse or Zerodha is reconnecting
+  // Fallback poll only when live websocket ticks stop (not every 2.5s — that made prices feel stuck).
   useEffect(() => {
     if (!user?.token || cryptoOnly || forexOnly) return;
-    void fetchMarketData();
-    const id = setInterval(() => void fetchMarketData(), 2500);
+    const maybePoll = () => {
+      const last = lastMarketTickAtRef.current;
+      const stale = last === 0 || Date.now() - last > 8000;
+      if (stale) void fetchMarketData();
+    };
+    void maybePoll();
+    const id = setInterval(maybePoll, 4000);
     return () => clearInterval(id);
   }, [user?.token, cryptoOnly, forexOnly, fetchMarketData, socketConnectEpoch]);
 
@@ -1309,6 +1324,12 @@ const UserDashboard = () => {
   const hydrateSelectedInstrumentSnapshot = useCallback(async () => {
     const hydrateTarget = tradeInstrument || selectedInstrument;
     if (cryptoOnly || forexOnly || !user?.token || !hydrateTarget) return;
+    const isMcxHydrateTarget =
+      hydrateTarget.exchange === 'MCX' ||
+      ['MCX', 'MCXFUT', 'MCXOPT'].includes(String(hydrateTarget.segment || '').toUpperCase()) ||
+      hydrateTarget.displaySegment === 'MCX';
+    // NSE/BSE: use Zerodha websocket only — DB lastBid/lastAsk snapshot was overwriting live ticks.
+    if (!isMcxHydrateTarget) return;
     if (hydratingInstrumentRef.current) return;
     hydratingInstrumentRef.current = true;
 
@@ -1433,18 +1454,7 @@ const UserDashboard = () => {
   /** Merge targeted quote rows (e.g. MCX /instruments-quote) into shared marketData */
   const mergeMarketDataPatch = useCallback((patch) => {
     if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) return;
-    setMarketData((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const [key, row] of Object.entries(patch)) {
-        const merged = mergeMarketTickRow(prev[key], row);
-        if (merged !== prev[key]) {
-          next[key] = merged;
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
+    setMarketData((prev) => applyMarketTickBatch(prev, patch));
   }, []);
 
   useEffect(() => {
@@ -1622,6 +1632,11 @@ const UserDashboard = () => {
       alert(`MCX trading is closed. Trading window: ${range}`);
       return;
     }
+    if (nseBseOnly && !isNseBseTradingOpen() && type !== 'view') {
+      const range = formatNseBseSessionRange(nseBseSessionSettings) || 'see admin timing';
+      alert(`NSE/BSE trading is closed. Trading window: ${range}`);
+      return;
+    }
     
     if (instrument) setSelectedInstrument(instrument);
     if (type === 'view') {
@@ -1763,6 +1778,14 @@ const UserDashboard = () => {
               <span className="text-cyan-400 font-medium">Forex Trading</span>
             </div>
           )}
+          {nseBseOnly && (
+            <div className="hidden lg:flex items-center gap-2 text-sm">
+              <span className="text-green-400 font-medium">NSE & BSE Trading</span>
+              {formatNseBseSessionRange(nseBseSessionSettings) && (
+                <span className="text-gray-400 text-xs">({formatNseBseSessionRange(nseBseSessionSettings)})</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Search - Functional search with dropdown */}
@@ -1855,6 +1878,16 @@ const UserDashboard = () => {
             <Clock size={16} className="text-yellow-400" />
             {formatMcxSessionRange(mcxSessionSettings) ? (
               <span className="text-yellow-400 font-medium text-sm">{formatMcxSessionRange(mcxSessionSettings)}</span>
+            ) : (
+              <span className="text-gray-400 text-sm">Timing not set</span>
+            )}
+          </div>
+        )}
+        {nseBseOnly && (
+          <div className="flex items-center gap-2 bg-dark-700 px-3 py-1.5 rounded-lg">
+            <Clock size={16} className="text-green-400" />
+            {formatNseBseSessionRange(nseBseSessionSettings) ? (
+              <span className="text-green-400 font-medium text-sm">{formatNseBseSessionRange(nseBseSessionSettings)}</span>
             ) : (
               <span className="text-gray-400 text-sm">Timing not set</span>
             )}
@@ -2046,6 +2079,8 @@ const UserDashboard = () => {
             onSegmentChange={setActiveSegment}
             isCryptoTradingOpen={isCryptoTradingOpen()}
             isMcxTradingOpen={isMcxTradingOpen()}
+            nseBseOnly={nseBseOnly}
+            isNseBseTradingOpen={isNseBseTradingOpen()}
           />
           </div>
           <div
@@ -2057,17 +2092,20 @@ const UserDashboard = () => {
           />
         </div>
 
-        {/* Center - Chart - Flexible width */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <ChartPanel 
-            selectedInstrument={selectedInstrument} 
-            marketData={marketData}
-            sidebarOpen={!!tradeInstrument}
-            usdRate={usdRate}
-            onChartLtp={handleChartLtp}
-          />
+        {/* Center - Chart + positions (positions get more height, compact toolbar) */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            <ChartPanel 
+              selectedInstrument={selectedInstrument} 
+              marketData={marketData}
+              sidebarOpen={!!tradeInstrument}
+              usdRate={usdRate}
+              onChartLtp={handleChartLtp}
+            />
+          </div>
           
           {/* Bottom - Positions */}
+          <div className="shrink-0 h-[min(42vh,360px)] min-h-[200px]">
           <PositionsPanel 
             activeTab={activeTab}
             setActiveTab={setActiveTab}
@@ -2085,8 +2123,11 @@ const UserDashboard = () => {
             usdRate={usdRate}
             isCryptoTradingOpen={isCryptoTradingOpen()}
             isMcxTradingOpen={isMcxTradingOpen()}
+            nseBseOnly={nseBseOnly}
+            isNseBseTradingOpen={isNseBseTradingOpen()}
             segmentPermissionsGate={segmentPermissionsGate}
           />
+          </div>
         </div>
 
         {/* Right Sidebar - Trading Panel - Fixed width with smooth animation */}
@@ -2105,10 +2146,11 @@ const UserDashboard = () => {
                 onRefreshPositions={refreshPositions}
                 usdRate={usdRate}
                 usdSpotClientSpreads={usdSpotClientSpreads}
-                chartAnchorLtp={null}
+                chartAnchorLtp={chartAnchorLtpForInstrument(chartLtpAnchor, tradeInstrument)}
                 segmentPermissionsGate={segmentPermissionsGate}
                 isCryptoTradingOpen={isCryptoTradingOpen()}
                 isMcxTradingOpen={isMcxTradingOpen()}
+                isNseBseTradingOpen={isNseBseTradingOpen()}
                 totalPnL={totalPnL}
                 positionsRefreshKey={positionsRefreshKey}
               />
@@ -2137,6 +2179,8 @@ const UserDashboard = () => {
             onSegmentChange={setActiveSegment}
             isCryptoTradingOpen={isCryptoTradingOpen()}
             isMcxTradingOpen={isMcxTradingOpen()}
+            nseBseOnly={nseBseOnly}
+            isNseBseTradingOpen={isNseBseTradingOpen()}
           />
         )}
         {mobileView === 'chart' && (
@@ -2214,7 +2258,7 @@ const UserDashboard = () => {
           onRefreshPositions={refreshPositions}
           usdRate={usdRate}
           usdSpotClientSpreads={usdSpotClientSpreads}
-          chartAnchorLtp={null}
+          chartAnchorLtp={chartAnchorLtpForInstrument(chartLtpAnchor, selectedInstrument)}
           segmentPermissionsGate={segmentPermissionsGate}
         />
       )}
@@ -2265,7 +2309,7 @@ const UserDashboard = () => {
   );
 };
 
-const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, refreshKey = 0, socketConnectEpoch = 0, mergeMarketDataPatch, usdRate = 83.5, isCryptoTradingOpen = true, isMcxTradingOpen = true }) => {
+const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, nseBseOnly = false, refreshKey = 0, socketConnectEpoch = 0, mergeMarketDataPatch, usdRate = 83.5, isCryptoTradingOpen = true, isMcxTradingOpen = true, isNseBseTradingOpen = true }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeSegment, setActiveSegment] = useState(() => localStorage.getItem('stockex_active_segment') || 'FAVORITES');
@@ -3118,8 +3162,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </button>
                         <button
                           onClick={() => onBuySell('buy', crypto)}
-                          disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)}
-                          className={`px-2 py-1 rounded text-white text-xs font-bold ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
+                          disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)}
+                          className={`px-2 py-1 rounded text-white text-xs font-bold ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                         >
                           B
                         </button>
@@ -3196,8 +3240,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                           <button
                             type="button"
                             onClick={() => onBuySell('buy', inst)}
-                            disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)}
-                            className={`px-2 py-1 rounded text-white text-xs font-bold ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
+                            disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)}
+                            className={`px-2 py-1 rounded text-white text-xs font-bold ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                           >
                             B
                           </button>
@@ -3276,7 +3320,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                     key={rowKey}
                     onClick={() => onSelectInstrument({...inst, ltp: priceData.ltp || inst.ltp || 0})}
                     className={`flex flex-col px-3 py-2.5 cursor-pointer border-b border-dark-700 hover:bg-dark-750 ${
-                      isSel ? 'bg-green-600/20 border-l-2 border-l-green-500' : ''
+                      isSel ? 'bg-blue-900/40 border-l-2 border-l-blue-600' : ''
                     }`}
                   >
                     {/* Top row: Symbol and Price */}
@@ -3355,8 +3399,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }}
-                          disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)}
-                          className={`px-2 py-1 rounded text-white text-xs font-bold ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
+                          disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)}
+                          className={`px-2 py-1 rounded text-white text-xs font-bold ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-400'}`}
                         >
                           B
                         </button>
@@ -3405,13 +3449,13 @@ const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFutu
       onClick={onSelect}
       className={`flex items-center justify-between px-3 py-2.5 cursor-pointer border-b border-dark-700 ${
         isSelected 
-          ? 'bg-green-600/20 border-l-2 border-l-green-500' 
+          ? 'bg-blue-900/40 border-l-2 border-l-blue-600' 
           : 'hover:bg-dark-750'
       }`}
     >
       {/* Left: Symbol and Name */}
       <div className="flex-1 min-w-0 mr-2">
-        <div className={`font-bold text-sm uppercase ${isSelected ? 'text-green-400' : getSymbolColor()}`}>
+        <div className={`font-bold text-sm uppercase ${isSelected ? 'text-blue-400' : getSymbolColor()}`}>
           {instrument.symbol}
         </div>
         <div className="text-xs text-gray-500 truncate flex items-center gap-1">
@@ -4033,7 +4077,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
   ];
 
   return (
-    <div className="flex-1 flex flex-col bg-dark-800">
+    <div className="h-full min-h-0 flex-1 flex flex-col bg-dark-800">
       {/* Chart Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-dark-600">
         <div className="flex items-center gap-4">
@@ -4161,6 +4205,7 @@ function formatPositionEntryTime(openedAt) {
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: true,
   });
 }
@@ -4209,6 +4254,19 @@ function formatTradeExitTime(trade) {
   return dt.toLocaleString('en-IN', {
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
+
+function formatTradeEntryTime(trade) {
+  if (!trade?.openedAt) return null;
+  const dt = new Date(trade.openedAt);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toLocaleString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: true,
   });
 }
@@ -4243,7 +4301,7 @@ function buildPositionsGridTemplate({ showLimit, showSl, showTp }) {
   return parts.join(' ');
 }
 
-const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5, setShowReferralModal, isCryptoTradingOpen = true, isMcxTradingOpen = true, segmentPermissionsGate = {}, onTotalPnLChange }) => {
+const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, nseBseOnly = false, usdRate = 83.5, setShowReferralModal, isCryptoTradingOpen = true, isMcxTradingOpen = true, isNseBseTradingOpen = true, segmentPermissionsGate = {}, onTotalPnLChange }) => {
   const [positions, setPositions] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -4254,7 +4312,13 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
   const [quickError, setQuickError] = useState('');
   const [instrumentDropdownOpen, setInstrumentDropdownOpen] = useState(false);
   const [partialClosePos, setPartialClosePos] = useState(null);
+  const [expandedClubKeys, setExpandedClubKeys] = useState({});
   const dropdownRef = useRef(null);
+
+  const toggleClubExpand = (rowKey) => {
+    if (!rowKey) return;
+    setExpandedClubKeys((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }));
+  };
 
   useEffect(() => {
     if (user?.token) {
@@ -4306,7 +4370,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         );
       };
       
-      const filteredPositions = filterByMode(positionsRes.data);
+      const filteredPositions = filterByMode(positionsRes.data).filter(openPositionHasQty);
       const filteredPending = filterByMode(pendingRes.data);
       const filteredHistory = filterByMode(historyRes.data, true);
       
@@ -4472,6 +4536,42 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     return Object.values(grouped);
   };
 
+  const symbolCloseActions = useMemo(() => {
+    const grouped = {};
+    for (const pos of positions) {
+      const key = pos.symbol;
+      if (!key) continue;
+      if (!grouped[key]) {
+        grouped[key] = { symbol: key, totalQty: 0, tradeCount: 0 };
+      }
+      grouped[key].totalQty += Number(pos.quantity) || 0;
+      grouped[key].tradeCount += pos._legCount || 1;
+    }
+    return Object.values(grouped).map((g) => ({
+      ...g,
+      label: formatSymbolCloseShortLabel(g.symbol),
+    }));
+  }, [positions]);
+
+  const isSymbolCloseBlocked = useCallback(
+    (symbol) => {
+      const rows = positions.filter((p) => p.symbol === symbol);
+      return rows.some((pos) => {
+        const isCryptoRow = pos.isCrypto || pos.exchange === 'BINANCE';
+        const isMcxRow =
+          pos.exchange === 'MCX' ||
+          ['MCX', 'MCXFUT', 'MCXOPT'].includes(String(pos.segment || '').toUpperCase());
+        if (cryptoOnly && !isCryptoTradingOpen && isCryptoRow) return true;
+        if (mcxOnly && !isMcxTradingOpen && isMcxRow) return true;
+        if (nseBseOnly && !isNseBseTradingOpen && isNseBseSegmentRow(pos)) return true;
+        return false;
+      });
+    },
+    [positions, cryptoOnly, mcxOnly, nseBseOnly, isCryptoTradingOpen, isMcxTradingOpen, isNseBseTradingOpen]
+  );
+
+  const hasMultipleSymbols = symbolCloseActions.length > 1;
+
   // Close all positions for a specific instrument
   const handleCloseInstrument = async (symbol) => {
     const instrumentPositions = positions.filter(pos => pos.symbol === symbol);
@@ -4480,7 +4580,15 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       return;
     }
 
-    if (!confirm(`Close all positions for ${symbol}? (${instrumentPositions.length} position(s))`)) return;
+    const label = formatSymbolCloseShortLabel(symbol);
+    const tradeCount = instrumentPositions.reduce((n, p) => n + (p._legCount || 1), 0);
+    if (
+      !confirm(
+        `Close ${label} only?\n${symbol} — ${tradeCount} fill(s), total qty ${instrumentPositions.reduce((s, p) => s + (Number(p.quantity) || 0), 0)}`
+      )
+    ) {
+      return;
+    }
 
     setLoading(true);
     try {
@@ -4536,6 +4644,12 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     if (side === 'buy' && mcxOnly && !isMcxTradingOpen) {
       const mcxSet = segmentPermissionsGate?.MCXFUT || segmentPermissionsGate?.MCX || {};
       setQuickError(`MCX trading is closed. ${formatMcxSessionRange(mcxSet) || 'See session timing'}`);
+      setTimeout(() => setQuickError(''), 3000);
+      return;
+    }
+    if (side === 'buy' && nseBseOnly && !isNseBseTradingOpen) {
+      const nseSet = segmentPermissionsGate?.NSEFUT || {};
+      setQuickError(`NSE/BSE trading is closed. ${formatNseBseSessionRange(nseSet) || 'See session timing'}`);
       setTimeout(() => setQuickError(''), 3000);
       return;
     }
@@ -4668,6 +4782,11 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       if (Number(position?.currentPrice) > 0) return Number(position.currentPrice);
       return Number(position?.entryPrice) || 0;
     }
+    if (nseBseOnly && !isNseBseTradingOpen && isNseBseSegmentRow(position)) {
+      if (Number(position?.autoSquareLtp) > 0) return Number(position.autoSquareLtp);
+      if (Number(position?.currentPrice) > 0) return Number(position.currentPrice);
+      return Number(position?.entryPrice) || 0;
+    }
     return getCurrentPrice(position) || position.currentPrice || position.entryPrice;
   };
 
@@ -4707,7 +4826,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     }, 0);
     setTotalPnL(calculatedPnL);
     if (onTotalPnLChange) onTotalPnLChange(calculatedPnL);
-  }, [positions, marketData, usdRate, cryptoOnly, mcxOnly, isCryptoTradingOpen, isMcxTradingOpen]);
+  }, [positions, marketData, usdRate, cryptoOnly, mcxOnly, nseBseOnly, isCryptoTradingOpen, isMcxTradingOpen, isNseBseTradingOpen]);
 
   const showLimitCol = useMemo(
     () => activeTab === 'positions' && positions.some(hasTradeLimit),
@@ -4746,15 +4865,15 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
 
   return (
     <>
-    <div className="h-48 bg-dark-800 border-t border-dark-600 flex flex-col">
-      {/* Tabs */}
-      <div className="flex items-center justify-between px-4 border-b border-dark-600">
-        <div className="flex">
+    <div className="h-full min-h-0 bg-dark-800 border-t border-dark-600 flex flex-col">
+      {/* Compact toolbar: tabs on row 1, quick trade + actions on row 2 */}
+      <div className="shrink-0 border-b border-dark-600">
+        <div className="flex items-center px-2 overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 text-sm border-b-2 transition ${
+              className={`px-3 py-1 text-xs whitespace-nowrap border-b-2 transition ${
                 activeTab === tab.id
                   ? 'border-green-500 text-green-400'
                   : 'border-transparent text-gray-400 hover:text-white'
@@ -4764,60 +4883,68 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
             </button>
           ))}
         </div>
-
-        {/* Quick Trade Section - Always Visible */}
-        <div className="flex items-center gap-2 flex-1">
-          <span className={`text-xs font-medium ${selectedInstrument ? 'text-green-400' : 'text-gray-500'}`}>
-            {selectedInstrument?.symbol || 'No Symbol'}
-          </span>
-          <span className="text-xs text-gray-400">
-            {(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
-          </span>
-          <button
-            onClick={() => executeQuickTrade('sell')}
-            disabled={quickTrading || !selectedInstrument}
-            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-bold transition-colors"
-            title={selectedInstrument ? 'Sell' : 'Select an instrument first'}
-          >
-            S
-          </button>
-          <input
-            type="text"
-            value={quickQty}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                setQuickQty(val);
-              }
-            }}
-            onBlur={(e) => {
-              const num = parseFloat(e.target.value);
-              if (isNaN(num) || num <= 0) setQuickQty('1');
-            }}
-            placeholder="Qty"
-            className="w-16 h-8 bg-dark-700 rounded text-center text-sm focus:outline-none focus:ring-1 focus:ring-green-500"
-          />
-          <button
-            onClick={() => executeQuickTrade('buy')}
-            disabled={quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)}
-            className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${(quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)) ? 'bg-gray-600 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700'}`}
-            title={selectedInstrument ? 'Buy' : 'Select an instrument first'}
-          >
-            B
-          </button>
-          {quickError && <span className="text-xs text-red-400">{quickError}</span>}
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-sm">
+        <div className="flex items-center gap-2 px-2 py-1 flex-wrap border-t border-dark-700/60">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className={`text-[11px] font-medium max-w-[7rem] truncate ${selectedInstrument ? 'text-green-400' : 'text-gray-500'}`}>
+              {selectedInstrument?.symbol || 'No Symbol'}
+            </span>
+            <span className="text-[11px] text-gray-400 tabular-nums">
+              {(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token, selectedInstrument)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
+            </span>
+            <button
+              onClick={() => executeQuickTrade('sell')}
+              disabled={quickTrading || !selectedInstrument}
+              className="px-2 py-0.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded text-[11px] font-bold transition-colors"
+              title={selectedInstrument ? 'Sell' : 'Select an instrument first'}
+            >
+              S
+            </button>
+            <input
+              type="text"
+              value={quickQty}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                  setQuickQty(val);
+                }
+              }}
+              onBlur={(e) => {
+                const num = parseFloat(e.target.value);
+                if (isNaN(num) || num <= 0) setQuickQty('1');
+              }}
+              placeholder="Qty"
+              className="w-12 h-6 bg-dark-700 rounded text-center text-[11px] focus:outline-none focus:ring-1 focus:ring-green-500"
+            />
+            <button
+              onClick={() => executeQuickTrade('buy')}
+              disabled={quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)}
+              className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${(quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)) ? 'bg-gray-600 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700'}`}
+              title={selectedInstrument ? 'Buy' : 'Select an instrument first'}
+            >
+              B
+            </button>
+            {quickError && <span className="text-[10px] text-red-400">{quickError}</span>}
+          </div>
+          <div className="text-xs ml-auto shrink-0">
             <span className="text-gray-400">P/L: </span>
             <span className={`font-medium ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {totalPnL >= 0 ? '+' : '-'}{Math.abs(parseFloat(totalPnL) || 0).toFixed(2)}
             </span>
           </div>
-
-          {/* Bulk Close Buttons */}
           {activeTab === 'positions' && positions.length > 0 && (
-            <div className="flex items-center gap-2 ml-4">
+            <div className="flex items-center gap-1 flex-wrap justify-end w-full sm:w-auto sm:ml-0">
+              {symbolCloseActions.map((g) => (
+                <button
+                  key={g.symbol}
+                  type="button"
+                  onClick={() => handleCloseInstrument(g.symbol)}
+                  disabled={loading || isSymbolCloseBlocked(g.symbol)}
+                  className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 rounded text-xs font-medium whitespace-nowrap"
+                  title={`Close all ${g.symbol} fills (${g.tradeCount} trade(s), qty ${g.totalQty})`}
+                >
+                  Close {g.label} only
+                </button>
+              ))}
               {/* Instrument-specific close dropdown */}
               <div className="relative" ref={dropdownRef}>
                 <button
@@ -4896,7 +5023,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
 
       {/* Table Header */}
       <div
-        className={`grid gap-2 px-4 py-2 text-xs text-gray-400 border-b border-dark-700 ${
+        className={`shrink-0 grid gap-2 px-3 py-1 text-xs text-gray-400 border-b border-dark-700 ${
           activeTab === 'history'
             ? 'grid-cols-10'
             : activeTab === 'pending' && !showPendingLimitCol
@@ -4973,7 +5100,8 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
             pos.exchange === 'MCX' ||
             ['MCX', 'MCXFUT', 'MCXOPT'].includes(String(pos.segment || '').toUpperCase());
           const sessionClosedMcx = mcxOnly && !isMcxTradingOpen && isMcxRow;
-          const sessionClosed = sessionClosedCrypto || sessionClosedMcx;
+          const sessionClosedNse = nseBseOnly && !isNseBseTradingOpen && isNseBseSegmentRow(pos);
+          const sessionClosed = sessionClosedCrypto || sessionClosedMcx || sessionClosedNse;
           const isForexRow = isForexInstrument(pos);
           const currencySymbol = '';
           const cryptoPx = (raw) => {
@@ -4991,64 +5119,165 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           const entryTimeLabel = formatPositionEntryTime(pos.openedAt);
           const clubLabel =
             pos._legCount > 1 ? `${pos._legCount} fills · avg` : null;
+          const clubRowKey = pos._ids?.length ? pos._ids.join('-') : String(pos._id);
+          const hasLegs = pos._legCount > 1 && Array.isArray(pos._legs) && pos._legs.length > 1;
+          const clubExpanded = !!expandedClubKeys[clubRowKey];
+          const fmtPx = (n) =>
+            isCryptoRow
+              ? cryptoPx(n)
+              : `${currencySymbol}${(parseFloat(n) || 0).toFixed(2)}`;
+          const fmtPnl = (n) =>
+            `${Number(n) >= 0 ? '+' : '-'}${Math.abs(parseFloat(n) || 0).toFixed(2)}`;
+
           return (
-            <div
-              key={pos._ids?.length ? pos._ids.join('-') : pos._id}
-              className="grid gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700"
-              style={positionsGridStyle}
-            >
-              <div className="truncate text-purple-400 font-mono text-xs">{pos.userId || user?.userId || '-'}</div>
-              <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{pos.symbol}</div>
-              <div className={pos.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{pos.side}</div>
-              <div className="text-right">{pos.quantity}</div>
-              <div className="text-right">
-                <div>
-                  {isCryptoRow
-                    ? `${cryptoPx(parseFloat(pos.entryPrice))}`
-                    : `${currencySymbol}${(parseFloat(pos.entryPrice) || 0).toFixed(2)}`}
+            <div key={clubRowKey} className="border-b border-dark-700">
+              <div
+                className={`grid gap-2 px-4 py-2 text-sm hover:bg-dark-700 ${hasLegs && clubExpanded ? 'bg-dark-750' : ''}`}
+                style={positionsGridStyle}
+              >
+                <div className="truncate text-purple-400 font-mono text-xs">{pos.userId || user?.userId || '-'}</div>
+                <div className={`truncate font-medium flex items-center gap-1 min-w-0 ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>
+                  {hasLegs ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleClubExpand(clubRowKey)}
+                      className="shrink-0 text-gray-400 hover:text-white p-0.5 rounded"
+                      title={clubExpanded ? 'Hide individual fills' : 'Show individual fills'}
+                      aria-expanded={clubExpanded}
+                    >
+                      {clubExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                  ) : null}
+                  <span className="truncate">{pos.symbol}</span>
                 </div>
-                {clubLabel ? (
-                  <div className="text-[10px] text-blue-400/90 leading-tight">{clubLabel}</div>
+                <div className={pos.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{pos.side}</div>
+                <div className="text-right">{pos.quantity}</div>
+                <div className="text-right">
+                  <div>{fmtPx(pos.entryPrice)}</div>
+                  {clubLabel ? (
+                    <div className="text-[10px] text-blue-400/90 leading-tight">{clubLabel}</div>
+                  ) : null}
+                  {entryTimeLabel ? (
+                    <div className="text-[10px] text-gray-500 leading-tight">{entryTimeLabel}</div>
+                  ) : null}
+                </div>
+                <div className="text-right">{fmtPx(ltp)}</div>
+                {showLimitCol ? (
+                  <div className="text-right text-amber-300/90">
+                    {hasTradeLimit(pos)
+                      ? fmtPx(pos.limitPrice)
+                      : '—'}
+                  </div>
                 ) : null}
-                {entryTimeLabel ? (
-                  <div className="text-[10px] text-gray-500 leading-tight">{entryTimeLabel}</div>
+                {showSlCol ? (
+                  <div className="text-right text-red-300/90">{fmtSlTp(pos.stopLoss)}</div>
                 ) : null}
+                {showTpCol ? (
+                  <div className="text-right text-emerald-300/90">{fmtSlTp(pos.target)}</div>
+                ) : null}
+                <div className="text-right text-yellow-400" title={`Spread: ${pos.spread || 0} pts, Comm: ${isCryptoRow || isForexRow ? '' : currencySymbol}${pos.commission || 0}`}>
+                  {isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
+                </div>
+                <div className={`text-right font-medium ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {sessionClosed && pos.isAutoSquared ? (
+                    <span className="text-[10px] text-amber-400/90 block leading-tight">Session closed</span>
+                  ) : null}
+                  {fmtPnl(pnl)}
+                </div>
+                <div className="text-center flex flex-col items-center gap-1">
+                  {hasMultipleSymbols ? (
+                    <button
+                      type="button"
+                      onClick={() => handleCloseInstrument(pos.symbol)}
+                      disabled={loading || sessionClosed}
+                      title={`Close all ${formatSymbolCloseShortLabel(pos.symbol)} fills only`}
+                      className={`px-2 py-0.5 rounded text-[10px] whitespace-nowrap ${sessionClosed ? 'bg-gray-600 cursor-not-allowed opacity-60' : 'bg-indigo-700 hover:bg-indigo-600'}`}
+                    >
+                      Close {formatSymbolCloseShortLabel(pos.symbol)} only
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setPartialClosePos(pos)}
+                    disabled={loading || sessionClosed}
+                    title={sessionClosed ? 'Session closed — carry-forward applied' : 'Close all fills'}
+                    className={`px-2 py-1 rounded text-xs ${sessionClosed ? 'bg-gray-600 cursor-not-allowed opacity-60' : 'bg-red-600 hover:bg-red-700'}`}
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
-              <div className="text-right">{isCryptoRow ? `${cryptoPx(parseFloat(ltp))}` : `${currencySymbol}${(parseFloat(ltp) || 0).toFixed(2)}`}</div>
-              {showLimitCol ? (
-                <div className="text-right text-amber-300/90">
-                  {hasTradeLimit(pos)
-                    ? isCryptoRow
-                      ? cryptoPx(parseFloat(pos.limitPrice))
-                      : `${currencySymbol}${(parseFloat(pos.limitPrice) || 0).toFixed(2)}`
-                    : '—'}
+
+              {hasLegs && clubExpanded ? (
+                <div className="bg-dark-900/90 border-t border-dark-600/80 px-2 pb-2">
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-gray-500">
+                    Individual fills
+                  </div>
+                  {(pos._legs || []).map((leg, legIdx) => {
+                    const legMark = { ...pos, ...leg };
+                    const legLtp = getPositionMarkPrice(legMark);
+                    const legQty = Number(leg.quantity) || 0;
+                    const legEntry = Number(leg.entryPrice) || 0;
+                    const legPnl =
+                      pos.side === 'BUY'
+                        ? (legLtp - legEntry) * legQty
+                        : (legEntry - legLtp) * legQty;
+                    const legTime = formatPositionEntryTime(leg.openedAt);
+                    const legClosePayload = {
+                      ...pos,
+                      ...leg,
+                      _ids: [leg._id],
+                      _legs: [leg],
+                      _legCount: 1,
+                      quantity: legQty,
+                    };
+                    return (
+                      <div
+                        key={leg._id || `${clubRowKey}-leg-${legIdx}`}
+                        className="grid gap-2 px-4 py-1.5 text-xs text-gray-300 border-t border-dark-700/80 first:border-t-0 hover:bg-dark-800/60"
+                        style={positionsGridStyle}
+                      >
+                        <div className="text-gray-500">#{legIdx + 1}</div>
+                        <div className="truncate text-gray-500 pl-4">fill</div>
+                        <div className={pos.side === 'BUY' ? 'text-green-400/80' : 'text-red-400/80'}>{pos.side}</div>
+                        <div className="text-right">{legQty}</div>
+                        <div className="text-right">
+                          <div>{fmtPx(legEntry)}</div>
+                          {legTime ? (
+                            <div className="text-[10px] text-gray-500 leading-tight">{legTime}</div>
+                          ) : null}
+                        </div>
+                        <div className="text-right">{fmtPx(legLtp)}</div>
+                        {showLimitCol ? <div className="text-right text-gray-600">—</div> : null}
+                        {showSlCol ? (
+                          <div className="text-right text-red-300/70">{fmtSlTp(leg.stopLoss)}</div>
+                        ) : null}
+                        {showTpCol ? (
+                          <div className="text-right text-emerald-300/70">{fmtSlTp(leg.target)}</div>
+                        ) : null}
+                        <div className="text-right text-yellow-400/80">
+                          {isCryptoRow || isForexRow ? '' : currencySymbol}
+                          {(parseFloat(leg.commission) || 0).toFixed(2)}
+                        </div>
+                        <div className={`text-right font-medium ${legPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {fmtPnl(legPnl)}
+                        </div>
+                        <div className="text-center">
+                          <button
+                            type="button"
+                            onClick={() => setPartialClosePos(legClosePayload)}
+                            disabled={loading || sessionClosed}
+                            title="Close this fill only"
+                            className={`px-2 py-0.5 rounded text-[10px] ${sessionClosed ? 'bg-gray-600 cursor-not-allowed opacity-60' : 'bg-red-700 hover:bg-red-600'}`}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
-              {showSlCol ? (
-                <div className="text-right text-red-300/90">{fmtSlTp(pos.stopLoss)}</div>
-              ) : null}
-              {showTpCol ? (
-                <div className="text-right text-emerald-300/90">{fmtSlTp(pos.target)}</div>
-              ) : null}
-              <div className="text-right text-yellow-400" title={`Spread: ${pos.spread || 0} pts, Comm: ${isCryptoRow || isForexRow ? '' : currencySymbol}${pos.commission || 0}`}>
-                {isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
-              </div>
-              <div className={`text-right font-medium ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {sessionClosed && pos.isAutoSquared ? (
-                  <span className="text-[10px] text-amber-400/90 block leading-tight">Session closed</span>
-                ) : null}
-                {pnl >= 0 ? '+' : '-'}{isCryptoRow || isForexRow ? '' : ''}{Math.abs(parseFloat(pnl) || 0).toFixed(2)}
-              </div>
-              <div className="text-center">
-                <button 
-                  onClick={() => setPartialClosePos(pos)}
-                  disabled={loading || sessionClosed}
-                  title={sessionClosed ? 'Session closed — carry-forward applied' : 'Close position'}
-                  className={`px-2 py-1 rounded text-xs ${sessionClosed ? 'bg-gray-600 cursor-not-allowed opacity-60' : 'bg-red-600 hover:bg-red-700'}`}
-                >
-                  Close
-                </button>
-              </div>
             </div>
           );
         })}
@@ -5279,6 +5508,7 @@ const TradingPanel = ({
   segmentPermissionsGate = {},
   isCryptoTradingOpen = true,
   isMcxTradingOpen = true,
+  isNseBseTradingOpen = true,
   totalPnL = 0,
   positionsRefreshKey = 0,
 }) => {
@@ -5313,6 +5543,7 @@ const TradingPanel = ({
   const isMcxOnly =
     instrument?.exchange === 'MCX' ||
     ['MCX', 'MCXFUT', 'MCXOPT'].includes(String(instrument?.segment || '').toUpperCase());
+  const isNseBseOnly = isNseBseSegmentRow(instrument || {});
   const isForex = isForexInstrument(instrument);
   const isUsdSpot = isCryptoOnly || isForex;
   
@@ -5487,11 +5718,15 @@ const TradingPanel = ({
   const stripeBidPx =
     isUsdSpot && displayBidAsk.bidUsd != null && instrument != null && !isNaN(Number(displayBidAsk.bidUsd))
       ? spotQuoteDisplayPrice(instrument, Number(displayBidAsk.bidUsd), usdRate)
-      : displayBid;
+      : Number(liveData.rawBid) > 0
+        ? Number(liveData.rawBid)
+        : displayBid;
   const stripeAskPx =
     isUsdSpot && displayBidAsk.askUsd != null && instrument != null && !isNaN(Number(displayBidAsk.askUsd))
       ? spotQuoteDisplayPrice(instrument, Number(displayBidAsk.askUsd), usdRate)
-      : displayAsk;
+      : Number(liveData.rawAsk) > 0
+        ? Number(liveData.rawAsk)
+        : displayAsk;
   const canSellAtBid = Number(stripeBidPx) > 0;
   const canBuyAtAsk = Number(stripeAskPx) > 0;
 
@@ -6464,11 +6699,11 @@ const TradingPanel = ({
             setOrderType('buy');
             setSideConfirmed(true);
           }}
-          disabled={(isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || !canBuyAtAsk}
+          disabled={(isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || (isNseBseOnly && !isNseBseTradingOpen) || !canBuyAtAsk}
           className={`flex-1 py-2 font-semibold transition ${
             orderType === 'buy'
               ? 'bg-green-600 text-white'
-              : ((isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || !canBuyAtAsk)
+              : ((isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || (isNseBseOnly && !isNseBseTradingOpen) || !canBuyAtAsk)
                 ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                 : 'bg-dark-700 text-gray-400'
           }`}
@@ -6831,9 +7066,9 @@ const TradingPanel = ({
             <button
               type="button"
               onClick={() => handlePlaceOrder('buy')}
-              disabled={loading || totalQuantity <= 0 || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || !canBuyAtAsk}
+              disabled={loading || totalQuantity <= 0 || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || (isNseBseOnly && !isNseBseTradingOpen) || !canBuyAtAsk}
               className={`w-full py-3 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed ${
-                (loading || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || !canBuyAtAsk)
+                (loading || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || (isNseBseOnly && !isNseBseTradingOpen) || !canBuyAtAsk)
                   ? 'bg-gray-600'
                   : 'bg-green-600 hover:bg-green-700'
               }`}
@@ -6860,9 +7095,9 @@ const TradingPanel = ({
                 setOrderType('buy');
                 handlePlaceOrder('buy');
               }}
-              disabled={loading || !isSideReady || totalQuantity <= 0 || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || !canBuyAtAsk}
+              disabled={loading || !isSideReady || totalQuantity <= 0 || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || (isNseBseOnly && !isNseBseTradingOpen) || !canBuyAtAsk}
               className={`flex-1 py-3 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed ${
-                (loading || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || !canBuyAtAsk)
+                (loading || (isCryptoOnly && !isCryptoTradingOpen) || (isMcxOnly && !isMcxTradingOpen) || (isNseBseOnly && !isNseBseTradingOpen) || !canBuyAtAsk)
                   ? 'bg-gray-600'
                   : 'bg-green-600 hover:bg-green-700'
               }`}
@@ -6994,7 +7229,7 @@ const TradingPanel = ({
 };
 
 // Mobile Components - Uses watchlist like desktop
-const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, socketConnectEpoch = 0, usdRate = 83.5, isCryptoTradingOpen = true, isMcxTradingOpen = true }) => {
+const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, nseBseOnly = false, socketConnectEpoch = 0, usdRate = 83.5, isCryptoTradingOpen = true, isMcxTradingOpen = true, isNseBseTradingOpen = true }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -7690,7 +7925,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                         + Add
                       </button>
                       <button onClick={() => onBuySell('sell', crypto)} className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600 rounded font-medium">SELL</button>
-                      <button onClick={() => onBuySell('buy', crypto)} disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)} className={`px-2 py-1 text-xs rounded font-medium ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
+                      <button onClick={() => onBuySell('buy', crypto)} disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)} className={`px-2 py-1 text-xs rounded font-medium ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
                     </div>
                   </div>
                 );
@@ -7746,7 +7981,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                           </button>
                         )}
                         <button type="button" onClick={() => onBuySell('sell', inst)} className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600 rounded font-medium">SELL</button>
-                        <button type="button" onClick={() => onBuySell('buy', inst)} disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)} className={`px-2 py-1 text-xs rounded font-medium ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
+                        <button type="button" onClick={() => onBuySell('buy', inst)} disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)} className={`px-2 py-1 text-xs rounded font-medium ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
                       </div>
                     </div>
                   );
@@ -7839,7 +8074,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                     </div>
                     <div className="flex gap-1">
                       <button onClick={(e) => { e.stopPropagation(); onBuySell('sell', inst); }} className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600 rounded font-medium">SELL</button>
-                      <button onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }} disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen)} className={`px-2 py-1 text-xs rounded font-medium ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
+                      <button onClick={(e) => { e.stopPropagation(); onBuySell('buy', inst); }} disabled={(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)} className={`px-2 py-1 text-xs rounded font-medium ${(cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen) ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'}`}>BUY</button>
                       <button onClick={(e) => { e.stopPropagation(); removeFromWatchlist(inst); }} className="w-6 h-6 rounded-full bg-dark-600 text-gray-400 hover:bg-red-600 hover:text-white">
                         <X size={12} className="mx-auto" />
                       </button>
@@ -8301,6 +8536,9 @@ const DesktopTradingPanel = ({
                     <div className="flex gap-3">
                       <span className="text-gray-400">
                         Entry: <span className="text-white">{isCryptoRow ? '' : currencySymbol}{(item.entryPrice || 0).toFixed(2)}</span>
+                        {formatTradeEntryTime(item) ? (
+                          <span className="text-gray-500"> @ {formatTradeEntryTime(item)}</span>
+                        ) : null}
                       </span>
                       {(tab === 'history' || tab === 'cancelled' || tab === 'squareOff') && item.exitPrice && (
                         <span className="text-gray-400">
@@ -8331,7 +8569,12 @@ const DesktopTradingPanel = ({
                   <div className="flex justify-between items-center">
                     <div className="text-xs text-gray-500">
                       {item.createdAt && new Date(item.closedAt || item.createdAt).toLocaleString('en-IN', {
-                        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+                        day: '2-digit',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true,
                       })}
                     </div>
                     {tab === 'positions' && (
@@ -10481,11 +10724,15 @@ const BuySellModal = ({
   const bidDisp =
     isUsdSpot && displayBidAsk.bidUsd != null && effectiveInstrument
       ? spotQuoteDisplayPrice(effectiveInstrument, Number(displayBidAsk.bidUsd), usdRate)
-      : Number(displayBid) || 0;
+      : Number(liveData.rawBid) > 0
+        ? Number(liveData.rawBid)
+        : Number(displayBid) || 0;
   const askDisp =
     isUsdSpot && displayBidAsk.askUsd != null && effectiveInstrument
       ? spotQuoteDisplayPrice(effectiveInstrument, Number(displayBidAsk.askUsd), usdRate)
-      : Number(displayAsk) || 0;
+      : Number(liveData.rawAsk) > 0
+        ? Number(liveData.rawAsk)
+        : Number(displayAsk) || 0;
   const canSellAtBid = Number(bidDisp) > 0;
   const canBuyAtAsk = Number(askDisp) > 0;
   const ltpInr =
@@ -11038,7 +11285,7 @@ const BuySellModal = ({
             }`}
           >
             <div className="text-xs opacity-70">Bid Price</div>
-            <div className="text-xl">{displayBid != null && !isNaN(displayBid) ? displayBid.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
+            <div className="text-xl">{bidDisp != null && !isNaN(bidDisp) ? bidDisp.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
             <div className="text-sm">S</div>
           </button>
           <button
@@ -11051,7 +11298,7 @@ const BuySellModal = ({
             }`}
           >
             <div className="text-xs opacity-70">Ask Price</div>
-            <div className="text-xl">{displayAsk != null && !isNaN(displayAsk) ? displayAsk.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
+            <div className="text-xl">{askDisp != null && !isNaN(askDisp) ? askDisp.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
             <div className="text-sm">B</div>
           </button>
         </div>

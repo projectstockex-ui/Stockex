@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import axios from '../../../../config/axios';
+import WalletProfitBlockToggles from '../ui/WalletProfitBlockToggles.jsx';
+import { buildWalletBlocksState } from '../../../../lib/walletProfitBlock';
 
 const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
   const [amount, setAmount] = useState('');
@@ -12,6 +14,32 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
   const [success, setSuccess] = useState('');
   const [walletPermissions, setWalletPermissions] = useState(null);
   const [loadingPermissions, setLoadingPermissions] = useState(true);
+  const [walletBlocks, setWalletBlocks] = useState(() => buildWalletBlocksState(user));
+  const [blockLoading, setBlockLoading] = useState(null);
+
+  useEffect(() => {
+    setWalletBlocks(buildWalletBlocksState(user));
+  }, [user]);
+
+  const handleToggleWalletBlock = async (walletTypeKey, blocked) => {
+    setBlockLoading(walletTypeKey);
+    setError('');
+    try {
+      const { data } = await axios.put(
+        `/api/admin/manage/users/${user._id}/wallet-block`,
+        { walletType: walletTypeKey, blocked },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (data.walletBlocks) setWalletBlocks(data.walletBlocks);
+      else setWalletBlocks((prev) => ({ ...prev, [walletTypeKey]: blocked }));
+      setSuccess(data.message || 'Wallet block updated');
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Error updating wallet block');
+    } finally {
+      setBlockLoading(null);
+    }
+  };
 
   // Fetch wallet permissions on mount
   useEffect(() => {
@@ -38,7 +66,6 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
       alert('Please enter a valid amount');
       return;
     }
-    // Check permissions before proceeding
     const actionType = action === 'add' ? 'deposit' : 'withdraw';
     if (actionType === 'deposit' && !walletPermissions?.canDeposit) {
       alert('Permission denied: You do not have deposit permission for this user');
@@ -51,7 +78,6 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
     setLoading(true);
     try {
-      // Use the new permission-validated API endpoints
       const endpoint = action === 'add' 
         ? `/api/admin/users/${user._id}/wallet/deposit`
         : `/api/admin/users/${user._id}/wallet/withdraw`;
@@ -110,7 +136,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md mx-4">
+      <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">Manage Wallet</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button>
@@ -125,7 +151,6 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
           </div>
         </div>
 
-        {/* Margin Management */}
         {(user.wallet?.usedMargin > 0) && (
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4">
             <p className="text-sm text-yellow-400 font-medium mb-2">Margin Management</p>
@@ -162,7 +187,6 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Wallet Type Selection */}
           <div>
             <label className="block text-sm text-gray-400 mb-2">Select Wallet</label>
             <div className="flex gap-2">
@@ -183,7 +207,12 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
             </div>
           </div>
 
-          {/* Action Selection */}
+          <WalletProfitBlockToggles
+            blocks={walletBlocks}
+            blockLoading={blockLoading}
+            onToggle={handleToggleWalletBlock}
+          />
+
           <div className="flex gap-2">
             <button
               type="button"
@@ -202,7 +231,6 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
               {walletType === 'trading' ? 'Withdraw' : 'Deduct Funds'}
             </button>
           </div>
-          {/* Permission Status */}
           {loadingPermissions && (
             <div className="text-xs text-gray-400">Loading permissions...</div>
           )}

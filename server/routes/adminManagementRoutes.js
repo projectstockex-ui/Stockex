@@ -11497,6 +11497,41 @@ router.post('/all-fund-requests/:id/reject', protectAdmin, superAdminOnly, async
 
 
 
+// Block/unblock wallet profit credit (superadmin only)
+router.put('/users/:id/wallet-block', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { walletType, blocked } = req.body;
+    const { WALLET_BLOCK_TYPES, buildWalletBlocksResponse } = await import('../utils/walletBlock.js');
+    if (!WALLET_BLOCK_TYPES[walletType]) {
+      return res.status(400).json({
+        message: 'walletType must be one of: nseBse, mcx, games, crypto, forex',
+      });
+    }
+    if (typeof blocked !== 'boolean') {
+      return res.status(400).json({ message: 'blocked must be a boolean' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const field = `${WALLET_BLOCK_TYPES[walletType].field}.profitBlocked`;
+    await User.updateOne({ _id: user._id }, { $set: { [field]: blocked } });
+
+    const fresh = await User.findById(user._id)
+      .select('wallet nseBseWallet mcxWallet gamesWallet cryptoWallet forexWallet')
+      .lean();
+
+    res.json({
+      message: blocked
+        ? `${WALLET_BLOCK_TYPES[walletType].label} profit blocked`
+        : `${WALLET_BLOCK_TYPES[walletType].label} profit unblocked`,
+      walletBlocks: buildWalletBlocksResponse(fresh),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Reset user margin (fix orphaned margin when no open positions exist)
 
 router.post('/users/:id/reset-margin', protectAdmin, async (req, res) => {

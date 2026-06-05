@@ -2,6 +2,7 @@ import User from '../models/User.js';
 import GameSettings from '../models/GameSettings.js';
 import { recalculateUsedMargin } from './recalculateUsedMargin.js';
 import { migrateNseBseWalletIfNeeded, readNseBseWalletFromDb } from './nseBseWallet.js';
+import { buildWalletBlocksResponse, isWalletProfitBlocked } from './walletBlock.js';
 
 /**
  * Full wallet payload for GET /api/user/wallet (NSE/BSE, crypto, MCX, games, main).
@@ -49,16 +50,20 @@ export async function buildUserWalletResponse(userId) {
 
   let ledgerStatus = null;
   try {
-    const { getLedgerStatusForApi } = await import('../services/nseBseLedgerAutosquareService.js');
-    ledgerStatus = await getLedgerStatusForApi(userId);
+    const { getLedgerStatusForApi } = await import('../services/ledgerAutosquareService.js');
+    ledgerStatus = await getLedgerStatusForApi(userId, 'nseBseWallet');
   } catch {
     ledgerStatus = null;
   }
 
+  const walletBlocks = buildWalletBlocksResponse(walletUser);
+
   return {
     gamesTicketValue,
+    walletBlocks,
     cashBalance: mainWalletBalance,
     nseBseWallet: {
+      profitBlocked: isWalletProfitBlocked(walletUser, 'nseBse'),
       balance: nseBseBalance,
       usedMargin,
       transferableBalance: nseBseAvailable,
@@ -88,6 +93,7 @@ export async function buildUserWalletResponse(userId) {
     availableMargin,
     totalBalance: mainWalletBalance + nseBseBalance,
     cryptoWallet: {
+      profitBlocked: isWalletProfitBlocked(walletUser, 'crypto'),
       balance: user.cryptoWallet?.balance || 0,
       usedMargin: recalculatedMargin.cryptoWallet,
       transferableBalance: Math.max(0, (user.cryptoWallet?.balance || 0) - recalculatedMargin.cryptoWallet),
@@ -96,6 +102,7 @@ export async function buildUserWalletResponse(userId) {
       todayRealizedPnL: user.cryptoWallet?.todayRealizedPnL || 0,
     },
     forexWallet: {
+      profitBlocked: isWalletProfitBlocked(walletUser, 'forex'),
       balance: user.forexWallet?.balance || 0,
       usedMargin: recalculatedMargin.forexWallet,
       transferableBalance: Math.max(0, (user.forexWallet?.balance || 0) - recalculatedMargin.forexWallet),
@@ -105,6 +112,7 @@ export async function buildUserWalletResponse(userId) {
     },
     tradingAccountTransferable: nseBseAvailable,
     mcxWallet: {
+      profitBlocked: isWalletProfitBlocked(walletUser, 'mcx'),
       balance: user.mcxWallet?.balance || 0,
       usedMargin: recalculatedMargin.mcxWallet,
       transferableBalance: Math.max(0, (user.mcxWallet?.balance || 0) - recalculatedMargin.mcxWallet),
@@ -115,6 +123,7 @@ export async function buildUserWalletResponse(userId) {
       availableBalance: (user.mcxWallet?.balance || 0) - recalculatedMargin.mcxWallet,
     },
     gamesWallet: {
+      profitBlocked: isWalletProfitBlocked(walletUser, 'games'),
       balance: user.gamesWallet?.balance || 0,
       usedMargin: recalculatedMargin.gamesWallet,
       transferableBalance: Math.max(0, (user.gamesWallet?.balance || 0) - recalculatedMargin.gamesWallet),

@@ -430,7 +430,7 @@ export async function applySegmentCarryForward(trade, {
       : roundMoney((finalQty * markPx) / carryForwardLeverage);
 
   const latestFields = {
-    status: 'OPEN',
+    status: finalQty > 1e-9 ? 'OPEN' : 'CLOSED',
     isAutoSquared: true,
     autoSquaredAt: squaredAt,
     autoSquareLtp: markPx,
@@ -442,14 +442,20 @@ export async function applySegmentCarryForward(trade, {
     quantity: finalQty,
     productType: 'NRML',
     leverage: carryForwardLeverage,
-    marginUsed: nextMargin,
-    requiredMargin: nextMargin,
+    marginUsed: finalQty > 1e-9 ? nextMargin : 0,
+    requiredMargin: finalQty > 1e-9 ? nextMargin : 0,
     currentPrice: markPx,
     unrealizedPnL:
-      finalQty > 0
+      finalQty > 1e-9
         ? roundMoney(computeMarkToMarketPnL(trade, markPx, finalQty))
         : 0,
   };
+  if (finalQty <= 1e-9) {
+    latestFields.closedAt = squaredAt;
+    latestFields.exitPrice = markPx;
+    latestFields.realizedPnL = displayPnL;
+    latestFields.netPnL = displayPnL;
+  }
 
   const freshEarly = await Trade.findById(trade._id).select('autoSquareHistory').lean();
   const alreadyLogged = (freshEarly?.autoSquareHistory || []).some((e) => {

@@ -253,6 +253,9 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    // Legacy — migrated to nseBseWallet.profitBlocked
+    mainWalletBlocked: { type: Boolean, default: false },
+    tradingWalletBlocked: { type: Boolean, default: false },
     // Last wallet recalculation timestamp
     lastUpdatedAt: {
       type: Date,
@@ -342,6 +345,7 @@ const userSchema = new mongoose.Schema({
     ledgerReferenceBalance: { type: Number, default: 0 },
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
+    profitBlocked: { type: Boolean, default: false },
   },
 
   // Synthetic forex wallet (INR) — same economics pattern as cryptoWallet
@@ -365,6 +369,7 @@ const userSchema = new mongoose.Schema({
     ledgerReferenceBalance: { type: Number, default: 0 },
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
+    profitBlocked: { type: Boolean, default: false },
   },
   
   // Delivery Pledge - Margin from delivery (CNC) trades
@@ -488,6 +493,7 @@ const userSchema = new mongoose.Schema({
     ledgerReferenceBalance: { type: Number, default: 0 },
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
+    profitBlocked: { type: Boolean, default: false },
   },
 
   // NSE & BSE only — cash for NSE/BSE/NFO equity & derivatives (not main deposit wallet)
@@ -505,6 +511,7 @@ const userSchema = new mongoose.Schema({
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
     lastUpdatedAt: { type: Date, default: Date.now },
+    profitBlocked: { type: Boolean, default: false },
   },
   
   // Separate Games Wallet - For fantasy trading/games
@@ -538,7 +545,8 @@ const userSchema = new mongoose.Schema({
     todayUnrealizedPnL: {
       type: Number,
       default: 0
-    }
+    },
+    profitBlocked: { type: Boolean, default: false },
   },
   // Margin Settings
   marginSettings: {

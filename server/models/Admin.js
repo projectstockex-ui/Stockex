@@ -722,6 +722,10 @@ const adminSchema = new mongoose.Schema({
       mcxStartTime: { type: String, default: '' },
       /** IST MCX session close — carry-forward + freeze at this time */
       mcxClosingTime: { type: String, default: '' },
+      /** IST NSE/BSE session start (HH:mm or HH:mm:ss) — hierarchy → users */
+      nseStartTime: { type: String, default: '' },
+      /** IST NSE/BSE session close — carry-forward at this time */
+      nseClosingTime: { type: String, default: '' },
       cryptoReferenceSymbol: { type: String, default: '' },
       /** @deprecated UI removed; kept for legacy DB docs. */
       cryptoPricePerLotInr: { type: Number, default: 0 },

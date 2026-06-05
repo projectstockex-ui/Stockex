@@ -8,6 +8,11 @@ export function canEditMcxSessionTiming(role) {
   return role === 'SUPER_ADMIN';
 }
 
+/** NSE/BSE session start/close — same policy as MCX. */
+export function canEditNseBseSessionTiming(role) {
+  return role === 'SUPER_ADMIN';
+}
+
 /**
  * Hierarchy "Admin Settings" modal: show the limit/pending toggle only when the row being edited
  * is an Admin or Super Admin — not Broker/Sub broker — even when a Super Admin opens Settings.
