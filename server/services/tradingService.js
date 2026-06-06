@@ -2789,6 +2789,7 @@ class TradingService {
         const closeKeyNormForRow = closeKeyNorm || '';
         rows.push({
           _id: eventId,
+          tradeMongoId: t._id,
           tradeId: t.tradeId,
           userId: t.userId,
           symbol: t.symbol,
@@ -2810,7 +2811,11 @@ class TradingService {
           carryForwardQty: ev.nextDayQty,
           quantity: ev.nextDayQty,
           autoSquareLtp: markPx,
-          pnlAtAutoSquare: reconcileAutosquarePnL(t, markPx, ev.pnlAtAutoSquare, sqQty),
+          pnlAtAutoSquare: (() => {
+            const stored = Number(ev.pnlAtAutoSquare ?? ev.realizedPnLAtCarry);
+            if (Number.isFinite(stored)) return Math.round(stored * 100) / 100;
+            return reconcileAutosquarePnL(t, markPx, null, sqQty);
+          })(),
           autoSquaredAt: sessionAt,
           closeTime: closeKeyNormForRow,
           autosquareEventType: closeKeyNormForRow ? 'SESSION' : 'INTRADAY',
@@ -2854,6 +2859,7 @@ class TradingService {
       if (rows.some((r) => r._id === eventId)) continue;
       rows.push({
         _id: eventId,
+        tradeMongoId: t._id,
         tradeId: t.tradeId,
         userId: t.userId,
         symbol: t.symbol,
@@ -2886,9 +2892,8 @@ class TradingService {
 
     rows.sort((a, b) => new Date(b.autoSquaredAt) - new Date(a.autoSquaredAt));
 
-    const { mergeAutosquareHistoryRows } = await import('../utils/autosquareHistoryMerge.js');
-    const merged = mergeAutosquareHistoryRows(rows);
-    return merged.slice(0, limit);
+    // Individual events only — do not club same-symbol rows (user sees per-trade / per-run P&L).
+    return rows.slice(0, limit);
   }
 
   // Get wallet summary - optimized with aggregation for faster P&L

@@ -1009,12 +1009,12 @@ const UserAccounts = () => {
             </div>
             
             <div className="text-4xl font-bold mb-1">
-              ₹{mcxAvailableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
             <div className="text-sm text-gray-500">MCX Trading Balance</div>
             {mcxUsedMargin > 0 && (
               <div className="text-xs text-yellow-400 mt-1">
-                Margin Used: ₹{mcxUsedMargin.toLocaleString()} | Total: ₹{mcxBalance.toLocaleString()}
+                Margin Used: ₹{mcxUsedMargin.toLocaleString()} | Available: ₹{mcxAvailableBalance.toLocaleString()}
               </div>
             )}
             {mcxRealizedPnL !== 0 && (
@@ -2185,7 +2185,7 @@ const UserAccounts = () => {
           <div>
             <div className="text-sm text-gray-400 mb-1">MCX Account</div>
             <div className="text-2xl font-bold text-yellow-400">
-              ₹{mcxAvailableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div>

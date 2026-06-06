@@ -25,6 +25,10 @@ export function getRuntimeSocketUrl() {
   if (fromEnv) return String(fromEnv).replace(/\/$/, '');
   const api = getRuntimeApiBase();
   if (api) return api;
+  // Dev: hit API port directly — Vite /socket.io WS proxy often aborts (ECONNABORTED).
+  if (import.meta.env.DEV) {
+    return String(import.meta.env.VITE_API_URL || 'http://localhost:5001').replace(/\/$/, '');
+  }
   return typeof window !== 'undefined' && window.location?.origin
     ? window.location.origin
     : 'http://localhost:5001';

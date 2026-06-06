@@ -1,15 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
-import { io } from 'socket.io-client';
-import { getRuntimeSocketUrl, getSocketClientOptions } from '../lib/runtimeApiUrl';
+import { acquireStockexSocket, releaseStockexSocket } from '../lib/stockexSocket';
 import { applyMarketTickBatch } from '../lib/marketTickMerge.js';
 import { triggerAutosquareSound } from '../utils/tradingAlertSound';
 import {
   Home, ArrowLeft, RefreshCw, Calendar, Filter, Download,
   TrendingUp, TrendingDown, Timer, CheckCircle, XCircle, AlertCircle,
-  X, ChevronRight, Scissors, Info
+  X, ChevronRight, ChevronDown, ChevronUp, Scissors, Info
 } from 'lucide-react';
 import TradeCloseBreakdownPanel from '../components/trading/TradeCloseBreakdownPanel.jsx';
 import {
@@ -25,8 +24,10 @@ import {
   formatAutosquareEndClock,
   formatAutosquareEventLabel,
   formatAutosquareSessionDate,
+  resolveAutosquareEventPnL,
   resolveAutosquareSquaredQty,
 } from '../utils/autosquareSessionDisplay.js';
+import AutosquareEventBreakdownPanel from '../components/trading/AutosquareEventBreakdownPanel.jsx';
 import { resolveTradeDisplayPnL } from '../utils/tradePnL.js';
 
 const UserOrders = () => {
@@ -60,6 +61,7 @@ const UserOrders = () => {
   const [tradeBreakdown, setTradeBreakdown] = useState(null);
   const [loadingBreakdown, setLoadingBreakdown] = useState(false);
   const [breakdownError, setBreakdownError] = useState(null);
+  const [expandedAutosquareBreakdownId, setExpandedAutosquareBreakdownId] = useState(null);
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
@@ -89,12 +91,11 @@ const UserOrders = () => {
     return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
   }, [user?.token, dateFilter, customDateFrom, customDateTo, mcxOnly, cryptoOnly, forexOnly]);
 
-  // Connect to Socket.IO for real-time market data
+  // Real-time ticks via shared Socket.IO singleton (same connection as trader room)
   useEffect(() => {
     if (!user?.token) return;
 
-    const socketUrl = getRuntimeSocketUrl();
-    const socket = io(socketUrl, getSocketClientOptions());
+    const socket = acquireStockexSocket(user._id || user.id);
     const myUserId = String(user._id || user.id || '');
     const pending = {};
 
@@ -115,33 +116,30 @@ const UserOrders = () => {
       flushBatchedTicks();
     };
 
-    socket.on('connect', () => {
-      console.log('Socket.IO connected for UserOrders');
-      if (myUserId) socket.emit('register_user', myUserId);
-    });
-
-    socket.on('ledger_autosquare', (data) => {
+    const onLedgerAutosquare = (data) => {
       if (myUserId && data?.targetUserId && String(data.targetUserId) !== myUserId) return;
       triggerAutosquareSound();
       window.dispatchEvent(new CustomEvent('stockex:ledger-autosquare', { detail: data }));
       fetchAllOrders();
-    });
+    };
 
     const onSessionClosed = () => fetchAllOrders();
+
+    socket.on('ledger_autosquare', onLedgerAutosquare);
     socket.on('crypto_session_closed', onSessionClosed);
     socket.on('nse_bse_session_closed', onSessionClosed);
     socket.on('mcx_session_closed', onSessionClosed);
-
-    socket.on('market_tick', (ticks) => {
-      queueTicks(ticks);
-    });
-
-    socket.on('crypto_tick', (ticks) => {
-      queueTicks(ticks);
-    });
+    socket.on('market_tick', queueTicks);
+    socket.on('crypto_tick', queueTicks);
 
     return () => {
-      socket.disconnect();
+      socket.off('ledger_autosquare', onLedgerAutosquare);
+      socket.off('crypto_session_closed', onSessionClosed);
+      socket.off('nse_bse_session_closed', onSessionClosed);
+      socket.off('mcx_session_closed', onSessionClosed);
+      socket.off('market_tick', queueTicks);
+      socket.off('crypto_tick', queueTicks);
+      releaseStockexSocket();
     };
   }, [user?.token, user?._id, user?.id]);
 
@@ -460,6 +458,13 @@ const UserOrders = () => {
     });
   };
 
+  const fetchTradeBreakdown = useCallback(async (tradeId) => {
+    const { data } = await axios.get(`/api/trading/trades/${tradeId}/close-breakdown`, {
+      headers: { Authorization: `Bearer ${user.token}` },
+    });
+    return data;
+  }, [user?.token]);
+
   const openTradeBreakdown = async (item) => {
     if (!item?._id || !user?.token) return;
     setShowBreakdownModal(true);
@@ -467,15 +472,18 @@ const UserOrders = () => {
     setBreakdownError(null);
     setLoadingBreakdown(true);
     try {
-      const { data } = await axios.get(`/api/trading/trades/${item._id}/close-breakdown`, {
-        headers: { Authorization: `Bearer ${user.token}` },
-      });
-      setTradeBreakdown(data);
+      setTradeBreakdown(await fetchTradeBreakdown(item._id));
     } catch (error) {
       setBreakdownError(error.response?.data?.message || error.message || 'Failed to load');
     } finally {
       setLoadingBreakdown(false);
     }
+  };
+
+  const toggleAutosquarePnLBreakdown = (item) => {
+    const eventId = item?._id;
+    if (!eventId) return;
+    setExpandedAutosquareBreakdownId((prev) => (prev === eventId ? null : eventId));
   };
 
   const getCurrentData = () => {
@@ -498,10 +506,14 @@ const UserOrders = () => {
       item.symbol,
       item.side,
       item.productType || '-',
-      item.quantity || item.lots,
+      activeTab === 'autosquare'
+        ? resolveAutosquareSquaredQty(item)
+        : (item.quantity || item.lots),
       item.entryPrice || item.price,
-      item.exitPrice || '-',
-      item.realizedPnL ?? item.netPnL ?? item.pnl ?? item.unrealizedPnL ?? 0,
+      activeTab === 'autosquare' ? (item.autoSquareLtp || '-') : (item.exitPrice || '-'),
+      activeTab === 'autosquare'
+        ? resolveAutosquareEventPnL(item)
+        : (item.realizedPnL ?? item.netPnL ?? item.pnl ?? item.unrealizedPnL ?? 0),
       formatTradeStatusLabel(item),
       activeTab === 'autosquare'
         ? formatAutosquareSessionDate(item)
@@ -710,10 +722,7 @@ const UserOrders = () => {
               // Calculate live P&L for open positions using current market data
               let pnl;
               if (activeTab === 'autosquare') {
-                const storedSq = Number(item.pnlAtAutoSquare);
-                pnl = Number.isFinite(storedSq)
-                  ? storedSq
-                  : resolveTradeDisplayPnL(item);
+                pnl = resolveAutosquareEventPnL(item);
               } else if (activeTab === 'positions') {
                 const ltp = getCurrentPrice(item) || item.currentPrice || item.entryPrice;
                 pnl = item.side === 'BUY'
@@ -723,6 +732,7 @@ const UserOrders = () => {
                 pnl = resolveTradeDisplayPnL(item);
               }
               const isProfitable = pnl >= 0;
+              const eventRowId = item._id || index;
               
               return (
                 <div 
@@ -938,6 +948,31 @@ const UserOrders = () => {
                         <XCircle size={18} />
                         Cancel Order
                       </button>
+                    </div>
+                  )}
+
+                  {activeTab === 'autosquare' && (
+                    <div className="border-t border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => toggleAutosquarePnLBreakdown(item)}
+                        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-blue-400 hover:bg-blue-500/5 transition-colors active:scale-[0.99]"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Info size={16} />
+                          P&L breakdown
+                        </span>
+                        {expandedAutosquareBreakdownId === eventRowId ? (
+                          <ChevronUp size={18} className="text-gray-400" />
+                        ) : (
+                          <ChevronDown size={18} className="text-gray-400" />
+                        )}
+                      </button>
+                      {expandedAutosquareBreakdownId === eventRowId && (
+                        <div className="px-4 pb-4 border-t border-white/5 bg-[#161618]">
+                          <AutosquareEventBreakdownPanel item={item} />
+                        </div>
+                      )}
                     </div>
                   )}
 

@@ -4,9 +4,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { createChart } from 'lightweight-charts';
 import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
-import { io } from 'socket.io-client';
 import { triggerAutosquareSound } from '../utils/tradingAlertSound';
-import { getRuntimeSocketUrl, getSocketClientOptions } from '../lib/runtimeApiUrl';
+import { acquireStockexSocket, releaseStockexSocket } from '../lib/stockexSocket';
 import { mergeMarketTickRow, applyMarketTickBatch } from '../lib/marketTickMerge.js';
 import {
   Search, 
@@ -904,6 +903,8 @@ const UserDashboard = () => {
 
   /** Merged segment permissions from GET /user/settings — limit/pending gate (admin Segment Permissions only). */
   const [segmentPermissionsGate, setSegmentPermissionsGate] = useState({});
+  const segmentGateRef = useRef(segmentPermissionsGate);
+  segmentGateRef.current = segmentPermissionsGate;
 
   useEffect(() => {
     if (!user?.token) return;
@@ -1018,11 +1019,10 @@ const UserDashboard = () => {
   // Check if currently viewing crypto (no longer used since crypto is removed)
   const isCryptoMode = false;
 
-  // Connect to Socket.IO for real-time market data (shared across components)
+  // Connect to Socket.IO for real-time market data (shared singleton — one connection per app)
   useEffect(() => {
     if (!user?.token) return undefined;
-    const socketUrl = getRuntimeSocketUrl();
-    const socket = io(socketUrl, getSocketClientOptions());
+    const socket = acquireStockexSocket(user._id || user.id);
     const myUserId = String(user._id || user.id || '');
     const pending = {};
     const flushBatchedTicks = () => {
@@ -1060,51 +1060,70 @@ const UserDashboard = () => {
       flushBatchedTicks();
     };
 
-    socket.on('connect', () => {
-      console.log('Socket.IO connected for real-time ticks');
+    const onConnect = () => {
       setSocketConnectEpoch((e) => e + 1);
-      if (myUserId) socket.emit('register_user', myUserId);
-    });
+    };
+    socket.on('connect', onConnect);
+    if (socket.connected) onConnect();
 
-    socket.on('market_tick', (ticks) => {
-      queueTicks(ticks);
-    });
+    const onMarketTick = (ticks) => queueTicks(ticks);
 
     // Crypto ticks only on crypto/forex dashboards — skip when session closed (prices frozen server-side)
-    socket.on('crypto_tick', (ticks) => {
+    const onCryptoTick = (ticks) => {
       const mode = new URLSearchParams(window.location.search).get('mode');
       if (mode !== 'crypto' && mode !== 'forex') return;
-      const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || segmentPermissionsGate?.CRYPTOOPT || {};
+      const gate = segmentGateRef.current;
+      const cryptoSettings = gate?.CRYPTOFUT || gate?.CRYPTOOPT || {};
       if (!isCryptoWindowLive(cryptoSettings)) return;
       queueTicks(ticks);
-    });
-
-    const onSessionClosed = (eventName) => {
-      setPositionsRefreshKey((k) => k + 1);
-      window.dispatchEvent(new CustomEvent(eventName));
     };
 
-    socket.on('crypto_session_closed', () => onSessionClosed('stockex:crypto-session-closed'));
-    socket.on('nse_bse_session_closed', () => onSessionClosed('stockex:nse-bse-session-closed'));
-    socket.on('mcx_session_closed', () => onSessionClosed('stockex:mcx-session-closed'));
+    const onCryptoSessionClosed = () => {
+      setPositionsRefreshKey((k) => k + 1);
+      window.dispatchEvent(new CustomEvent('stockex:crypto-session-closed'));
+    };
+    const onNseBseSessionClosed = () => {
+      setPositionsRefreshKey((k) => k + 1);
+      window.dispatchEvent(new CustomEvent('stockex:nse-bse-session-closed'));
+    };
+    const onMcxSessionClosed = () => {
+      setPositionsRefreshKey((k) => k + 1);
+      window.dispatchEvent(new CustomEvent('stockex:mcx-session-closed'));
+    };
 
-    socket.on('trade_update', (data) => {
+    const onTradeUpdate = (data) => {
       if (['PENDING_FILLED', 'NEW_TRADE', 'TRADE_CLOSED'].includes(data?.type)) {
         setPositionsRefreshKey((k) => k + 1);
       }
-    });
+    };
 
-    socket.on('ledger_autosquare', (data) => {
+    const onLedgerAutosquare = (data) => {
       if (myUserId && data?.targetUserId && String(data.targetUserId) !== myUserId) return;
       triggerAutosquareSound();
       setPositionsRefreshKey((k) => k + 1);
       window.dispatchEvent(new CustomEvent('stockex:ledger-autosquare', { detail: data }));
-    });
+    };
+
+    socket.on('market_tick', onMarketTick);
+    socket.on('crypto_tick', onCryptoTick);
+    socket.on('crypto_session_closed', onCryptoSessionClosed);
+    socket.on('nse_bse_session_closed', onNseBseSessionClosed);
+    socket.on('mcx_session_closed', onMcxSessionClosed);
+    socket.on('trade_update', onTradeUpdate);
+    socket.on('ledger_autosquare', onLedgerAutosquare);
 
     return () => {
-      socket.disconnect();
+      socket.off('connect', onConnect);
+      socket.off('market_tick', onMarketTick);
+      socket.off('crypto_tick', onCryptoTick);
+      socket.off('crypto_session_closed', onCryptoSessionClosed);
+      socket.off('nse_bse_session_closed', onNseBseSessionClosed);
+      socket.off('mcx_session_closed', onMcxSessionClosed);
+      socket.off('trade_update', onTradeUpdate);
+      socket.off('ledger_autosquare', onLedgerAutosquare);
+      releaseStockexSocket();
     };
-  }, [user?.token, user?._id, user?.id, segmentPermissionsGate]);
+  }, [user?.token, user?._id, user?.id]);
 
   const fetchWallet = useCallback(async () => {
     if (!user?.token) return;

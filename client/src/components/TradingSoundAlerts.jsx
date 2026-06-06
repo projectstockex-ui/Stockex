@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
-import { getRuntimeSocketUrl, getSocketClientOptions } from '../lib/runtimeApiUrl';
+import { acquireStockexSocket, releaseStockexSocket } from '../lib/stockexSocket';
 import { triggerAutosquareSound, primeTradingSounds } from '../utils/tradingAlertSound';
 
 const AUTO_CLOSE_REASONS = new Set([
@@ -49,7 +48,7 @@ export default function TradingSoundAlerts() {
     if (!user?.token || !location.pathname.startsWith('/user')) return undefined;
 
     const myId = String(user._id || user.id || '');
-    const socket = io(getRuntimeSocketUrl(), getSocketClientOptions());
+    const socket = acquireStockexSocket(user._id || user.id);
 
     const handleAutosquare = (data) => {
       if (!isEventForUser(data, myId)) return;
@@ -57,18 +56,17 @@ export default function TradingSoundAlerts() {
       window.dispatchEvent(new CustomEvent('stockex:ledger-autosquare', { detail: data }));
     };
 
-    socket.on('connect', () => {
-      if (myId) socket.emit('register_user', myId);
-    });
+    const onTradeUpdate = (data) => {
+      if (isTradeClosedForUser(data, myId)) handleAutosquare(data);
+    };
 
     socket.on('ledger_autosquare', handleAutosquare);
-    socket.on('trade_update', (data) => {
-      if (isTradeClosedForUser(data, myId)) handleAutosquare(data);
-    });
+    socket.on('trade_update', onTradeUpdate);
 
     return () => {
       socket.off('ledger_autosquare', handleAutosquare);
-      socket.disconnect();
+      socket.off('trade_update', onTradeUpdate);
+      releaseStockexSocket();
     };
   }, [user?.token, user?._id, user?.id, location.pathname]);
 

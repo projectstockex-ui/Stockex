@@ -1,3 +1,5 @@
+import { computeTradePricePnL, roundTradePnL } from './tradePnL.js';
+
 /** Autosquare UI: show admin session end time (closeTime), not server process timestamp. */
 
 function parseCloseParts(closeTime) {
@@ -59,6 +61,21 @@ export function resolveAutosquareSquaredQty(item) {
   const next = Number(item?.carryForwardQty ?? item?.quantity);
   if (orig > 0 && Number.isFinite(next)) return Math.max(0, orig - next);
   return orig;
+}
+
+/** Per-event P&L (squared qty only) — never inflated club/merge totals. */
+export function resolveAutosquareEventPnL(item) {
+  const sqQty = resolveAutosquareSquaredQty(item);
+  const mark = item?.autoSquareLtp ?? item?.exitPrice;
+  const fromPrices = computeTradePricePnL(item, mark, sqQty);
+  if (item?.isMergedAutosquare) return fromPrices;
+  const stored = Number(item?.pnlAtAutoSquare);
+  if (!Number.isFinite(stored)) return fromPrices;
+  if (Math.abs(fromPrices) > 0 && Math.abs(stored) > Math.abs(fromPrices) * 2) {
+    return fromPrices;
+  }
+  if (Math.abs(fromPrices - stored) <= 0.02) return roundTradePnL(stored);
+  return roundTradePnL(stored);
 }
 
 /** Session = admin MCX end clock; intraday = loss autosquare at real server time. */
