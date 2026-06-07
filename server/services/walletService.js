@@ -132,10 +132,10 @@ class WalletService {
       // Build query for open positions in this wallet's segment
       const segmentQuery = this.buildSegmentQuery(field);
       
-      // Get all open positions for this wallet
+      // OPEN + PENDING both reserve margin until fill or cancel
       const openPositions = await Trade.find({
         user: userId,
-        status: 'OPEN',
+        status: { $in: ['OPEN', 'PENDING'] },
         ...segmentQuery
       });
       

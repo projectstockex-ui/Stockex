@@ -5,6 +5,10 @@ import {
   labelForMarketWatchSegment,
 } from '../constants/marketWatchSegments.js';
 import {
+  resolveGroupingDisplaySegment,
+  synthInstrumentFromOrderContext,
+} from '../utils/lowHighTradeGate.js';
+import {
   buildNseSectorSeedGroups,
   getNseFnOSectorLabel,
   inferNseFnoUnderlying,
@@ -67,13 +71,21 @@ async function loadAllGroupingsMap() {
   return groupingCache.bySegment;
 }
 
+function resolveInstAndGroupingSegment(inst, ctx) {
+  const resolved =
+    inst || (ctx && typeof ctx === 'object' ? synthInstrumentFromOrderContext(ctx) : null);
+  if (!resolved) return { inst: null, seg: '' };
+  const seg = resolveGroupingDisplaySegment(resolved, ctx || {});
+  return { inst: resolved, seg };
+}
+
 /**
  * If instrument belongs to a group with allowWithinLowHigh, trading is restricted to day low–high.
+ * Crypto spot (CRYPTO) uses CRYPTOFUT grouping when configured there.
  */
-export async function resolveSegmentGroupLowHighForInstrument(inst) {
-  if (!inst) return { restrict: false };
-  const seg = String(inst.displaySegment || inst.segment || '').toUpperCase();
-  if (!seg) return { restrict: false };
+export async function resolveSegmentGroupLowHighForInstrument(inst, ctx = null) {
+  const { inst: resolved, seg } = resolveInstAndGroupingSegment(inst, ctx);
+  if (!resolved || !seg) return { restrict: false };
 
   const map = await loadAllGroupingsMap();
   const doc = map.get(seg);
@@ -84,25 +96,91 @@ export async function resolveSegmentGroupLowHighForInstrument(inst) {
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
   for (const g of candidates) {
-    if (instrumentMatchesGroup(inst, g, seg)) {
+    if (instrumentMatchesGroup(resolved, g, seg)) {
       return {
         restrict: true,
         groupKey: g.key,
         groupLabel: g.label || g.key,
+        groupingSegment: seg,
       };
     }
   }
   return { restrict: false };
 }
 
+function normalizeLtpBracketPercents(up, down) {
+  const percentUp = Number(up);
+  const percentDown = Number(down);
+  if (
+    !Number.isFinite(percentUp) ||
+    !Number.isFinite(percentDown) ||
+    percentUp <= 0 ||
+    percentDown <= 0
+  ) {
+    return null;
+  }
+  return {
+    percentUp: Math.min(100, percentUp),
+    percentDown: Math.min(100, percentDown),
+  };
+}
+
+function resolveSegmentGroupLtpBracketFromDoc(resolved, seg, doc) {
+  if (!resolved || !seg || !doc?.groups?.length) return { active: false };
+
+  const candidates = [...doc.groups]
+    .filter((g) => g.enabled !== false && g.enableLtpBracket === true)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+  for (const g of candidates) {
+    if (!instrumentMatchesGroup(resolved, g, seg)) continue;
+    const percents = normalizeLtpBracketPercents(
+      g.ltpBracketPercentUp ?? 5,
+      g.ltpBracketPercentDown ?? 5
+    );
+    if (!percents) continue;
+    return {
+      active: true,
+      ...percents,
+      groupKey: g.key,
+      groupLabel: g.label || g.key,
+      groupingSegment: seg,
+    };
+  }
+  return { active: false };
+}
+
+/**
+ * Live LTP ±% bracket from segment grouping (e.g. Major Coins 5% up / 5% down).
+ * Crypto spot uses CRYPTOFUT grouping when configured there.
+ */
+export async function resolveSegmentGroupLtpBracketForInstrument(inst, ctx = null) {
+  const { inst: resolved, seg } = resolveInstAndGroupingSegment(inst, ctx);
+  if (!resolved || !seg) return { active: false };
+
+  const map = await loadAllGroupingsMap();
+  const doc = map.get(seg);
+  return resolveSegmentGroupLtpBracketFromDoc(resolved, seg, doc);
+}
+
+/** Sync resolver when grouping map is already loaded (instrument list enrichment). */
+export function resolveSegmentGroupLtpBracketWithMap(inst, groupingMap, ctx = null) {
+  const { inst: resolved, seg } = resolveInstAndGroupingSegment(inst, ctx);
+  if (!resolved || !seg || !(groupingMap instanceof Map)) return { active: false };
+  return resolveSegmentGroupLtpBracketFromDoc(resolved, seg, groupingMap.get(seg));
+}
+
+export async function getSegmentGroupingMap() {
+  return loadAllGroupingsMap();
+}
+
 /**
  * Resolve whether client users may open trades for this instrument (segment group rule).
  * Ungrouped instruments are allowed unless another active group matches and blocks.
  */
-export async function resolveSegmentGroupClientTradingForInstrument(inst) {
-  if (!inst) return { allowed: true };
-  const seg = String(inst.displaySegment || inst.segment || '').toUpperCase();
-  if (!seg) return { allowed: true };
+export async function resolveSegmentGroupClientTradingForInstrument(inst, ctx = null) {
+  const { inst: resolved, seg } = resolveInstAndGroupingSegment(inst, ctx);
+  if (!resolved || !seg) return { allowed: true };
 
   const map = await loadAllGroupingsMap();
   const doc = map.get(seg);
@@ -113,20 +191,21 @@ export async function resolveSegmentGroupClientTradingForInstrument(inst) {
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
   for (const g of activeGroups) {
-    if (instrumentMatchesGroup(inst, g, seg)) {
+    if (instrumentMatchesGroup(resolved, g, seg)) {
       const allowed = g.allowClientTrading !== false;
       return {
         allowed,
         groupKey: g.key,
         groupLabel: g.label || g.key,
+        groupingSegment: seg,
       };
     }
   }
   return { allowed: true };
 }
 
-export async function assertSegmentGroupClientTradingAllowed(inst) {
-  const result = await resolveSegmentGroupClientTradingForInstrument(inst);
+export async function assertSegmentGroupClientTradingAllowed(inst, ctx = null) {
+  const result = await resolveSegmentGroupClientTradingForInstrument(inst, ctx);
   if (result.allowed) return result;
   const label = result.groupLabel || result.groupKey || 'this group';
   const err = new Error(
@@ -148,6 +227,9 @@ function defaultSeedGroups(displaySegment) {
       enabled: true,
       allowClientTrading: true,
       allowWithinLowHigh: false,
+      enableLtpBracket: false,
+      ltpBracketPercentUp: 5,
+      ltpBracketPercentDown: 5,
     }));
   }
   if (['CRYPTOFUT', 'CRYPTOOPT'].includes(seg)) {
@@ -157,6 +239,9 @@ function defaultSeedGroups(displaySegment) {
       enabled: true,
       allowClientTrading: true,
       allowWithinLowHigh: false,
+      enableLtpBracket: false,
+      ltpBracketPercentUp: 5,
+      ltpBracketPercentDown: 5,
     }));
   }
   if (['FOREXFUT', 'FOREXOPT'].includes(seg)) {
@@ -166,6 +251,9 @@ function defaultSeedGroups(displaySegment) {
       enabled: true,
       allowClientTrading: true,
       allowWithinLowHigh: false,
+      enableLtpBracket: false,
+      ltpBracketPercentUp: 5,
+      ltpBracketPercentDown: 5,
     }));
   }
   return [
@@ -178,6 +266,9 @@ function defaultSeedGroups(displaySegment) {
       enabled: true,
       allowClientTrading: true,
       allowWithinLowHigh: false,
+      enableLtpBracket: false,
+      ltpBracketPercentUp: 5,
+      ltpBracketPercentDown: 5,
     },
   ];
 }
@@ -291,6 +382,15 @@ export async function saveSegmentGrouping(displaySegment, groups, adminId) {
     enabled: g.enabled !== false,
     allowClientTrading: g.allowClientTrading !== false,
     allowWithinLowHigh: Boolean(g.allowWithinLowHigh),
+    enableLtpBracket: Boolean(g.enableLtpBracket),
+    ltpBracketPercentUp:
+      g.enableLtpBracket && Number.isFinite(Number(g.ltpBracketPercentUp)) && Number(g.ltpBracketPercentUp) > 0
+        ? Math.min(100, Number(g.ltpBracketPercentUp))
+        : 5,
+    ltpBracketPercentDown:
+      g.enableLtpBracket && Number.isFinite(Number(g.ltpBracketPercentDown)) && Number(g.ltpBracketPercentDown) > 0
+        ? Math.min(100, Number(g.ltpBracketPercentDown))
+        : 5,
   }));
 
   const doc = await SegmentGrouping.findOneAndUpdate(

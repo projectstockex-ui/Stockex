@@ -19,6 +19,10 @@ const groupSchema = new mongoose.Schema(
     allowClientTrading: { type: Boolean, default: true },
     /** When true, orders for instruments in this group must be within day low–high */
     allowWithinLowHigh: { type: Boolean, default: false },
+    /** When true, order price must stay within live LTP ±% (applies to whole group, all users). */
+    enableLtpBracket: { type: Boolean, default: false },
+    ltpBracketPercentUp: { type: Number, default: 5, min: 0, max: 100 },
+    ltpBracketPercentDown: { type: Number, default: 5, min: 0, max: 100 },
   },
   { _id: true }
 );

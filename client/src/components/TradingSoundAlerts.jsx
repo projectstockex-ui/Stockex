@@ -2,7 +2,12 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { acquireStockexSocket, releaseStockexSocket } from '../lib/stockexSocket';
-import { triggerAutosquareSound, primeTradingSounds } from '../utils/tradingAlertSound';
+import {
+  triggerAutosquareSound,
+  primeTradingSounds,
+  playStopLossHitSound,
+  playTargetHitSound,
+} from '../utils/tradingAlertSound';
 
 const AUTO_CLOSE_REASONS = new Set([
   'AUTO_SQUARE',
@@ -25,6 +30,15 @@ function isTradeClosedForUser(data, myId) {
   if (data?.type !== 'TRADE_CLOSED') return false;
   const reason = data?.trade?.closeReason;
   if (!AUTO_CLOSE_REASONS.has(reason)) return false;
+  const tradeUser = data?.trade?.user;
+  if (myId && tradeUser && String(tradeUser) !== String(myId)) return false;
+  return true;
+}
+
+function isSlTpCloseForUser(data, myId) {
+  if (data?.type !== 'TRADE_CLOSED') return false;
+  const reason = data?.trade?.closeReason;
+  if (reason !== 'STOP_LOSS' && reason !== 'TARGET') return false;
   const tradeUser = data?.trade?.user;
   if (myId && tradeUser && String(tradeUser) !== String(myId)) return false;
   return true;
@@ -57,6 +71,12 @@ export default function TradingSoundAlerts() {
     };
 
     const onTradeUpdate = (data) => {
+      if (isSlTpCloseForUser(data, myId)) {
+        const reason = data?.trade?.closeReason;
+        if (reason === 'STOP_LOSS') playStopLossHitSound();
+        else if (reason === 'TARGET') playTargetHitSound();
+        return;
+      }
       if (isTradeClosedForUser(data, myId)) handleAutosquare(data);
     };
 

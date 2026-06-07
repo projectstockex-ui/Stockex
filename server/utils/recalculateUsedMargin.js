@@ -1,6 +1,20 @@
 import User from '../models/User.js';
 import Trade from '../models/Trade.js';
 
+/** OPEN + PENDING both reserve margin until fill or cancel. */
+const MARGIN_BLOCKING_STATUSES = ['OPEN', 'PENDING'];
+
+function sumTradeMargin(trades) {
+  let total = 0;
+  for (const trade of trades) {
+    total += trade.marginUsed || trade.requiredMargin || 0;
+    if (trade.brokerageReservedInMargin) {
+      total += Number(trade.commission) || 0;
+    }
+  }
+  return total;
+}
+
 /**
  * Recalculate usedMargin from actual open positions
  * This ensures usedMargin is always accurate, not stale from database
@@ -16,69 +30,41 @@ export async function recalculateUsedMargin(userId) {
     // Calculate usedMargin from actual OPEN positions for regular wallet
     const openTrades = await Trade.find({
       user: userId,
-      status: 'OPEN',
+      status: { $in: MARGIN_BLOCKING_STATUSES },
       isCrypto: { $ne: true },
       isForex: { $ne: true },
       exchange: { $nin: ['BINANCE', 'MCX', 'FOREX'] }
     });
 
-    let calculatedUsedMargin = 0;
-    for (const trade of openTrades) {
-      calculatedUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
-      if (trade.brokerageReservedInMargin) {
-        calculatedUsedMargin += Number(trade.commission) || 0;
-      }
-    }
+    const calculatedUsedMargin = sumTradeMargin(openTrades);
 
-    // Calculate usedMargin for crypto wallet
     const openCryptoTrades = await Trade.find({
       user: userId,
-      status: 'OPEN',
+      status: { $in: MARGIN_BLOCKING_STATUSES },
       $or: [{ isCrypto: true }, { exchange: 'BINANCE' }]
     });
 
-    let cryptoUsedMargin = 0;
-    for (const trade of openCryptoTrades) {
-      cryptoUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
-      if (trade.brokerageReservedInMargin) {
-        cryptoUsedMargin += Number(trade.commission) || 0;
-      }
-    }
+    const cryptoUsedMargin = sumTradeMargin(openCryptoTrades);
 
-    // Calculate usedMargin for MCX wallet
     const openMcxTrades = await Trade.find({
       user: userId,
-      status: 'OPEN',
+      status: { $in: MARGIN_BLOCKING_STATUSES },
       $or: [{ exchange: 'MCX' }, { segment: 'MCX' }, { segment: 'MCXFUT' }, { segment: 'MCXOPT' }]
     });
 
-    let mcxUsedMargin = 0;
-    for (const trade of openMcxTrades) {
-      mcxUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
-      if (trade.brokerageReservedInMargin) {
-        mcxUsedMargin += Number(trade.commission) || 0;
-      }
-    }
+    const mcxUsedMargin = sumTradeMargin(openMcxTrades);
 
-    // Calculate usedMargin for forex wallet
     const openForexTrades = await Trade.find({
       user: userId,
-      status: 'OPEN',
+      status: { $in: MARGIN_BLOCKING_STATUSES },
       $or: [{ isForex: true }, { exchange: 'FOREX' }, { segment: 'FOREX' }, { segment: 'FOREXFUT' }, { segment: 'FOREXOPT' }]
     });
 
-    let forexUsedMargin = 0;
-    for (const trade of openForexTrades) {
-      forexUsedMargin += trade.marginUsed || trade.requiredMargin || 0;
-      if (trade.brokerageReservedInMargin) {
-        forexUsedMargin += Number(trade.commission) || 0;
-      }
-    }
+    const forexUsedMargin = sumTradeMargin(openForexTrades);
 
-    // Calculate usedMargin for games wallet
     const openGameBets = await Trade.find({
       user: userId,
-      status: 'OPEN',
+      status: { $in: MARGIN_BLOCKING_STATUSES },
       $or: [
         { gameType: { $exists: true } },
         { isGame: true }

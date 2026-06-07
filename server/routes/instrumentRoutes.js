@@ -39,6 +39,7 @@ import {
 } from '../services/instrumentForcedCloseService.js';
 import {
   attachLtpBracketForUser,
+  attachLtpBracketFromGrouping,
   sanitizeLtpBracketBody,
 } from '../services/ltpBracketService.js';
 
@@ -347,15 +348,17 @@ router.get('/public', async (req, res) => {
     const skip = (page - 1) * limit;
     
     const instruments = await Instrument.find(query)
-      .select('token symbol name exchange segment displaySegment instrumentType optionType strike expiry lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured sortOrder isEnabled lastBid lastAsk')
+      .select('token symbol name exchange segment displaySegment instrumentType optionType strike expiry lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured sortOrder isEnabled lastBid lastAsk tradingSymbol pair isCrypto')
       .sort({ isFeatured: -1, category: 1, sortOrder: 1, symbol: 1 })
       .skip(skip)
       .limit(limit);
-    
+
+    const enriched = await attachLtpBracketFromGrouping(instruments);
+
     // Return with pagination info and stats
     const queryCount = await Instrument.countDocuments(query);
     res.json({
-      instruments,
+      instruments: enriched,
       pagination: {
         page,
         limit,
@@ -715,7 +718,7 @@ router.get('/user', protectUser, async (req, res) => {
       .sort({ isFeatured: -1, exchange: 1, symbol: 1 });
 
     const userDoc = await User.findById(req.user._id).select('ltpBracketTokens').lean();
-    res.json(attachLtpBracketForUser(instruments, userDoc));
+    res.json(await attachLtpBracketForUser(instruments, userDoc));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

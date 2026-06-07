@@ -49,6 +49,9 @@ function emptyGroup(sortOrder) {
     enabled: true,
     allowClientTrading: true,
     allowWithinLowHigh: false,
+    enableLtpBracket: false,
+    ltpBracketPercentUp: 5,
+    ltpBracketPercentDown: 5,
     instruments: [],
     instrumentCount: 0,
   };
@@ -74,6 +77,32 @@ function GroupClientTradingToggle({ checked, onChange }) {
         />
       </button>
       <span className={`text-[9px] font-medium ${checked ? 'text-green-400' : 'text-red-400'}`}>
+        {checked ? 'ON' : 'OFF'}
+      </span>
+    </div>
+  );
+}
+
+function GroupLtpBracketToggle({ checked, onChange }) {
+  return (
+    <div
+      className="flex flex-col items-center gap-0.5 shrink-0"
+      title="ON: order price must stay within live LTP ±% for all instruments in this group"
+    >
+      <span className="text-[9px] text-gray-500 text-center leading-tight max-w-[4.5rem]">
+        LTP ±%
+      </span>
+      <button
+        type="button"
+        onClick={onChange}
+        className={`relative w-10 h-5 rounded-full transition-colors ${checked ? 'bg-green-600' : 'bg-dark-500'}`}
+        aria-pressed={checked}
+      >
+        <span
+          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${checked ? 'left-5' : 'left-0.5'}`}
+        />
+      </button>
+      <span className={`text-[9px] font-medium ${checked ? 'text-green-400' : 'text-gray-500'}`}>
         {checked ? 'ON' : 'OFF'}
       </span>
     </div>
@@ -233,6 +262,15 @@ export default function SegmentGroupingAdmin() {
         enabled: g.enabled !== false,
         allowClientTrading: g.allowClientTrading !== false,
         allowWithinLowHigh: !!g.allowWithinLowHigh,
+        enableLtpBracket: !!g.enableLtpBracket,
+        ltpBracketPercentUp:
+          g.enableLtpBracket && Number(g.ltpBracketPercentUp) > 0
+            ? Number(g.ltpBracketPercentUp)
+            : 5,
+        ltpBracketPercentDown:
+          g.enableLtpBracket && Number(g.ltpBracketPercentDown) > 0
+            ? Number(g.ltpBracketPercentDown)
+            : 5,
       }));
       const { data } = await axios.put(`/api/admin/manage/segment-grouping/${activeSegment}`, {
         groups: payload,
@@ -267,7 +305,8 @@ export default function SegmentGroupingAdmin() {
             Organise instruments under each market segment (NSEFUT, NSEOPT, MCXFUT, …).{' '}
             <strong className="text-gray-300">Client trading OFF</strong> blocks new positions for that
             group; <strong className="text-gray-300">Group active</strong> only controls this admin list.
-            <strong className="text-gray-300"> Low–High only</strong> restricts order price to the day range.
+            <strong className="text-gray-300"> Low–High only</strong> restricts order price to the day range.{' '}
+            <strong className="text-gray-300">LTP ±%</strong> keeps orders within live LTP up/down % for the whole group.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -426,10 +465,57 @@ export default function SegmentGroupingAdmin() {
                       updateGroup(gIdx, { allowWithinLowHigh: !g.allowWithinLowHigh })
                     }
                   />
+                  <GroupLtpBracketToggle
+                    checked={!!g.enableLtpBracket}
+                    onChange={() =>
+                      updateGroup(gIdx, {
+                        enableLtpBracket: !g.enableLtpBracket,
+                        ltpBracketPercentUp: g.ltpBracketPercentUp ?? 5,
+                        ltpBracketPercentDown: g.ltpBracketPercentDown ?? 5,
+                      })
+                    }
+                  />
                 </div>
 
                 {isOpen ? (
                   <div className="p-4 border-t border-dark-600 space-y-4">
+                    {g.enableLtpBracket ? (
+                      <div className="flex flex-wrap items-end gap-3 p-3 rounded-lg bg-amber-900/20 border border-amber-700/40">
+                        <p className="text-xs text-amber-200 w-full">
+                          LTP bracket applies to <strong>all users</strong> and every instrument in this group.
+                          Order/limit price must stay within live LTP ±%.
+                        </p>
+                        <label className="text-xs text-gray-400">
+                          % Up
+                          <input
+                            type="number"
+                            min="0.01"
+                            max="100"
+                            step="0.01"
+                            value={g.ltpBracketPercentUp ?? 5}
+                            onChange={(e) =>
+                              updateGroup(gIdx, { ltpBracketPercentUp: parseFloat(e.target.value) || 5 })
+                            }
+                            className="block mt-1 w-20 bg-dark-600 border border-dark-500 rounded px-2 py-1 text-sm text-white"
+                          />
+                        </label>
+                        <label className="text-xs text-gray-400">
+                          % Down
+                          <input
+                            type="number"
+                            min="0.01"
+                            max="100"
+                            step="0.01"
+                            value={g.ltpBracketPercentDown ?? 5}
+                            onChange={(e) =>
+                              updateGroup(gIdx, { ltpBracketPercentDown: parseFloat(e.target.value) || 5 })
+                            }
+                            className="block mt-1 w-20 bg-dark-600 border border-dark-500 rounded px-2 py-1 text-sm text-white"
+                          />
+                        </label>
+                        <span className="text-[10px] text-gray-500 pb-1">Default 5% / 5% if left blank on save</span>
+                      </div>
+                    ) : null}
                     <div>
                       <p className="text-xs text-gray-500 mb-2">
                         Underlyings (symbol roots) — contracts matching these appear in this group

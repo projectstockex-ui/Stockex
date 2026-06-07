@@ -206,14 +206,18 @@ router.post('/margin-preview', protect, async (req, res) => {
     } = await import('../services/segmentGroupingService.js');
     const { isAllowedWithinLowHigh } = await import('../services/instrumentRestrictionService.js');
     const denyCtxPreview = buildInstrumentDenyContext(req.body, instrumentDoc);
-    const segmentLowHigh = await resolveSegmentGroupLowHighForInstrument(instrumentDoc);
-    const segmentClientTrading = await resolveSegmentGroupClientTradingForInstrument(instrumentDoc);
+    const { resolveDayLowHighRange } = await import('../utils/lowHighTradeGate.js');
+    const segmentLowHigh = await resolveSegmentGroupLowHighForInstrument(instrumentDoc, req.body);
+    const segmentClientTrading = await resolveSegmentGroupClientTradingForInstrument(
+      instrumentDoc,
+      req.body
+    );
     const allowedFromDenylist = fullUser
       ? await isAllowedWithinLowHigh(fullUser, denyCtxPreview)
       : false;
     const lowHighRestrict = Boolean(segmentLowHigh.restrict || allowedFromDenylist);
     let segmentGroupTradingBlock = null;
-    if (instrumentDoc && segmentClientTrading.allowed === false) {
+    if (segmentClientTrading.allowed === false) {
       const onlyClosing = await TradingService.orderOnlyReducesOpenPosition(req.user._id, req.body);
       if (!onlyClosing) {
         const gl = segmentClientTrading.groupLabel || segmentClientTrading.groupKey || 'group';
@@ -715,11 +719,11 @@ router.post('/margin-preview', protect, async (req, res) => {
       lowHighRestrict,
       lowHighGroupLabel: segmentLowHigh.groupLabel || null,
       lowHighRange:
-        lowHighRestrict && instrumentDoc
-          ? {
-              low: Number(instrumentDoc.low) || 0,
-              high: Number(instrumentDoc.high) || 0,
-            }
+        lowHighRestrict
+          ? (() => {
+              const r = resolveDayLowHighRange(instrumentDoc, req.body);
+              return r ? { low: r.low, high: r.high } : null;
+            })()
           : null,
     });
   } catch (error) {

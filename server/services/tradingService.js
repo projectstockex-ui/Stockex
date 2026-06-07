@@ -52,6 +52,17 @@ import {
   resolveSegmentGroupClientTradingForInstrument,
   assertSegmentGroupClientTradingAllowed,
 } from './segmentGroupingService.js';
+import {
+  resolveDayLowHighRange,
+  resolveOrderPriceForLowHighCheck,
+  assertOrderWithinDayLowHigh,
+  synthInstrumentFromOrderContext,
+} from '../utils/lowHighTradeGate.js';
+import {
+  validateStopLossTarget,
+  isStopLossTriggered,
+  isTargetTriggered,
+} from '../utils/stopLossValidation.js';
 import { assertLtpBracketOrderAllowed } from './ltpBracketService.js';
 import {
   isBinanceCryptoOrder,
@@ -973,37 +984,36 @@ class TradingService {
     const denyCtx = buildInstrumentDenyContext(orderData, instrument || null);
     await assertHierarchyInstrumentNotDenied(user, denyCtx);
 
-    if (instrument) {
-      const segClientTrading = await resolveSegmentGroupClientTradingForInstrument(instrument);
-      if (!segClientTrading.allowed) {
-        const onlyClosing = await TradeService.orderOnlyReducesOpenPosition(userId, orderData);
-        if (!onlyClosing) {
-          await assertSegmentGroupClientTradingAllowed(instrument);
-        }
+    const instForGroup = instrument || synthInstrumentFromOrderContext(orderData);
+    const segClientTrading = await resolveSegmentGroupClientTradingForInstrument(
+      instForGroup,
+      orderData
+    );
+    if (!segClientTrading.allowed) {
+      const onlyClosing = await TradeService.orderOnlyReducesOpenPosition(userId, orderData);
+      if (!onlyClosing) {
+        await assertSegmentGroupClientTradingAllowed(instForGroup, orderData);
       }
     }
 
     // Segment-group low–high (e.g. Banking ON, IT OFF) + legacy denylist flag
-    const segmentLowHigh = await resolveSegmentGroupLowHighForInstrument(instrument);
+    const segmentLowHigh = await resolveSegmentGroupLowHighForInstrument(instForGroup, orderData);
     const allowedFromDenylist = await isAllowedWithinLowHigh(user, denyCtx);
     const enforceLowHigh = segmentLowHigh.restrict || allowedFromDenylist;
-    if (enforceLowHigh && instrument && (instrument.low || instrument.high)) {
-      const orderPrice =
-        orderData.orderType === 'SL' || orderData.orderType === 'SL-M'
-          ? Number(orderData.triggerPrice || orderData.price || 0)
-          : Number(orderData.price || orderData.ltp || instrument.ltp || 0);
-      const lowPrice = Number(instrument.low || 0);
-      const highPrice = Number(instrument.high || 0);
-      if (lowPrice > 0 && highPrice > 0 && orderPrice > 0) {
-        if (orderPrice < lowPrice || orderPrice > highPrice) {
-          const groupHint = segmentLowHigh.groupLabel
-            ? ` (${segmentLowHigh.groupLabel} group)`
-            : '';
-          throw new Error(
-            `Order price ${orderPrice} is outside the allowed range (${lowPrice} - ${highPrice})${groupHint}. Trading is restricted to within day low–high for this instrument group.`
-          );
-        }
-      }
+    const lowHighRange = enforceLowHigh
+      ? resolveDayLowHighRange(instrument || instForGroup, orderData)
+      : null;
+    if (enforceLowHigh && lowHighRange) {
+      const orderPrice = resolveOrderPriceForLowHighCheck(
+        orderData,
+        instrument || instForGroup
+      );
+      assertOrderWithinDayLowHigh({
+        enforceLowHigh,
+        segmentLowHigh,
+        range: lowHighRange,
+        orderPrice,
+      });
     }
 
     // POSITION NETTING DISABLED - Allow hedging (both BUY and SELL positions can coexist)
@@ -1545,6 +1555,30 @@ class TradingService {
         effectiveEntryPrice = baseEntryPrice - totalSpreadUsd;
       }
     }
+
+    const dayRangeForSlTp =
+      lowHighRange ||
+      (() => {
+        const r = resolveDayLowHighRange(instrument || instForGroup, orderData);
+        return r ? { low: r.low, high: r.high } : null;
+      })();
+    const slTpCheck = validateStopLossTarget({
+      side: orderData.side,
+      entryPrice: effectiveEntryPrice,
+      stopLoss: orderData.stopLoss,
+      target: orderData.target,
+      bid: orderData.bidPrice,
+      ask: orderData.askPrice,
+      spread: totalSpreadUsd,
+      dayLow: dayRangeForSlTp?.low,
+      dayHigh: dayRangeForSlTp?.high,
+      enforceTargetOutsideDayRange: enforceLowHigh,
+    });
+    if (!slTpCheck.ok) {
+      throw new Error(slTpCheck.message);
+    }
+    orderData.stopLoss = slTpCheck.stopLoss;
+    orderData.target = slTpCheck.target;
     
     const finalTradeValue = totalQuantity * effectiveEntryPrice;
     const totalCharges = totalCommission;
@@ -2107,37 +2141,26 @@ class TradingService {
     return null;
   }
 
-  // Check stop loss and target
-  static async checkStopLossTarget(tradeId, currentPrice) {
+  // Check stop loss and target (bid/ask aware; grace period after open)
+  static async checkStopLossTarget(tradeId, currentPrice, tick = {}) {
     const trade = await Trade.findById(tradeId);
     if (!trade || trade.status !== 'OPEN') return null;
 
-    const ref = currentPrice;
-    let shouldClose = false;
+    const ltp = Number(currentPrice) || 0;
+    const bid = Number(tick.bid) || ltp;
+    const ask = Number(tick.ask) || ltp;
+
     let closeReason = null;
-
-    if (trade.stopLoss) {
-      if (trade.side === 'BUY' && ref <= trade.stopLoss) {
-        shouldClose = true;
-        closeReason = 'STOP_LOSS';
-      } else if (trade.side === 'SELL' && ref >= trade.stopLoss) {
-        shouldClose = true;
-        closeReason = 'STOP_LOSS';
-      }
+    if (isStopLossTriggered(trade, { bid, ask, ltp })) {
+      closeReason = 'STOP_LOSS';
+    } else if (isTargetTriggered(trade, { bid, ask, ltp })) {
+      closeReason = 'TARGET';
     }
 
-    if (trade.target && !shouldClose) {
-      if (trade.side === 'BUY' && ref >= trade.target) {
-        shouldClose = true;
-        closeReason = 'TARGET';
-      } else if (trade.side === 'SELL' && ref <= trade.target) {
-        shouldClose = true;
-        closeReason = 'TARGET';
-      }
-    }
-
-    if (shouldClose) {
-      return await this.closeTrade(tradeId, currentPrice, closeReason);
+    if (closeReason) {
+      const exitRef =
+        trade.side === 'BUY' ? bid || ltp : ask || ltp;
+      return await this.closeTrade(tradeId, exitRef || ltp, closeReason);
     }
 
     return null;
@@ -2669,7 +2692,9 @@ class TradingService {
   // Get pending orders - optimized
   static async getPendingOrders(userId) {
     return Trade.find({ user: userId, status: 'PENDING' })
-      .select('userId symbol token pair exchange segment side productType quantity lots entryPrice limitPrice triggerPrice marginUsed status createdAt orderType isCrypto isForex commission')
+      .select(
+        'userId symbol token pair exchange segment side productType quantity lots entryPrice limitPrice triggerPrice stopLoss target marginUsed status createdAt openedAt orderType isCrypto isForex commission'
+      )
       .sort({ createdAt: -1 })
       .lean();
   }
@@ -3204,11 +3229,13 @@ class TradingService {
     }
     if (or.length === 0) return [];
 
-    // Find open positions with stoploss set
+    // Find open positions with stop-loss or target set
     const openTrades = await Trade.find({
       status: 'OPEN',
-      stopLoss: { $ne: null, $gt: 0 },
-      $or: [{ isCrypto: true }, { isForex: true }, { isCrypto: false, isForex: false }],
+      $or: [
+        { stopLoss: { $ne: null, $gt: 0 } },
+        { target: { $ne: null, $gt: 0 } },
+      ],
       $and: [{ $or: or }],
     });
 
@@ -3217,27 +3244,30 @@ class TradingService {
       const currentLtp = Number(ltp || bid || ask || 0);
       if (currentLtp <= 0) continue;
 
-      const sl = Number(trade.stopLoss);
-      if (!Number.isFinite(sl) || sl <= 0) continue;
+      const bidPx = Number(bid || currentLtp);
+      const askPx = Number(ask || currentLtp);
+      let closeReason = null;
+      if (isStopLossTriggered(trade, { bid: bidPx, ask: askPx, ltp: currentLtp })) {
+        closeReason = 'STOP_LOSS';
+      } else if (isTargetTriggered(trade, { bid: bidPx, ask: askPx, ltp: currentLtp })) {
+        closeReason = 'TARGET';
+      }
 
-      // Stoploss trigger (side-based)
-      const side = String(trade.side || '').toUpperCase();
-      const hit =
-        (side === 'BUY' && currentLtp <= sl) ||
-        (side === 'SELL' && currentLtp >= sl);
-
-      if (hit) {
-        console.log(`[StopLoss] Triggered for ${trade.tradeId}: LTP ${currentLtp} >= SL ${trade.stopLoss}`);
+      if (closeReason) {
+        const exitRef = trade.side === 'BUY' ? bidPx : askPx;
+        console.log(
+          `[StopLoss] Triggered for ${trade.tradeId}: ${closeReason} ref=${exitRef} SL=${trade.stopLoss} target=${trade.target}`
+        );
         const result = await this.squareOffPosition(
           trade._id.toString(),
-          'STOP_LOSS',
-          currentLtp,
-          Number(bid || currentLtp),
-          Number(ask || currentLtp)
+          closeReason,
+          exitRef || currentLtp,
+          bidPx,
+          askPx
         );
         if (result.success) {
           closed.push(trade);
-          console.log(`[StopLoss] Closed position ${trade.tradeId} at ${currentLtp}`);
+          console.log(`[StopLoss] Closed position ${trade.tradeId} at ${exitRef || currentLtp}`);
         } else {
           console.error(`[StopLoss] Failed to close ${trade.tradeId}: ${result.message}`);
         }

@@ -4,7 +4,21 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { createChart } from 'lightweight-charts';
 import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
-import { triggerAutosquareSound } from '../utils/tradingAlertSound';
+import {
+  triggerAutosquareSound,
+  playOrderRejectSound,
+  playOrderSuccessSound,
+  primeTradingSounds,
+} from '../utils/tradingAlertSound';
+import {
+  getPriceAlert,
+  savePriceAlert,
+  clearPriceAlert,
+  priceAlertInstrumentKey,
+  PRICE_ALERT_UPDATE_EVENT,
+  PRICE_ALERT_FIRED_EVENT,
+} from '../utils/priceAlertStorage';
+import PriceAlertMonitor from '../components/PriceAlertMonitor';
 import { acquireStockexSocket, releaseStockexSocket } from '../lib/stockexSocket';
 import { mergeMarketTickRow, applyMarketTickBatch } from '../lib/marketTickMerge.js';
 import {
@@ -164,6 +178,80 @@ function binanceCandleSymbol(instrument) {
   const sym = String(instrument.symbol || '').trim().toUpperCase();
   if (!sym) return '';
   return sym.endsWith('USDT') ? sym : `${sym}USDT`;
+}
+
+/** Client-side SL/target sanity check (mirrors server stopLossValidation.js). */
+function validateClientStopLossTarget({
+  side,
+  entryPrice,
+  stopLoss,
+  target,
+  bid,
+  ask,
+  dayLow,
+  dayHigh,
+  enforceTargetOutsideDayRange = false,
+}) {
+  const parsePx = (v) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const sl = parsePx(stopLoss);
+  const tp = parsePx(target);
+  if (sl == null && tp == null) return null;
+
+  const entry = Number(entryPrice) || 0;
+  const refBid = Number(bid) || entry;
+  const refAsk = Number(ask) || entry;
+  const buf = Math.max(0.01, (entry || refBid || refAsk) * 0.0001);
+  const sideU = String(side || '').toUpperCase();
+
+  if (sl != null && sideU === 'BUY') {
+    const ceiling = Math.min(entry || refAsk, refBid) - buf;
+    if (ceiling <= 0 || sl >= ceiling) {
+      return `Stop loss must be below entry/bid for BUY.`;
+    }
+  }
+  if (sl != null && sideU === 'SELL') {
+    const floor = Math.max(entry || refBid, refAsk) + buf;
+    if (sl <= floor) {
+      return `Stop loss must be above entry/ask for SELL.`;
+    }
+  }
+  if (tp != null && sideU === 'BUY') {
+    const floor = Math.max(entry || refAsk, refAsk) + buf;
+    if (tp <= floor) {
+      return `Target must be above entry/ask for BUY.`;
+    }
+  }
+  if (tp != null && sideU === 'SELL') {
+    const ceiling = Math.min(entry || refBid, refBid) - buf;
+    if (ceiling <= 0 || tp >= ceiling) {
+      return `Target must be below entry/bid for SELL.`;
+    }
+  }
+  if (tp != null && enforceTargetOutsideDayRange) {
+    const low = Number(dayLow);
+    const high = Number(dayHigh);
+    if (low > 0 && high >= low && tp >= low && tp <= high) {
+      return (
+        `Target cannot be between day Low ${low} and High ${high}. ` +
+        'Set target below day Low or above day High. Stop loss may be within this range.'
+      );
+    }
+  }
+  return null;
+}
+
+/** Day low/high from live tick or instrument fallback (for Low–High segment grouping). */
+function dayLowHighPayloadFromMarket(quote, instrument) {
+  const q = quote || {};
+  const low = Number(q.low ?? instrument?.low) || 0;
+  const high = Number(q.high ?? instrument?.high) || 0;
+  if (low > 0 && high > 0 && high >= low) {
+    return { dayLow: low, dayHigh: high };
+  }
+  return {};
 }
 
 /** Binance ticks are emitted on both pair (ETHUSDT) and base symbol (ETH); token may be unset on client. */
@@ -1680,8 +1768,9 @@ const UserDashboard = () => {
     const startX = e.clientX;
     const startW = instrumentsPanelWidth;
     let latestW = startW;
+    const maxW = Math.min(520, Math.max(220, Math.floor(window.innerWidth * 0.34)));
     const onMove = (ev) => {
-      latestW = Math.min(520, Math.max(200, startW + ev.clientX - startX));
+      latestW = Math.min(maxW, Math.max(200, startW + ev.clientX - startX));
       setInstrumentsPanelWidth(latestW);
     };
     const onUp = () => {
@@ -1700,6 +1789,16 @@ const UserDashboard = () => {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   }, [instrumentsPanelWidth]);
+
+  useEffect(() => {
+    const clampInstrumentsPanel = () => {
+      const maxW = Math.min(520, Math.max(220, Math.floor(window.innerWidth * 0.34)));
+      setInstrumentsPanelWidth((w) => (w > maxW ? maxW : w));
+    };
+    clampInstrumentsPanel();
+    window.addEventListener('resize', clampInstrumentsPanel);
+    return () => window.removeEventListener('resize', clampInstrumentsPanel);
+  }, []);
 
   // Trading sidebar contract may differ from watchlist selection — ensure Zerodha ticks subscribe
   useEffect(() => {
@@ -1732,9 +1831,10 @@ const UserDashboard = () => {
   ]);
 
   return (
-    <div className="h-screen bg-dark-900 flex flex-col overflow-hidden">
+    <div className="h-screen min-h-[100dvh] bg-dark-900 flex flex-col overflow-hidden">
+      <PriceAlertMonitor marketData={marketData} />
       {/* Header - Desktop */}
-      <header className="bg-dark-800 border-b border-dark-600 px-4 py-2 hidden md:flex items-center justify-between">
+      <header className="bg-dark-800 border-b border-dark-600 px-3 lg:px-4 py-2 hidden lg:flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-6">
           {/* Home Button */}
           <button 
@@ -1808,7 +1908,7 @@ const UserDashboard = () => {
         </div>
 
         {/* Search - Functional search with dropdown */}
-        <div className="flex-1 max-w-md mx-4" ref={headerSearchRef}>
+        <div className="flex-1 max-w-md mx-2 xl:mx-4 min-w-[8rem]" ref={headerSearchRef}>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
             <input
@@ -1967,7 +2067,7 @@ const UserDashboard = () => {
       </header>
 
       {/* Header - Mobile */}
-      <header className="bg-dark-800 border-b border-dark-600 px-4 py-3 flex md:hidden items-center justify-between">
+      <header className="bg-dark-800 border-b border-dark-600 px-3 py-2.5 flex lg:hidden items-center justify-between">
         <button 
           onClick={() => navigate('/user/home')}
           className="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-3 py-1.5 rounded-lg transition-colors"
@@ -2024,7 +2124,7 @@ const UserDashboard = () => {
       {/* Mobile Menu Dropdown - Removed, not needed anymore */}
       {false && showMobileMenu && (
         <div 
-          className="md:hidden absolute top-14 right-2 bg-dark-700 rounded-lg shadow-xl z-50 py-2 min-w-[200px]"
+          className="lg:hidden absolute top-14 right-2 bg-dark-700 rounded-lg shadow-xl z-50 py-2 min-w-[200px]"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-4 py-2 border-b border-dark-600">
@@ -2068,8 +2168,8 @@ const UserDashboard = () => {
         </div>
       )}
 
-      {/* Main Content - Desktop */}
-      <div className="flex-1 hidden md:flex overflow-hidden">
+      {/* Main Content - Desktop (lg+); tablet/phone use mobile layout below */}
+      <div className="flex-1 hidden lg:flex overflow-hidden min-h-0">
         {/* Left Sidebar - Instruments (scrollable list + drag right edge to resize) */}
         <div
           className="flex-shrink-0 h-full min-h-0 flex flex-col relative border-r border-dark-600"
@@ -2118,13 +2218,14 @@ const UserDashboard = () => {
               selectedInstrument={selectedInstrument} 
               marketData={marketData}
               sidebarOpen={!!tradeInstrument}
+              layoutResizeKey={instrumentsPanelWidth}
               usdRate={usdRate}
               onChartLtp={handleChartLtp}
             />
           </div>
           
           {/* Bottom - Positions */}
-          <div className="shrink-0 h-[min(42vh,360px)] min-h-[200px]">
+          <div className="shrink-0 h-[min(36vh,260px)] min-h-[180px] xl:h-[min(42vh,360px)] xl:min-h-[200px]">
           <PositionsPanel 
             activeTab={activeTab}
             setActiveTab={setActiveTab}
@@ -2149,10 +2250,14 @@ const UserDashboard = () => {
           </div>
         </div>
 
-        {/* Right Sidebar - Trading Panel - Fixed width with smooth animation */}
-        <div className={`flex-shrink-0 overflow-hidden transition-all duration-200 ease-out ${tradeInstrument ? 'w-72' : 'w-0'}`}>
+        {/* Right sidebar — inline flex so chart width tracks panel open/close */}
+        <div
+          className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
+            tradeInstrument ? 'w-64 xl:w-72' : 'w-0'
+          }`}
+        >
           {tradeInstrument && (
-            <div className="w-72 h-full">
+            <div className="w-64 xl:w-72 h-full min-w-[16rem]">
               <TradingPanel 
                 instrument={tradeInstrument}
                 orderType={orderType}
@@ -2178,8 +2283,8 @@ const UserDashboard = () => {
         </div>
       </div>
 
-      {/* Main Content - Mobile */}
-      <div className="flex-1 flex flex-col md:hidden overflow-hidden pb-16">
+      {/* Main Content - Mobile & tablet */}
+      <div className="flex-1 flex flex-col lg:hidden overflow-hidden pb-16 min-h-0">
         {mobileView === 'quotes' && (
           <MobileInstrumentsPanel 
             selectedInstrument={selectedInstrument}
@@ -2213,11 +2318,27 @@ const UserDashboard = () => {
             isCryptoTradingOpen={isCryptoTradingOpen()}
           />
         )}
-        {mobileView === 'positions' && (
-          <MobilePositionsPanel activeTab="positions" user={user} marketData={marketData} cryptoOnly={cryptoOnly} mcxOnly={mcxOnly} forexOnly={forexOnly} walletData={walletData} usdRate={usdRate} />
-        )}
-        {mobileView === 'history' && (
-          <MobilePositionsPanel activeTab="history" user={user} marketData={marketData} cryptoOnly={cryptoOnly} mcxOnly={mcxOnly} forexOnly={forexOnly} walletData={walletData} usdRate={usdRate} />
+        {(mobileView === 'positions' || mobileView === 'history') && (
+          <MobilePositionsPanel
+            initialTab={mobileView === 'history' ? 'history' : 'positions'}
+            user={user}
+            marketData={marketData}
+            cryptoOnly={cryptoOnly}
+            mcxOnly={mcxOnly}
+            forexOnly={forexOnly}
+            nseBseOnly={nseBseOnly}
+            walletData={walletData}
+            usdRate={usdRate}
+            refreshKey={positionsRefreshKey}
+            selectedInstrument={selectedInstrument}
+            onRefreshPositions={refreshPositions}
+            segmentPermissionsGate={segmentPermissionsGate}
+            isCryptoTradingOpen={isCryptoTradingOpen()}
+            isMcxTradingOpen={isMcxTradingOpen()}
+            isNseBseTradingOpen={isNseBseTradingOpen()}
+            setShowReferralModal={setShowReferralModal}
+            onTotalPnLChange={setTotalPnL}
+          />
         )}
         {mobileView === 'profile' && (
           <MobileProfilePanel user={user} walletData={walletData} onLogout={handleLogout} />
@@ -2225,7 +2346,7 @@ const UserDashboard = () => {
       </div>
 
       {/* Mobile Bottom Navigation - Fixed */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-dark-800 border-t border-dark-600 flex items-center justify-around py-1.5 z-40">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-dark-800 border-t border-dark-600 flex items-center justify-around py-1.5 z-40">
         <button 
           onClick={() => setMobileView('quotes')}
           className={`flex flex-col items-center p-1.5 ${mobileView === 'quotes' ? 'text-green-400' : 'text-gray-400'}`}
@@ -3674,12 +3795,12 @@ function liveChartQuoteFromTick(tick) {
   };
 }
 
-const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.5, onChartLtp }) => {
+const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, layoutResizeKey = 0, usdRate = 83.5, onChartLtp }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
   const volumeSeriesRef = useRef(null);
-  const chartResizeHandlerRef = useRef(null);
+  const chartResizeObserverRef = useRef(null);
   const [chartInterval, setChartInterval] = useState('FIFTEEN_MINUTE');
   const [loading, setLoading] = useState(false);
   const [livePrice, setLivePrice] = useState(null);
@@ -3720,20 +3841,32 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
     lastCandleRef.current = null;
   }, [chartInterval, chartInstrumentKey]);
 
-  // Resize chart when sidebar opens/closes
-  useEffect(() => {
-    if (chartRef.current && chartContainerRef.current) {
-      const timer = setTimeout(() => {
-        if (chartRef.current && chartContainerRef.current) {
-          chartRef.current.applyOptions({
-            width: chartContainerRef.current.clientWidth,
-            height: chartContainerRef.current.clientHeight,
-          });
-        }
-      }, 250);
-      return () => clearTimeout(timer);
+  const resizeChartToContainer = useCallback(() => {
+    const el = chartContainerRef.current;
+    const chart = chartRef.current;
+    if (!el || !chart) return;
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if (w > 0 && h > 0) {
+      chart.applyOptions({ width: w, height: h });
     }
-  }, [sidebarOpen]);
+  }, []);
+
+  // Resize when order panel opens/closes (flex column width changes after transition)
+  useEffect(() => {
+    const t1 = setTimeout(resizeChartToContainer, 50);
+    const t2 = setTimeout(resizeChartToContainer, 280);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [sidebarOpen, resizeChartToContainer]);
+
+  // Watchlist drag / layout width changes
+  useEffect(() => {
+    const t = setTimeout(resizeChartToContainer, 80);
+    return () => clearTimeout(t);
+  }, [layoutResizeKey, resizeChartToContainer]);
 
   const tickForChart = selectedInstrument ? chartTickForInstrument(marketData, selectedInstrument) : null;
   const usdChartQuote =
@@ -3930,12 +4063,8 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         volumeSeriesRef.current = null;
       }
 
-      const containerWidth = el.clientWidth || 800;
-      const containerHeight = el.clientHeight || 400;
-
       const chart = createChart(el, {
-        width: containerWidth,
-        height: containerHeight,
+        autoSize: true,
         layout: {
           background: { color: '#111111' },
           textColor: '#d1d5db',
@@ -3971,26 +4100,23 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         scaleMargins: { top: 0.8, bottom: 0 },
       });
 
-      const handleResize = () => {
-        if (chartContainerRef.current && chartRef.current) {
-          chartRef.current.applyOptions({
-            width: chartContainerRef.current.clientWidth,
-            height: chartContainerRef.current.clientHeight,
-          });
-        }
-      };
-      chartResizeHandlerRef.current = handleResize;
-      window.addEventListener('resize', handleResize);
-      setTimeout(handleResize, 100);
+      const ro = new ResizeObserver(() => {
+        requestAnimationFrame(resizeChartToContainer);
+      });
+      ro.observe(el);
+      chartResizeObserverRef.current = ro;
+      window.addEventListener('resize', resizeChartToContainer);
+      requestAnimationFrame(resizeChartToContainer);
+      setTimeout(resizeChartToContainer, 120);
+      setTimeout(resizeChartToContainer, 400);
     }, 80);
 
     return () => {
       disposed = true;
       clearTimeout(initTimer);
-      if (chartResizeHandlerRef.current) {
-        window.removeEventListener('resize', chartResizeHandlerRef.current);
-        chartResizeHandlerRef.current = null;
-      }
+      chartResizeObserverRef.current?.disconnect();
+      chartResizeObserverRef.current = null;
+      window.removeEventListener('resize', resizeChartToContainer);
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
@@ -3998,7 +4124,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         volumeSeriesRef.current = null;
       }
     };
-  }, [chartInstrumentKey]);
+  }, [chartInstrumentKey, resizeChartToContainer]);
 
   // Load historical candles only when instrument or timeframe changes (never on live ticks — that caused blink)
   useEffect(() => {
@@ -4096,16 +4222,16 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
   ];
 
   return (
-    <div className="h-full min-h-0 flex-1 flex flex-col bg-dark-800">
+    <div className="h-full min-h-0 flex-1 flex flex-col bg-dark-800 min-w-0">
       {/* Chart Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-dark-600">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">Chart</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 lg:px-4 py-2 border-b border-dark-600">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="font-medium text-sm">Chart</span>
             {loading && <RefreshCw size={14} className="animate-spin text-green-400" />}
           </div>
           {selectedInstrument && (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
               <span className={`font-medium ${
                 selectedInstrument.isCrypto || selectedInstrument.exchange === 'BINANCE'
                   ? 'text-orange-400'
@@ -4137,7 +4263,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         </div>
         
         {selectedInstrument && headerQuote && (
-          <div className="flex items-center gap-4 text-xs text-gray-400">
+          <div className="hidden sm:flex flex-wrap items-center gap-2 lg:gap-4 text-xs text-gray-400 shrink-0">
             {isUsdSpotInstrument(selectedInstrument) ? (
               <>
                 <span>
@@ -4178,7 +4304,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
       </div>
 
       {/* Chart Area — container always mounted so lightweight-charts can initialize */}
-      <div className="flex-1 relative min-h-[300px]">
+      <div className="flex-1 relative min-h-[200px] sm:min-h-[260px] lg:min-h-[300px]">
         {!selectedInstrument ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
             <BarChart2 size={48} className="mb-4 opacity-30" />
@@ -4199,12 +4325,12 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
 
       {/* Timeframe Selector */}
       {selectedInstrument && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-dark-600 text-sm">
+        <div className="flex items-center gap-1.5 px-3 lg:px-4 py-2 border-t border-dark-600 text-xs sm:text-sm overflow-x-auto shrink-0">
           {intervals.map(tf => (
             <button
               key={tf.value}
               onClick={() => setChartInterval(tf.value)}
-              className={`px-3 py-1 rounded ${chartInterval === tf.value ? 'bg-green-600 text-white' : 'hover:bg-dark-600 text-gray-400 hover:text-white'}`}
+              className={`px-2.5 sm:px-3 py-1 rounded whitespace-nowrap shrink-0 ${chartInterval === tf.value ? 'bg-green-600 text-white' : 'hover:bg-dark-600 text-gray-400 hover:text-white'}`}
             >
               {tf.label}
             </button>
@@ -4319,6 +4445,48 @@ function buildPositionsGridTemplate({ showLimit, showSl, showTp }) {
   parts.push('minmax(3rem,0.7fr)', 'minmax(3rem,0.8fr)', '3.5rem');
   return parts.join(' ');
 }
+
+/** Pending table columns — header and rows must use the same template. */
+function buildPendingGridTemplate() {
+  return [
+    'minmax(5.5rem, 1.15fr)',
+    'minmax(2.75rem, 0.7fr)',
+    '3rem',
+    '2.75rem',
+    'minmax(4.25rem, 0.9fr)',
+    'minmax(4.5rem, 0.95fr)',
+    'minmax(3.5rem, 0.8fr)',
+    'minmax(3.5rem, 0.8fr)',
+    'minmax(5rem, 1.05fr)',
+    'minmax(3.25rem, 0.8fr)',
+    '2.75rem',
+    '4.25rem',
+  ].join(' ');
+}
+
+function formatPendingPlacedTime(order) {
+  const ts = order?.createdAt || order?.openedAt;
+  if (!ts) return null;
+  const dt = new Date(ts);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
+
+function fmtPendingSlTpCell(val, isCryptoRow, isForexRow, currencySymbol = '') {
+  const n = parseFloat(val);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (isCryptoRow || isForexRow) return Number(n).toFixed(2);
+  return `${currencySymbol}${n.toFixed(2)}`;
+}
+
+const pendingGridStyle = { gridTemplateColumns: buildPendingGridTemplate() };
 
 const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, nseBseOnly = false, usdRate = 83.5, setShowReferralModal, isCryptoTradingOpen = true, isMcxTradingOpen = true, isNseBseTradingOpen = true, segmentPermissionsGate = {}, onTotalPnLChange }) => {
   const [positions, setPositions] = useState([]);
@@ -4869,19 +5037,6 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     }),
     [showLimitCol, showSlCol, showTpCol]
   );
-  const showPendingLimitCol = useMemo(
-    () => activeTab === 'pending' && pendingOrders.some(hasTradeLimit),
-    [activeTab, pendingOrders]
-  );
-  const pendingGridStyle = useMemo(
-    () => ({
-      gridTemplateColumns: showPendingLimitCol
-        ? 'minmax(4rem,1fr) minmax(4rem,1.2fr) 2.5rem 2.5rem minmax(3.5rem,1fr) minmax(3rem,0.8fr) minmax(3rem,0.8fr) minmax(3rem,0.7fr) minmax(3rem,0.7fr) 3.5rem'
-        : 'minmax(4rem,1fr) minmax(4rem,1.2fr) 2.5rem 2.5rem minmax(3.5rem,1fr) minmax(3rem,0.8fr) minmax(3rem,0.7fr) minmax(3rem,0.7fr) 3.5rem',
-    }),
-    [showPendingLimitCol]
-  );
-
   return (
     <>
     <div className="h-full min-h-0 bg-dark-800 border-t border-dark-600 flex flex-col">
@@ -5040,18 +5195,18 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         </div>
       </div>
 
-      {/* Table Header */}
+      {/* Table — scroll horizontally on narrow center column */}
+      <div className="flex-1 min-h-0 overflow-x-auto">
+        <div className="min-w-[920px] h-full flex flex-col">
       <div
-        className={`shrink-0 grid gap-2 px-3 py-1 text-xs text-gray-400 border-b border-dark-700 ${
+        className={`shrink-0 grid gap-x-2 gap-y-0 px-3 py-1 text-xs text-gray-400 border-b border-dark-700 items-center ${
           activeTab === 'history'
             ? 'grid-cols-10'
-            : activeTab === 'pending' && !showPendingLimitCol
-              ? 'grid-cols-9'
-              : activeTab === 'pending'
-                ? ''
-                : activeTab !== 'positions'
-                  ? 'grid-cols-9'
-                  : ''
+            : activeTab === 'pending'
+              ? ''
+              : activeTab !== 'positions'
+                ? 'grid-cols-9'
+                : ''
         }`}
         style={
           activeTab === 'positions'
@@ -5061,33 +5216,41 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               : undefined
         }
       >
-        <div>User ID</div>
-        <div>Symbol</div>
+        <div className="min-w-0 truncate">User ID</div>
+        <div className="min-w-0">Symbol</div>
         <div>Side</div>
-        <div className="text-right">Qty</div>
-        <div className="text-right">
+        <div className="text-right tabular-nums">Qty</div>
+        <div className="text-right tabular-nums">
           {activeTab === 'positions' ? (
             <>
               <div>Entry</div>
               <div className="text-[10px] text-gray-500 font-normal">Time</div>
             </>
+          ) : activeTab === 'pending' ? (
+            'Order Px'
           ) : (
             'Entry'
           )}
         </div>
-        {activeTab === 'pending' && showPendingLimitCol ? (
-          <div className="text-right text-amber-400/90">Limit</div>
-        ) : null}
         <div className="text-right">
           {activeTab === 'history' ? (
             <>
               <div>Exit</div>
               <div className="text-[10px] text-gray-500 font-normal">Time</div>
             </>
+          ) : activeTab === 'pending' ? (
+            'LTP'
           ) : (
             'LTP'
           )}
         </div>
+        {activeTab === 'pending' ? (
+          <>
+            <div className="text-right text-red-400/90">SL</div>
+            <div className="text-right text-emerald-400/90">Target</div>
+            <div className="text-right">Placed</div>
+          </>
+        ) : null}
         {activeTab === 'positions' && showLimitCol ? (
           <div className="text-right text-amber-400/90">Limit</div>
         ) : null}
@@ -5319,46 +5482,41 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
                 )
               : livePx;
           const pendingEntryLabel =
-            isCryptoRow && !isForexRow && displayPx != null ? `${(displayPx / usdRate).toFixed(2)}` : null;
+            isCryptoRow && !isForexRow && displayPx != null ? `${Number(displayPx).toFixed(2)}` : null;
           const pendingLiveLabel =
             isCryptoRow && !isForexRow && livePx > 0 ? `${Number(livePx).toFixed(2)}` : null;
-
-          const pendingLimitPx =
-            order.orderType === 'LIMIT' && Number(order.limitPrice) > 0
-              ? parseFloat(order.limitPrice)
-              : null;
 
           return (
             <div
               key={order._id}
-              className={`grid gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700 ${
-                showPendingLimitCol ? '' : 'grid-cols-9'
-              }`}
-              style={showPendingLimitCol ? pendingGridStyle : undefined}
+              className="grid gap-x-2 gap-y-0 px-3 py-1.5 text-sm border-b border-dark-700 hover:bg-dark-700 items-center"
+              style={pendingGridStyle}
             >
-              <div className="truncate text-purple-400 font-mono text-xs">{order.userId || user?.userId || '-'}</div>
-              <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{order.symbol}</div>
+              <div className="min-w-0 truncate text-purple-400 font-mono text-xs">{order.userId || user?.userId || '-'}</div>
+              <div className={`min-w-0 truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{order.symbol}</div>
               <div className={order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{order.side}</div>
-              <div className="text-right">{order.quantity}</div>
-              <div className="text-right">
+              <div className="text-right tabular-nums">{order.quantity}</div>
+              <div className="text-right tabular-nums text-amber-300/90">
                 {pendingEntryLabel != null
                   ? pendingEntryLabel
                   : displayPx != null
                     ? `${isCryptoRow || isForexRow ? '' : currencySymbol}${displayPx.toFixed(2)}`
                     : '—'}
               </div>
-              {showPendingLimitCol ? (
-                <div className="text-right text-amber-300/90">
-                  {pendingLimitPx != null
-                    ? `${isCryptoRow || isForexRow ? '' : currencySymbol}${pendingLimitPx.toFixed(2)}`
-                    : '—'}
-                </div>
-              ) : null}
-              <div className="text-right">
+              <div className="text-right tabular-nums">
                 {pendingLiveLabel != null ? pendingLiveLabel : livePxInr > 0 ? `${isCryptoRow || isForexRow ? '' : currencySymbol}${Number(livePxInr).toFixed(2)}` : '—'}
               </div>
-              <div className="text-right text-yellow-400">{isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(order.commission) || 0).toFixed(2)}</div>
-              <div className="text-right text-gray-400">{order.orderType}</div>
+              <div className="text-right tabular-nums text-red-300/90">
+                {fmtPendingSlTpCell(order.stopLoss, isCryptoRow, isForexRow, currencySymbol)}
+              </div>
+              <div className="text-right tabular-nums text-emerald-300/90">
+                {fmtPendingSlTpCell(order.target, isCryptoRow, isForexRow, currencySymbol)}
+              </div>
+              <div className="text-right text-[11px] text-gray-400 tabular-nums whitespace-nowrap">
+                {formatPendingPlacedTime(order) || '—'}
+              </div>
+              <div className="text-right tabular-nums text-yellow-400">{isCryptoRow || isForexRow ? '' : currencySymbol}{(parseFloat(order.commission) || 0).toFixed(2)}</div>
+              <div className="text-right text-gray-400 text-xs">{order.orderType}</div>
               <div className="text-center">
                 <button
                   onClick={() => handleCancelOrder(order._id)}
@@ -5491,6 +5649,8 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           </div>
         )}
       </div>
+        </div>
+      </div>
     </div>
     {partialClosePos && (
       <PartialPositionModal
@@ -5553,9 +5713,72 @@ const TradingPanel = ({
   const [apiContractLotSize, setApiContractLotSize] = useState(null);
   const [tradeConfirmOpen, setTradeConfirmOpen] = useState(false);
   const [sideConfirmed, setSideConfirmed] = useState(false);
+  const [priceAlertInput, setPriceAlertInput] = useState('');
+  const [savedPriceAlert, setSavedPriceAlert] = useState(null);
+  const [priceAlertNotice, setPriceAlertNotice] = useState('');
   const ltpLocalHistoryRef = useRef([]);
   const livePriceRef = useRef(0);
   const LTP_HISTORY_SAMPLE_MS = 2000;
+  const priceAlertUserId = String(user?._id || user?.id || '');
+
+  const refreshSavedPriceAlert = useCallback(() => {
+    if (!priceAlertUserId || !instrument) {
+      setSavedPriceAlert(null);
+      return;
+    }
+    setSavedPriceAlert(getPriceAlert(priceAlertUserId, instrument));
+  }, [priceAlertUserId, instrument]);
+
+  useEffect(() => {
+    setStopLoss('');
+    setTarget('');
+    setLimitPrice('');
+    refreshSavedPriceAlert();
+    const row = priceAlertUserId && instrument ? getPriceAlert(priceAlertUserId, instrument) : null;
+    setPriceAlertInput(row?.price != null ? String(row.price) : '');
+    setPriceAlertNotice('');
+  }, [instrument?.token, instrument?.symbol, instrument?.pair, instrument?.tradingSymbol, refreshSavedPriceAlert, priceAlertUserId, instrument]);
+
+  useEffect(() => {
+    const onUpdated = () => refreshSavedPriceAlert();
+    const onFired = (e) => {
+      const fired = e?.detail;
+      if (!fired || !instrument) return;
+      if (String(fired.instrumentKey) !== priceAlertInstrumentKey(instrument)) return;
+      setPriceAlertNotice(fired.message || 'Price alert triggered');
+      setSavedPriceAlert(null);
+    };
+    window.addEventListener(PRICE_ALERT_UPDATE_EVENT, onUpdated);
+    window.addEventListener(PRICE_ALERT_FIRED_EVENT, onFired);
+    return () => {
+      window.removeEventListener(PRICE_ALERT_UPDATE_EVENT, onUpdated);
+      window.removeEventListener(PRICE_ALERT_FIRED_EVENT, onFired);
+    };
+  }, [refreshSavedPriceAlert, instrument]);
+
+  const handleSavePriceAlert = () => {
+    primeTradingSounds();
+    const result = savePriceAlert(priceAlertUserId, instrument, priceAlertInput);
+    if (!result.ok) {
+      setPriceAlertNotice(result.message || 'Invalid price');
+      return;
+    }
+    setSavedPriceAlert(result.alert);
+    setPriceAlertNotice(`Alert saved @ ${Number(result.alert.price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
+  };
+
+  const handleClearPriceAlert = () => {
+    clearPriceAlert(priceAlertUserId, instrument);
+    setSavedPriceAlert(null);
+    setPriceAlertInput('');
+    setPriceAlertNotice('Price alert cleared');
+  };
+
+  useEffect(() => {
+    if (orderMode === 'SL' || orderMode === 'SL-M') {
+      setLimitPrice('');
+    }
+  }, [orderMode]);
   
   // Crypto: lots-mode for USD spot trading
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.exchange === 'BINANCE');
@@ -5779,7 +6002,7 @@ const TradingPanel = ({
     if (user?.token) fetchSettings();
   }, [user?.token, instrument?.exchange, isUsdSpot, isForex]);
 
-  // When instrument changes, seed price + limit (crypto spot = USDT; forex/US spot = numeric)
+  // When instrument changes, seed @ Price display only (limit/trigger is manual entry)
   useEffect(() => {
     if (!livePrice || !instrument) return;
     if (isUsdSpot) {
@@ -5787,10 +6010,8 @@ const TradingPanel = ({
         ? String(Number(livePrice))
         : spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString();
       setPrice(p);
-      setLimitPrice(p);
     } else {
       setPrice(prev => (!prev || prev === '' || prev === '0') ? livePrice.toString() : prev);
-      setLimitPrice(prev => (!prev || prev === '' || prev === '0') ? livePrice.toString() : prev);
     }
   }, [instrument?.token, instrument?.pair, instrument?.symbol, isUsdSpot, isCryptoOnly, livePrice]);
 
@@ -5807,11 +6028,6 @@ const TradingPanel = ({
   useEffect(() => {
     if (!isUsdSpot || !livePrice || !instrument) return;
     setPrice(
-      isCryptoOnly
-        ? String(Number(livePrice))
-        : spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString()
-    );
-    setLimitPrice(
       isCryptoOnly
         ? String(Number(livePrice))
         : spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString()
@@ -6025,6 +6241,7 @@ const TradingPanel = ({
     } else {
       body.lots = 1; // For crypto/forex, lots is not used
     }
+    Object.assign(body, dayLowHighPayloadFromMarket(liveData, instrument));
     return body;
   };
 
@@ -6075,7 +6292,7 @@ const TradingPanel = ({
 
     const debounce = setTimeout(fetchMarginPreview, 300);
     return () => clearTimeout(debounce);
-  }, [instrument, lots, cryptoQuantity, price, productType, orderType, user, totalQuantity, contractLotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, execBid, execAsk, effectiveSideLower, isSideReady]);
+  }, [instrument, lots, cryptoQuantity, price, productType, orderType, user, totalQuantity, contractLotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, execBid, execAsk, effectiveSideLower, isSideReady, liveData?.low, liveData?.high]);
 
   // Fetch lot/qty limits for ℹ️ settings panel (works even when user lots = 0)
   useEffect(() => {
@@ -6118,17 +6335,23 @@ const TradingPanel = ({
 
   // Place order (optional explicitSide when confirming from modal with opposite side vs current stripe highlight)
   const handlePlaceOrder = async (explicitSide) => {
+    primeTradingSounds();
+    const rejectOrder = (msg) => {
+      playOrderRejectSound();
+      setError(msg);
+    };
+
     // Check crypto time window
     if (isCryptoTradingBlocked) {
       const cryptoSettings = segmentPermissionsGate?.CRYPTOFUT || segmentPermissionsGate?.CRYPTOOPT || {};
       const startTimeStr = cryptoSettings.cryptoStartTime || '';
       const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
       if (closeTimeStr) {
-        setError(`Crypto trading closed at ${closeTimeStr} IST. End time is ${closeTimeStr} so you cannot open trade.`);
+        rejectOrder(`Crypto trading closed at ${closeTimeStr} IST. End time is ${closeTimeStr} so you cannot open trade.`);
       } else if (startTimeStr) {
-        setError(`Crypto trading opens at ${startTimeStr} IST. You cannot open trade before start time.`);
+        rejectOrder(`Crypto trading opens at ${startTimeStr} IST. You cannot open trade before start time.`);
       } else {
-        setError('Crypto trading window not set');
+        rejectOrder('Crypto trading window not set');
       }
       return;
     }
@@ -6140,12 +6363,12 @@ const TradingPanel = ({
 
     // Check market status for MARKET orders
     if (orderMode === 'MARKET' && !marketStatus.open) {
-      setError(marketStatus.reason || 'Market is closed');
+      rejectOrder(marketStatus.reason || 'Market is closed');
       return;
     }
 
     if (totalQuantity <= 0) {
-      setError('Enter quantity greater than 0');
+      rejectOrder('Enter quantity greater than 0');
       return;
     }
 
@@ -6167,21 +6390,43 @@ const TradingPanel = ({
     }
 
     if (previewGate?.lotsError) {
-      setError(previewGate.lotsError);
+      rejectOrder(previewGate.lotsError);
+      return;
+    }
+
+    const dayDh = dayLowHighPayloadFromMarket(liveData, instrument);
+    const slTpErr = validateClientStopLossTarget({
+      side: (explicitSide || orderType || '').toUpperCase(),
+      entryPrice: isUsdSpot ? Number(livePrice) : parseFloat(price) || Number(livePrice),
+      stopLoss,
+      target,
+      bid: execBid,
+      ask: execAsk,
+      dayLow: previewGate?.lowHighRange?.low ?? dayDh.dayLow,
+      dayHigh: previewGate?.lowHighRange?.high ?? dayDh.dayHigh,
+      enforceTargetOutsideDayRange: Boolean(previewGate?.lowHighRestrict),
+    });
+    if (slTpErr) {
+      rejectOrder(slTpErr);
       return;
     }
 
     if (previewGate?.lowHighRestrict && previewGate?.lowHighRange) {
       const lowPx = Number(previewGate.lowHighRange.low) || 0;
       const highPx = Number(previewGate.lowHighRange.high) || 0;
+      const sideNow = String(explicitSide || orderType || '').toLowerCase();
       const orderPrice =
         orderMode === 'SL' || orderMode === 'SL-M'
           ? parseFloat(stopLoss) || parseFloat(price) || Number(livePrice) || 0
-          : parseFloat(price) || Number(livePrice) || 0;
+          : orderMode === 'LIMIT'
+            ? parseFloat(limitPrice) || parseFloat(price) || Number(livePrice) || 0
+            : orderMode === 'MARKET'
+              ? (sideNow === 'buy' ? Number(execAsk) : Number(execBid)) || Number(livePrice) || 0
+              : parseFloat(price) || Number(livePrice) || 0;
       if (lowPx > 0 && highPx > 0 && orderPrice > 0) {
         if (orderPrice < lowPx || orderPrice > highPx) {
           const grp = previewGate.lowHighGroupLabel ? ` (${previewGate.lowHighGroupLabel})` : '';
-          setError(
+          rejectOrder(
             `Order price must be between day Low ${lowPx} and High ${highPx}${grp}. Low–High restriction is ON for this instrument group.`
           );
           return;
@@ -6191,22 +6436,22 @@ const TradingPanel = ({
 
     if (previewGate && !previewGate.canPlace) {
       if (previewGate.lotsError) {
-        setError(previewGate.lotsError);
+        rejectOrder(previewGate.lotsError);
         return;
       }
       const mShort = Number(previewGate.marginShortfall || 0);
       const bShort = Number(previewGate.brokerageShortfall || 0);
       const brokerageDue = Number(previewGate.brokerage || 0) > 0.01;
       if (mShort > 0 && bShort > 0 && brokerageDue) {
-        setError(
+        rejectOrder(
           `Insufficient funds. Need ₹${mShort.toLocaleString('en-IN')} more margin and ₹${bShort.toLocaleString('en-IN')} more for brokerage.`
         );
       } else if (mShort > 0) {
-        setError(`Insufficient margin. Need ₹${mShort.toLocaleString('en-IN')} more available margin.`);
+        rejectOrder(`Insufficient margin. Need ₹${mShort.toLocaleString('en-IN')} more available margin.`);
       } else if (bShort > 0) {
-        setError(`Insufficient available margin for brokerage (₹${Number(previewGate.brokerage || 0).toLocaleString('en-IN')}). Need ₹${bShort.toLocaleString('en-IN')} more available margin.`);
+        rejectOrder(`Insufficient available margin for brokerage (₹${Number(previewGate.brokerage || 0).toLocaleString('en-IN')}). Need ₹${bShort.toLocaleString('en-IN')} more available margin.`);
       } else {
-        setError('Cannot place trade. Check quantity limits or refresh margin preview.');
+        rejectOrder('Cannot place trade. Check quantity limits or refresh margin preview.');
       }
       return;
     }
@@ -6268,6 +6513,7 @@ const TradingPanel = ({
       if (!isUsdSpot) {
         orderData.lots = isOptions ? inputLots : totalQuantity;
       }
+      Object.assign(orderData, dayLowHighPayloadFromMarket(liveData, instrument));
 
       console.log('Placing order:', orderData);
 
@@ -6287,6 +6533,7 @@ const TradingPanel = ({
       const gateSeg = String(orderData.segment || orderData.displaySegment || '').trim();
       const gateErr = validateLimitPendingFromSegmentPerms(segmentPermissionsGate, gateSeg, orderMode);
       if (gateErr) {
+        playOrderRejectSound();
         setError(gateErr);
         setLoading(false);
         return;
@@ -6300,6 +6547,7 @@ const TradingPanel = ({
               ? livePrice
               : parseFloat(price) || livePrice;
         if (!isPriceInLtpBracket(checkPx, ltpBracketBounds)) {
+          playOrderRejectSound();
           setError(`Price must be within ${formatLtpBracketRange(ltpBracketBounds)} (LTP bracket).`);
           setLoading(false);
           return;
@@ -6316,6 +6564,7 @@ const TradingPanel = ({
           ? `✅ ${instrument.symbol}: ${totalQuantity.toFixed(6)} units`
           : `Order executed! Margin: ${data.marginBlocked?.toLocaleString()}`;
       
+      playOrderSuccessSound();
       setSuccess(statusMsg);
       // Refresh wallet and positions after successful order
       if (onRefreshWallet) onRefreshWallet();
@@ -6325,6 +6574,7 @@ const TradingPanel = ({
         onClose();
       }, 2000);
     } catch (err) {
+      playOrderRejectSound();
       setError(err.response?.data?.message || 'Failed to place order');
     } finally {
       setLoading(false);
@@ -6777,7 +7027,14 @@ const TradingPanel = ({
 
         {ltpBracketBounds ? (
           <div className="bg-amber-900/25 border border-amber-600/50 text-amber-100 px-3 py-2 rounded text-sm">
-            <span className="font-medium">LTP bracket</span> (you traded inside this range): place orders between{' '}
+            <span className="font-medium">LTP bracket</span>
+            {instrument?.ltpBracket?.source === 'group' || instrument?.ltpBracket?.groupLabel ? (
+              <>
+                {instrument?.ltpBracket?.groupLabel ? ` (${instrument.ltpBracket.groupLabel})` : ''}: orders must stay between{' '}
+              </>
+            ) : (
+              <> (you traded inside this range): place orders between{' '}</>
+            )}
             <span className="font-mono text-white">{formatLtpBracketRange(ltpBracketBounds)}</span>
             <span className="text-amber-200/80 text-xs block mt-1">
               LTP {Number(livePrice).toLocaleString()} · −{ltpBracketBounds.percentDown}% / +{ltpBracketBounds.percentUp}%
@@ -6910,7 +7167,7 @@ const TradingPanel = ({
                     ? 'Limit price per unit'
                     : 'Enter limit price'
                   : isUsdSpot
-                    ? 'Trigger price per unit'
+                    ? 'Enter trigger price per unit'
                     : 'Enter trigger price'
               }
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 focus:outline-none focus:border-green-500"
@@ -6956,19 +7213,70 @@ const TradingPanel = ({
             {stopLoss && <span className="text-red-400">SL: {stopLoss}</span>}
             {stopLoss && target && ' | '}
             {target && <span className="text-green-400">Target: {target}</span>}
-            {' - Auto exit when price hits'}
+            {marginPreview?.lowHighRestrict
+              ? ' — SL may be inside day range; target must be outside.'
+              : ' — auto exit on price hit'}
           </div>
         )}
+
+        {/* Price Alert with Sound */}
+        <div>
+          <label className="block text-xs text-gray-400 mb-2 flex items-center gap-1.5">
+            <Bell size={12} className="text-amber-400" />
+            Price Alert (with Sound)
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              value={priceAlertInput}
+              onChange={(e) => setPriceAlertInput(e.target.value)}
+              placeholder={isUsdSpot ? 'Alert when LTP reaches…' : 'Alert price'}
+              className="flex-1 min-w-0 bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500"
+            />
+            <button
+              type="button"
+              onClick={handleSavePriceAlert}
+              className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded text-sm font-medium text-white shrink-0"
+            >
+              Save
+            </button>
+            {savedPriceAlert ? (
+              <button
+                type="button"
+                onClick={handleClearPriceAlert}
+                className="px-2 py-2 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-300 shrink-0"
+                title="Clear alert"
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+          {savedPriceAlert ? (
+            <p className="text-xs text-amber-400/90 mt-1.5">
+              Active @{' '}
+              <span className="font-mono text-amber-200">
+                {Number(savedPriceAlert.price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </span>
+              {' '}— sound when LTP crosses this price
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500 mt-1.5">Save a price; you will hear a sound when LTP reaches it.</p>
+          )}
+          {priceAlertNotice ? (
+            <p className="text-xs text-amber-300/80 mt-1">{priceAlertNotice}</p>
+          ) : null}
+        </div>
 
         {/* Error/Success Messages */}
         {marginPreview?.lowHighRestrict && marginPreview?.lowHighRange ? (
           <div className="bg-amber-900/30 border border-amber-600/50 text-amber-200 px-3 py-2 rounded text-sm">
-            Low–High only
-            {marginPreview.lowHighGroupLabel ? ` (${marginPreview.lowHighGroupLabel})` : ''}: orders must be between{' '}
+            Low–High ON
+            {marginPreview.lowHighGroupLabel ? ` (${marginPreview.lowHighGroupLabel})` : ''}: order price must be between{' '}
             <span className="font-mono text-amber-100">
               {Number(marginPreview.lowHighRange.low).toLocaleString('en-IN')} –{' '}
               {Number(marginPreview.lowHighRange.high).toLocaleString('en-IN')}
             </span>
+            . Target cannot sit in this range; stop loss may.
           </div>
         ) : null}
         {error && (
@@ -6995,10 +7303,10 @@ const TradingPanel = ({
               <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
                 <span className="text-gray-400">Used Margin</span>
                 <span className="text-yellow-400 font-medium">
-                  {target && Number(target) > 0
-                    ? Number(target).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : ((isForex ? walletData?.forexWallet?.usedMargin : walletData?.cryptoWallet?.usedMargin) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                  }
+                  {(Number(activeWallet?.usedMargin) || 0).toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
@@ -7248,6 +7556,59 @@ const TradingPanel = ({
 };
 
 // Mobile Components - Uses watchlist like desktop
+/** Mobile/tablet portfolio — full PositionsPanel with all tabs */
+const MobilePositionsPanel = ({
+  initialTab = 'positions',
+  user,
+  marketData,
+  cryptoOnly = false,
+  mcxOnly = false,
+  forexOnly = false,
+  nseBseOnly = false,
+  walletData,
+  usdRate = 83.5,
+  refreshKey = 0,
+  selectedInstrument,
+  onRefreshPositions,
+  segmentPermissionsGate = {},
+  isCryptoTradingOpen = true,
+  isMcxTradingOpen = true,
+  isNseBseTradingOpen = true,
+  setShowReferralModal,
+  onTotalPnLChange,
+}) => {
+  const [activeTab, setActiveTab] = useState(initialTab);
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <PositionsPanel
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        walletData={walletData}
+        user={user}
+        marketData={marketData}
+        refreshKey={refreshKey}
+        selectedInstrument={selectedInstrument}
+        onRefreshPositions={onRefreshPositions}
+        cryptoOnly={cryptoOnly}
+        mcxOnly={mcxOnly}
+        forexOnly={forexOnly}
+        nseBseOnly={nseBseOnly}
+        usdRate={usdRate}
+        setShowReferralModal={setShowReferralModal}
+        isCryptoTradingOpen={isCryptoTradingOpen}
+        isMcxTradingOpen={isMcxTradingOpen}
+        isNseBseTradingOpen={isNseBseTradingOpen}
+        segmentPermissionsGate={segmentPermissionsGate}
+        onTotalPnLChange={onTotalPnLChange}
+      />
+    </div>
+  );
+};
+
 const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, nseBseOnly = false, socketConnectEpoch = 0, usdRate = 83.5, isCryptoTradingOpen = true, isMcxTradingOpen = true, isNseBseTradingOpen = true }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -10685,7 +11046,7 @@ const BuySellModal = ({
       }
       
       try {
-        const { data } = await axios.post('/api/trading/margin-preview', {
+        const previewBody = {
           symbol: instrument.symbol,
           tradingSymbol: instrument.tradingSymbol || instrument.symbol,
           exchange: instrument.exchange,
@@ -10708,7 +11069,9 @@ const BuySellModal = ({
           leverage: 1,
           isCrypto: isCryptoOnly,
           isForex: isForex
-        }, {
+        };
+        Object.assign(previewBody, dayLowHighPayloadFromMarket(liveData, effectiveInstrument));
+        const { data } = await axios.post('/api/trading/margin-preview', previewBody, {
           headers: { Authorization: `Bearer ${user?.token}` }
         });
         setMarginPreview(data);
@@ -10766,8 +11129,14 @@ const BuySellModal = ({
 
   // Place order handler
   const handlePlaceOrder = async () => {
+    primeTradingSounds();
+    const rejectOrder = (msg) => {
+      playOrderRejectSound();
+      setError(msg);
+    };
+
     if (!user?.token) {
-      setError('Please login to place orders');
+      rejectOrder('Please login to place orders');
       return;
     }
 
@@ -10777,18 +11146,55 @@ const BuySellModal = ({
       const startTimeStr = cryptoSettings.cryptoStartTime || '';
       const closeTimeStr = cryptoSettings.cryptoClosingTime || '';
       if (closeTimeStr) {
-        setError(`Crypto trading closed at ${closeTimeStr} IST. End time is ${closeTimeStr} so you cannot open trade.`);
+        rejectOrder(`Crypto trading closed at ${closeTimeStr} IST. End time is ${closeTimeStr} so you cannot open trade.`);
       } else if (startTimeStr) {
-        setError(`Crypto trading opens at ${startTimeStr} IST. You cannot open trade before start time.`);
+        rejectOrder(`Crypto trading opens at ${startTimeStr} IST. You cannot open trade before start time.`);
       } else {
-        setError('Crypto trading window not set');
+        rejectOrder('Crypto trading window not set');
       }
       return;
     }
 
     if (totalQuantity <= 0) {
-      setError('Enter quantity greater than 0');
+      rejectOrder('Enter quantity greater than 0');
       return;
+    }
+
+    const dayDhModal = dayLowHighPayloadFromMarket(liveData, effectiveInstrument);
+    const slTpErrModal = validateClientStopLossTarget({
+      side: orderType.toUpperCase(),
+      entryPrice: ltp,
+      stopLoss,
+      target: takeProfit,
+      bid: execBid,
+      ask: execAsk,
+      dayLow: marginPreview?.lowHighRange?.low ?? dayDhModal.dayLow,
+      dayHigh: marginPreview?.lowHighRange?.high ?? dayDhModal.dayHigh,
+      enforceTargetOutsideDayRange: Boolean(marginPreview?.lowHighRestrict),
+    });
+    if (slTpErrModal) {
+      rejectOrder(slTpErrModal);
+      return;
+    }
+
+    if (marginPreview?.lowHighRestrict && marginPreview?.lowHighRange) {
+      const lowPx = Number(marginPreview.lowHighRange.low) || 0;
+      const highPx = Number(marginPreview.lowHighRange.high) || 0;
+      const orderPrice =
+        orderPriceType === 'LIMIT'
+          ? parseFloat(limitPrice) || ltp
+          : orderType === 'buy'
+            ? Number(execAsk) || ltp
+            : Number(execBid) || ltp;
+      if (lowPx > 0 && highPx > 0 && orderPrice > 0) {
+        if (orderPrice < lowPx || orderPrice > highPx) {
+          const grp = marginPreview.lowHighGroupLabel ? ` (${marginPreview.lowHighGroupLabel})` : '';
+          rejectOrder(
+            `Order price must be between day Low ${lowPx} and High ${highPx}${grp}. Low–High restriction is ON for this instrument group.`
+          );
+          return;
+        }
+      }
     }
 
     setLoading(true);
@@ -10828,7 +11234,7 @@ const BuySellModal = ({
         bidPrice: execBid,
         askPrice: execAsk,
         leverage: 1,
-        takeProfit: takeProfit
+        target: takeProfit
           ? isUsdSpot
             ? isCryptoOnly
               ? parseFloat(takeProfit)
@@ -10843,6 +11249,7 @@ const BuySellModal = ({
             : parseFloat(stopLoss)
           : null,
       };
+      Object.assign(orderData, dayLowHighPayloadFromMarket(liveData, instrument));
 
       if (orderPriceType === 'LIMIT') {
         orderData.limitPrice = isUsdSpot
@@ -10853,6 +11260,7 @@ const BuySellModal = ({
       const gateSegModal = String(orderData.segment || orderData.displaySegment || '').trim();
       const gateErrModal = validateLimitPendingFromSegmentPerms(segmentPermissionsGate, gateSegModal, orderPriceType);
       if (gateErrModal) {
+        playOrderRejectSound();
         setError(gateErrModal);
         setLoading(false);
         return;
@@ -10864,6 +11272,7 @@ const BuySellModal = ({
             ? parseFloat(limitPrice)
             : ltp;
         if (!isPriceInLtpBracket(checkPx, ltpBracketBoundsModal)) {
+          playOrderRejectSound();
           setError(`Price must be within ${formatLtpBracketRange(ltpBracketBoundsModal)} (LTP bracket).`);
           setLoading(false);
           return;
@@ -10880,6 +11289,7 @@ const BuySellModal = ({
         ? `📋 LIMIT ORDER PLACED - ${instrument.symbol} @ ${limitPrice}`
         : `✅ TRADE EXECUTED - ${trade?.side} ${instrument.symbol} @ ${trade?.entryPrice?.toLocaleString()} | Qty: ${trade?.quantity}`;
       
+      playOrderSuccessSound();
       setSuccess(statusMsg);
       if (onRefreshWallet) onRefreshWallet();
       if (onRefreshPositions) onRefreshPositions();
@@ -10889,6 +11299,7 @@ const BuySellModal = ({
       }, 3000);
     } catch (err) {
       console.error('Order error:', err);
+      playOrderRejectSound();
       setError(err.response?.data?.message || 'Failed to place order');
     } finally {
       setLoading(false);
@@ -11139,7 +11550,23 @@ const BuySellModal = ({
                 />
               </div>
             )}
+            {(showTakeProfit || showStopLoss) && marginPreview?.lowHighRestrict ? (
+              <p className="text-xs text-amber-400/90 mt-1">
+                Low–High ON: target must be outside day range; SL may be inside.
+              </p>
+            ) : null}
           </div>
+
+          {marginPreview?.lowHighRestrict && marginPreview?.lowHighRange ? (
+            <div className="mx-3 mb-3 bg-amber-900/30 border border-amber-600/50 text-amber-200 px-3 py-2 rounded text-sm">
+              Order price must be between{' '}
+              <span className="font-mono text-amber-100">
+                {Number(marginPreview.lowHighRange.low).toLocaleString('en-IN')} –{' '}
+                {Number(marginPreview.lowHighRange.high).toLocaleString('en-IN')}
+              </span>
+              {marginPreview.lowHighGroupLabel ? ` (${marginPreview.lowHighGroupLabel})` : ''}.
+            </div>
+          ) : null}
 
           {/* Trading Charges */}
           <div className="mx-3 mb-3 bg-[#1a1a1a] rounded-lg p-3">
@@ -11482,6 +11909,17 @@ const BuySellModal = ({
               <span className="font-medium">{orderValue.toLocaleString()}</span>
             </div>
           </div>
+
+          {marginPreview?.lowHighRestrict && marginPreview?.lowHighRange ? (
+            <div className="bg-amber-900/30 border border-amber-600/50 text-amber-200 px-3 py-2 rounded text-sm">
+              Low–High ON: order price between{' '}
+              <span className="font-mono text-amber-100">
+                {Number(marginPreview.lowHighRange.low).toLocaleString('en-IN')} –{' '}
+                {Number(marginPreview.lowHighRange.high).toLocaleString('en-IN')}
+              </span>
+              . Target must be outside; SL may be inside.
+            </div>
+          ) : null}
 
           {/* Error/Success Messages */}
           {error && (
