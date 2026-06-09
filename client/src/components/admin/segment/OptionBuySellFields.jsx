@@ -78,7 +78,7 @@ export default function OptionBuySellFields({
           <label className={labelCls}>
             {opt.commissionType
               ? commissionAmountLabel(opt.commissionType)
-              : 'Brokerage amount (₹)'}
+              : 'Brokerage amount'}
           </label>
           <input
             type="number"

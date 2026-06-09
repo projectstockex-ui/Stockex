@@ -32,10 +32,10 @@ const accountTypes = [
     title: "Demo Trading Account",
     subtitle: "Practice Risk-Free Trading",
     description: "Learn trading with virtual money. Perfect for beginners to practice strategies without risking real capital.",
-    price: "₹1,00,000",
+    price: "1,00,000",
     priceNote: "Virtual balance",
     features: [
-      "₹1 Lakh virtual trading balance",
+      "1 Lakh virtual trading balance",
       "Real-time market simulation",
       "Full platform access",
       "Risk-free learning environment",
@@ -167,7 +167,7 @@ export default function Accounts() {
               <tbody className="divide-y divide-border">
                 {[
                   ["Real Money Trading", "✓", "✗", "✓"],
-                  ["Virtual Balance", "✗", "₹1 Lakh", "✗"],
+                  ["Virtual Balance", "✗", "1 Lakh", "✗"],
                   ["All Markets Access", "✓", "✓", "✓"],
                   ["Advanced Charts", "✓", "✓", "✓"],
                   ["Client Management", "✗", "✗", "✓"],

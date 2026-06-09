@@ -59,8 +59,8 @@ function netWalletDeltaForTrade(status) {
   throw new Error(`unknown status ${status}`);
 }
 
-function rupee(n) {
-  return `₹${Number(n).toLocaleString('en-IN')}`;
+function Stockex coins (n) {
+  return `${Number(n).toLocaleString('en-IN')}`;
 }
 
 function assertApprox(a, b, label, eps = 0.01) {
@@ -91,7 +91,7 @@ function printTable2(rows) {
     const net = netWalletDeltaForTrade(r.status);
     const bal = r.status === 'won' ? GROSS_WIN : 0;
     const m = -STAKE;
-    console.log(`${r.id} | ${r.user} | ${rupee(bal)} | ${rupee(m)} | ${rupee(net)}`);
+    console.log(`${r.id} | ${r.user} | ${Stockex coins (bal)} | ${Stockex coins (m)} | ${Stockex coins (net)}`);
   }
 }
 
@@ -102,47 +102,47 @@ function printTable3(byUser, final) {
   const stakes = { Manish: 4 * STAKE, Hari: 3 * STAKE, Aayush: 3 * STAKE };
   for (const u of ['Manish', 'Hari', 'Aayush']) {
     console.log(
-      `${u} | ${rupee(INITIAL[u])} | ${rupee(stakes[u])} | ${rupee(byUser[u])} | ${rupee(final[u])}`
+      `${u} | ${Stockex coins (INITIAL[u])} | ${Stockex coins (stakes[u])} | ${Stockex coins (byUser[u])} | ${Stockex coins (final[u])}`
     );
   }
-  console.log(`\nAggregate net (three users): ${rupee(byUser.Manish + byUser.Hari + byUser.Aayush)}`);
+  console.log(`\nAggregate net (three users): ${Stockex coins (byUser.Manish + byUser.Hari + byUser.Aayush)}`);
 }
 
 function printTable4(winsByUser) {
   console.log('\n## Table 4 — Super Admin: gross hierarchy (8% / 2% / 1% of gross win)\n');
   console.log('Per win (G = 9,500) | Rate | Amount');
   console.log('--- | --- | ---');
-  console.log(`Sub-broker | 8% | ${rupee(PER_WIN_SB)}`);
-  console.log(`Broker | 2% | ${rupee(PER_WIN_BR)}`);
-  console.log(`Admin | 1% | ${rupee(PER_WIN_AD)}`);
-  console.log(`Total SA per win | 11% | ${rupee(PER_WIN_SA_TOTAL)}`);
+  console.log(`Sub-broker | 8% | ${Stockex coins (PER_WIN_SB)}`);
+  console.log(`Broker | 2% | ${Stockex coins (PER_WIN_BR)}`);
+  console.log(`Admin | 1% | ${Stockex coins (PER_WIN_AD)}`);
+  console.log(`Total SA per win | 11% | ${Stockex coins (PER_WIN_SA_TOTAL)}`);
   const totalWins = winsByUser.Manish + winsByUser.Hari + winsByUser.Aayush;
   console.log(`\nWins: Manish ${winsByUser.Manish} | Hari ${winsByUser.Hari} | Aayush ${winsByUser.Aayush} | Total ${totalWins}`);
-  console.log(`Total SA debited (hierarchy): ${rupee(totalWins * PER_WIN_SA_TOTAL)}`);
+  console.log(`Total SA debited (hierarchy): ${Stockex coins (totalWins * PER_WIN_SA_TOTAL)}`);
   console.log('\nSA hierarchy by winner chain:');
   for (const u of ['Manish', 'Hari', 'Aayush']) {
     const w = winsByUser[u];
-    console.log(`  ${u}: ${w} win(s) → ${rupee(w * PER_WIN_SA_TOTAL)}`);
+    console.log(`  ${u}: ${w} win(s) → ${Stockex coins (w * PER_WIN_SA_TOTAL)}`);
   }
 }
 
 function printTable5(lostCount) {
   console.log('\n## Table 5 — Lost stakes (no refund)\n');
   console.log(
-    `Each lost trade forfeit ${rupee(STAKE)} (${lostCount} trades → ${rupee(lostCount * STAKE)} total). Loss stakes do not fund admin/broker hierarchy; only win-side paths (gross hierarchy / win brokerage) debit the SA pool.`
+    `Each lost trade forfeit ${Stockex coins (STAKE)} (${lostCount} trades → ${Stockex coins (lostCount * STAKE)} total). Loss stakes do not fund admin/broker hierarchy; only win-side paths (gross hierarchy / win brokerage) debit the SA pool.`
   );
 }
 
 function printTable6(grossCredits, userNet) {
   console.log('\n## Table 6 — Sanity (money flow)\n');
-  console.log(`Total staked (10 trades): ${rupee(10 * STAKE)}`);
-  console.log(`Gross win credits to wallets: ${rupee(grossCredits)} (no refund path)`);
-  console.log(`Net user P&L vs opening balances: ${rupee(userNet)}`);
+  console.log(`Total staked (10 trades): ${Stockex coins (10 * STAKE)}`);
+  console.log(`Gross win credits to wallets: ${Stockex coins (grossCredits)} (no refund path)`);
+  console.log(`Net user P&L vs opening balances: ${Stockex coins (userNet)}`);
 }
 
 function run() {
   console.log('=== Nifty Bracket — detailed ledger (LTP 23951, bet on spread line) ===');
-  console.log(`Stake/trade: ${rupee(STAKE)} | Gross/win: ${rupee(GROSS_WIN)} | Gap: ±${BRACKET_GAP}`);
+  console.log(`Stake/trade: ${Stockex coins (STAKE)} | Gross/win: ${Stockex coins (GROSS_WIN)} | Gap: ±${BRACKET_GAP}`);
 
   const rows = TRADES.map((t) => {
     const { status, upper, lower, hitUpper, hitLower } = settleTrade(t.prediction, t.centre);

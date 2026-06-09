@@ -3309,7 +3309,7 @@ const AdminManagement = () => {
     if (isIndividualPattiActive(target)) return false;
     // SA: ADMIN row = franchise root ON/OFF toggle (always visible for ADMIN role)
     if (isSuperAdmin && target.role === 'ADMIN') return true;
-    // ₹/crore charge only when an ancestor has active franchise root
+    // /crore charge only when an ancestor has active franchise root
     if (target.franchiseSubtreeActive !== true) return false;
     if (isSuperAdmin) return ['BROKER', 'SUB_BROKER'].includes(target.role);
     if (isAdmin) return ['BROKER', 'SUB_BROKER'].includes(target.role);
@@ -3358,7 +3358,7 @@ const AdminManagement = () => {
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
       alert(
-        `Franchise charge set: ₹${brokerageChargePerCrore.toLocaleString('en-IN')}/crore for ${franchiseTargetAdmin.name || franchiseTargetAdmin.username}`
+        `Franchise charge set: ${brokerageChargePerCrore.toLocaleString('en-IN')}/crore for ${franchiseTargetAdmin.name || franchiseTargetAdmin.username}`
       );
       setShowFranchiseModal(false);
       setFranchiseTargetAdmin(null);
@@ -3389,7 +3389,7 @@ const AdminManagement = () => {
       setShowFranchiseModal(true);
     } else {
       // Disabling franchise - confirm directly
-      if (!confirm(`Disable Franchise Root for "${targetAdmin.name || targetAdmin.username}"?\n\n• Subtree franchise ₹/crore rates on brokers/sub-brokers and clients will be cleared.\n• Downline Franchise buttons will be hidden until you enable again.\n• Trading P/L will flow to Super Admin again.\n\nContinue?`)) return;
+      if (!confirm(`Disable Franchise Root for "${targetAdmin.name || targetAdmin.username}"?\n\n• Subtree franchise /crore rates on brokers/sub-brokers and clients will be cleared.\n• Downline Franchise buttons will be hidden until you enable again.\n• Trading P/L will flow to Super Admin again.\n\nContinue?`)) return;
 
       try {
         await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/franchise-root`, {
@@ -3432,7 +3432,7 @@ const AdminManagement = () => {
       });
       alert(
         `Franchise root enabled successfully for ${franchiseTargetAdmin.name || franchiseTargetAdmin.username}\n` +
-          `Brokerage per crore: ₹${(Number.isFinite(brokerageChargePerCrore) ? brokerageChargePerCrore : 0).toLocaleString()}`
+          `Brokerage per crore: ${(Number.isFinite(brokerageChargePerCrore) ? brokerageChargePerCrore : 0).toLocaleString()}`
       );
       setShowFranchiseModal(false);
       setFranchiseTargetAdmin(null);
@@ -4602,7 +4602,7 @@ const AdminManagement = () => {
 
                         <span className="text-[10px] opacity-90">
 
-                          ₹{Number(adm.restrictMode.brokerageChargePerCrore).toLocaleString('en-IN')}/cr
+                          {Number(adm.restrictMode.brokerageChargePerCrore).toLocaleString('en-IN')}/cr
 
                         </span>
 
@@ -4767,7 +4767,7 @@ const AdminManagement = () => {
                       <li>This admin&apos;s entire hierarchy becomes an isolated unit</li>
                       <li>All trading profit/loss stays within this subtree only</li>
                       <li>Super Admin platform percentage share remains 0%</li>
-                      <li>Downline brokers/sub-brokers can get their own ₹/crore via Franchise button</li>
+                      <li>Downline brokers/sub-brokers can get their own /crore via Franchise button</li>
                     </ul>
                   </>
                 ) : (
@@ -4776,7 +4776,7 @@ const AdminManagement = () => {
                     <span className="text-rose-300">main wallet</span> when collected.
                     {isAdmin && !isSuperAdmin && (
                       <span className="block mt-1 text-purple-300">
-                        Example: Radha (admin) → Abhay (broker) ₹1200/crore yahan set karein.
+                        Example: Radha (admin) → Abhay (broker) 1200/crore yahan set karein.
                       </span>
                     )}
                   </p>
@@ -4785,7 +4785,7 @@ const AdminManagement = () => {
 
               <div className="mb-4 p-4 bg-dark-700 rounded-lg border border-rose-600/40">
                 <label className="font-medium flex items-center gap-2 mb-2 text-rose-400 text-sm">
-                  <DollarSign size={16} /> Brokerage Charge Per Crore (₹)
+                  <DollarSign size={16} /> Brokerage Charge Per Crore ()
                 </label>
                 <input
                   type="number"
@@ -6764,7 +6764,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
       });
 
       setSuccess(
-        `Successfully took ₹${formData.amount} from ${targetAdmin.name || targetAdmin.username}'s main wallet`
+        `Successfully took ${formData.amount} from ${targetAdmin.name || targetAdmin.username}'s main wallet`
       );
 
       setFormData((prev) => ({ ...prev, amount: '', description: '' }));
@@ -6981,7 +6981,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
                   <p className="text-xs text-gray-400 mb-2">
                     Admin main wallet:{' '}
                     <span className="text-white font-semibold tabular-nums">
-                      ₹{Number(targetAdmin.wallet?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      {Number(targetAdmin.wallet?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </span>
                     <span className="text-gray-500"> (temporary wallet use nahi hota)</span>
                   </p>
@@ -6989,7 +6989,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                 <label className="block text-sm text-gray-400 mb-1">
 
-                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore (₹) — from Franchise' : 'Amount to Take (₹)'}
+                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore () — from Franchise' : 'Amount to Take ()'}
 
                 </label>
 
@@ -7015,7 +7015,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                   <p className="text-xs text-rose-400 mt-1">
 
-                    Preset from Franchise: ₹{Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
+                    Preset from Franchise: {Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
 
                   </p>
 
@@ -7117,7 +7117,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
 
                 <label className="block text-sm text-green-400 mb-1">
 
-                  Monthly Incentive Amount () — from Limits
+                  Monthly Incentive Amount — from Limits
 
                 </label>
 
@@ -7789,7 +7789,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
                     <label className="font-medium flex items-center gap-2 text-green-400">
 
-                      <DollarSign size={16} /> Monthly Incentive Amount ()
+                      <DollarSign size={16} /> Monthly Incentive Amount
 
                     </label>
 
@@ -8082,6 +8082,12 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
     role: allowedRoles[0] || 'ADMIN',
 
     parentAdminId: '', // For assigning broker/sub-broker under specific parent
+
+    cityCode: '', // Pincode area — shown in Choose Your Broker
+
+    cityName: '', // Area name — shown in Choose Your Broker
+
+    refundableSecurityAmount: '',
 
     autosquare: 0, // Auto square position at percentage loss
 
@@ -8477,6 +8483,48 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
 
             <input type="text" placeholder="Phone" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
 
+            {['BROKER', 'SUB_BROKER'].includes(formData.role) && (
+              <div className="bg-dark-700/50 rounded-lg p-4 border border-cyan-500/20 space-y-3">
+                <h4 className="text-sm font-semibold text-cyan-400">Broker area (shown in Choose Your Broker)</h4>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Pincode Area *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 110001, DEL, MUM"
+                    value={formData.cityCode}
+                    onChange={e => setFormData({ ...formData, cityCode: e.target.value.toUpperCase() })}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Area Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Delhi, Mumbai, Bangalore"
+                    value={formData.cityName}
+                    onChange={e => setFormData({ ...formData, cityName: e.target.value })}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Refundable Security Amount *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    placeholder="Initial security deposit"
+                    value={formData.refundableSecurityAmount}
+                    onChange={e => setFormData({ ...formData, refundableSecurityAmount: e.target.value })}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    required
+                  />
+                  <p className="text-[10px] text-gray-500 mt-1">Shown in Super Admin → All Transactions → Refundable Security</p>
+                </div>
+              </div>
+            )}
+
             <input type="password" placeholder="Password *" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" required />
 
             <input
@@ -8701,7 +8749,7 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
 
         {error && <div className="bg-red-500/20 text-red-400 p-2 rounded mb-4">{error}</div>}
 
-        <input type="number" placeholder="Amount ()" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-3" />
+        <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-3" />
 
         <input type="text" placeholder="Description (optional)" value={description} onChange={e => setDescription(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-4" />
 
@@ -8943,7 +8991,7 @@ const WalletTransferModal = ({ admin: targetAdmin, token, onClose, onSuccess }) 
 
           <div>
 
-            <label className="block text-xs text-gray-400 mb-1">Amount ()</label>
+            <label className="block text-xs text-gray-400 mb-1">Amount</label>
 
             <input
 
@@ -14916,7 +14964,7 @@ const AdminWallet = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount</label>
 
                 <input
 
@@ -15042,7 +15090,7 @@ const AdminWallet = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount</label>
 
                 <input
 
@@ -18721,13 +18769,13 @@ function emptyInstrumentTradingForm() {
 
       perCroreEnabled: false,
 
-      perTradeUnit: 'INR',
+      perTradeUnit: 'COINS',
 
-      perLotUnit: 'INR',
+      perLotUnit: 'COINS',
 
       perCroreUnit: 'PERCENT',
 
-      extraCommissionUnit: 'INR',
+      extraCommissionUnit: 'COINS',
 
     },
 
@@ -18939,9 +18987,9 @@ function serializeInstrumentTradingForm(form) {
 
       perCroreEnabled: !!form.additionalCharges?.perCroreEnabled,
 
-      perTradeUnit: 'INR',
+      perTradeUnit: 'COINS',
 
-      perLotUnit: 'INR',
+      perLotUnit: 'COINS',
 
       perCroreUnit: 'PERCENT',
 
@@ -29431,7 +29479,7 @@ const FranchiseEarningsWallet = () => {
 
             <div className="text-[10px] text-gray-500 uppercase">Total franchise earnings</div>
 
-            <div className="text-lg font-bold text-green-400 tabular-nums">+₹{fmt(summary.totalCredits)}</div>
+            <div className="text-lg font-bold text-green-400 tabular-nums">+{fmt(summary.totalCredits)}</div>
 
             <div className="text-[10px] text-gray-600">{summary.creditCount ?? 0} lines</div>
 
@@ -29441,7 +29489,7 @@ const FranchiseEarningsWallet = () => {
 
             <div className="text-[10px] text-gray-500 uppercase">SA main wallet balance</div>
 
-            <div className="text-lg font-bold text-amber-300 tabular-nums">₹{fmt(summary.walletBalance)}</div>
+            <div className="text-lg font-bold text-amber-300 tabular-nums">{fmt(summary.walletBalance)}</div>
 
           </div>
 
@@ -29491,7 +29539,7 @@ const FranchiseEarningsWallet = () => {
 
             >
 
-              {fr.name || 'Franchise'} {fr.adminCode ? `(${fr.adminCode})` : ''} — +₹{fmt(fr.total)}
+              {fr.name || 'Franchise'} {fr.adminCode ? `(${fr.adminCode})` : ''} — +{fmt(fr.total)}
 
             </button>
 
@@ -29579,7 +29627,7 @@ const FranchiseEarningsWallet = () => {
 
                     <td className="px-3 py-2 text-xs text-gray-400 max-w-md">{tx.why || tx.description}</td>
 
-                    <td className="px-3 py-2 text-right font-semibold text-green-400 tabular-nums">+₹{fmt(tx.amount)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-green-400 tabular-nums">+{fmt(tx.amount)}</td>
 
                   </tr>
 
@@ -30570,7 +30618,7 @@ const AllTransactions = () => {
 
               <>
 
-                Superadmin tab: all client credits and debits in one place (main trading wallet and games wallet).
+                Superadmin tab: trading wallet, games wallet, refundable security, and distributed cash to admins.
 
                 Use filters below the tabs.
 
@@ -31338,6 +31386,14 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
   const [summary, setSummary] = useState(null);
 
+  const [securityRows, setSecurityRows] = useState([]);
+
+  const [securitySummary, setSecuritySummary] = useState(null);
+
+  const [distributedRows, setDistributedRows] = useState([]);
+
+  const [distributedSummary, setDistributedSummary] = useState(null);
+
   const [loading, setLoading] = useState(false);
 
   const [rowSearch, setRowSearch] = useState('');
@@ -31374,11 +31430,21 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
     if (scope === 'main') setGamesGameId('');
 
-    else {
+    else if (scope === 'games') {
 
       setReasonGroup('');
 
       setMainGameKey('');
+
+    } else if (scope === 'security' || scope === 'distributed') {
+
+      setReasonGroup('');
+
+      setMainGameKey('');
+
+      setGamesGameId('');
+
+      setTxKind('');
 
     }
 
@@ -31463,6 +31529,80 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
     setLoading(true);
 
     try {
+
+      if (scope === 'security') {
+
+        const params = new URLSearchParams();
+
+        params.set('limit', '1000');
+
+        if (debouncedUserSearch) params.set('search', debouncedUserSearch);
+
+        if (dateFrom) params.set('dateFrom', new Date(dateFrom).toISOString());
+
+        if (dateTo) params.set('dateTo', new Date(`${dateTo}T23:59:59.999`).toISOString());
+
+        const { data } = await axios.get(`/api/admin/manage/refundable-security-feed?${params.toString()}`, {
+
+          headers: { Authorization: `Bearer ${admin.token}` },
+
+        });
+
+        setSecurityRows(Array.isArray(data?.deposits) ? data.deposits : []);
+
+        setSecuritySummary(data?.summary ?? null);
+
+        setDistributedRows([]);
+
+        setDistributedSummary(null);
+
+        setTransactions([]);
+
+        setSummary(null);
+
+        return;
+
+      }
+
+      if (scope === 'distributed') {
+
+        const params = new URLSearchParams();
+
+        if (debouncedUserSearch) params.set('search', debouncedUserSearch);
+
+        if (dateFrom) params.set('dateFrom', new Date(dateFrom).toISOString());
+
+        if (dateTo) params.set('dateTo', new Date(`${dateTo}T23:59:59.999`).toISOString());
+
+        const { data } = await axios.get(`/api/admin/manage/distributed-cash-feed?${params.toString()}`, {
+
+          headers: { Authorization: `Bearer ${admin.token}` },
+
+        });
+
+        setDistributedRows(Array.isArray(data?.rows) ? data.rows : []);
+
+        setDistributedSummary(data?.summary ?? null);
+
+        setSecurityRows([]);
+
+        setSecuritySummary(null);
+
+        setTransactions([]);
+
+        setSummary(null);
+
+        return;
+
+      }
+
+      setSecurityRows([]);
+
+      setSecuritySummary(null);
+
+      setDistributedRows([]);
+
+      setDistributedSummary(null);
 
       const params = new URLSearchParams();
 
@@ -32112,6 +32252,72 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
 
 
+  const filteredSecurityRows = useMemo(() => {
+
+    if (!rowSearch.trim()) return securityRows;
+
+    const q = rowSearch.trim().toLowerCase();
+
+    return securityRows.filter((row) => {
+
+      const blob = [row.brokerName, row.adminCode, row.cityCode, row.cityName, row.role]
+
+        .filter(Boolean)
+
+        .join(' ')
+
+        .toLowerCase();
+
+      return blob.includes(q);
+
+    });
+
+  }, [securityRows, rowSearch]);
+
+
+
+  const filteredDistributedRows = useMemo(() => {
+
+    if (!rowSearch.trim()) return distributedRows;
+
+    const q = rowSearch.trim().toLowerCase();
+
+    return distributedRows.filter((row) => {
+
+      const blob = [row.adminName, row.adminCode, row.role]
+
+        .filter(Boolean)
+
+        .join(' ')
+
+        .toLowerCase();
+
+      return blob.includes(q);
+
+    });
+
+  }, [distributedRows, rowSearch]);
+
+
+
+  const isLedgerAltScope = scope === 'security' || scope === 'distributed';
+
+
+
+  const roleLabel = (role) => {
+
+    if (role === 'ADMIN') return 'Admin';
+
+    if (role === 'BROKER') return 'Broker';
+
+    if (role === 'SUB_BROKER') return 'Sub-Broker';
+
+    return role || '—';
+
+  };
+
+
+
   return (
 
     <div className={embedded ? 'space-y-4' : 'p-4 md:p-6 max-w-[1500px] mx-auto space-y-4'}>
@@ -32194,7 +32400,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
       {!isFranchiseBook ? (
 
-      <div className="grid grid-cols-2 gap-2 max-w-xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 max-w-5xl">
 
         <button
 
@@ -32240,6 +32446,50 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
         </button>
 
+        <button
+
+          type="button"
+
+          onClick={() => setScope('security')}
+
+          className={`rounded-xl border px-3 py-3 text-left transition ${scope === 'security'
+
+              ? 'bg-amber-600 border-white/20 text-white shadow-lg'
+
+              : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
+
+            }`}
+
+        >
+
+          <div className="font-bold text-sm">Refundable Security</div>
+
+          <div className="text-[10px] opacity-90 mt-0.5">Broker & sub-broker deposits</div>
+
+        </button>
+
+        <button
+
+          type="button"
+
+          onClick={() => setScope('distributed')}
+
+          className={`rounded-xl border px-3 py-3 text-left transition ${scope === 'distributed'
+
+              ? 'bg-teal-600 border-white/20 text-white shadow-lg'
+
+              : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
+
+            }`}
+
+        >
+
+          <div className="font-bold text-sm">Distributed Cash Account</div>
+
+          <div className="text-[10px] opacity-90 mt-0.5">Cash given to & returned by admins</div>
+
+        </button>
+
       </div>
 
       ) : (
@@ -32254,7 +32504,79 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
 
 
-      {displaySummary && (
+      {scope === 'security' && securitySummary && (
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-xl">
+
+          <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Total security deposited</div>
+
+            <div className="text-base font-bold text-amber-300 tabular-nums">
+
+              {Number(securitySummary.totalAmount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+            <div className="text-[10px] text-gray-600">{securitySummary.count ?? 0} broker(s)</div>
+
+          </div>
+
+        </div>
+
+      )}
+
+
+
+      {scope === 'distributed' && distributedSummary && (
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-3xl">
+
+          <div className="rounded-lg border border-teal-500/25 bg-teal-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Total given to admins</div>
+
+            <div className="text-base font-bold text-teal-300 tabular-nums">
+
+              {Number(distributedSummary.totalGiven || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+            <div className="text-[10px] text-gray-600">{distributedSummary.adminCount ?? 0} admin(s)</div>
+
+          </div>
+
+          <div className="rounded-lg border border-rose-500/25 bg-rose-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Total returned</div>
+
+            <div className="text-base font-bold text-rose-300 tabular-nums">
+
+              {Number(distributedSummary.totalReturned || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+          </div>
+
+          <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Net outstanding</div>
+
+            <div className="text-base font-bold text-cyan-300 tabular-nums">
+
+              {Number(distributedSummary.netOutstanding || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+          </div>
+
+        </div>
+
+      )}
+
+
+
+      {displaySummary && !isLedgerAltScope && (
 
         <div className="space-y-2">
 
@@ -32530,7 +32852,19 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           <div>
 
-            <label className="text-[10px] text-gray-500 block mb-1">Search client (name, username, email)</label>
+            <label className="text-[10px] text-gray-500 block mb-1">
+
+              {scope === 'security'
+
+                ? 'Search broker (name, code, area)'
+
+                : scope === 'distributed'
+
+                  ? 'Search admin (name, code)'
+
+                  : 'Search client (name, username, email)'}
+
+            </label>
 
             <input
 
@@ -32547,6 +32881,8 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
             />
 
           </div>
+
+          {!isLedgerAltScope && (
 
           <div>
 
@@ -32567,6 +32903,8 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
             />
 
           </div>
+
+          )}
 
           <div>
 
@@ -32670,7 +33008,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           </div>
 
-        ) : (
+        ) : scope === 'games' ? (
 
           <div>
 
@@ -32702,7 +33040,9 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           </div>
 
-        )}
+        ) : null}
+
+        {!isLedgerAltScope && (
 
         <div className="flex flex-wrap gap-2 pt-1">
 
@@ -32768,6 +33108,8 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
         </div>
 
+        )}
+
       </div>
 
 
@@ -32776,7 +33118,19 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
         type="search"
 
-        placeholder="Search in loaded rows…"
+        placeholder={
+
+          scope === 'security'
+
+            ? 'Search in security deposits…'
+
+            : scope === 'distributed'
+
+              ? 'Search in distributed cash rows…'
+
+              : 'Search in loaded rows…'
+
+        }
 
         value={rowSearch}
 
@@ -32796,13 +33150,209 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
             <RefreshCw className="animate-spin" size={32} />
 
-            <div className="text-sm">Loading transactions...</div>
+            <div className="text-sm">
+
+              {scope === 'security'
+
+                ? 'Loading security deposits...'
+
+                : scope === 'distributed'
+
+                  ? 'Loading distributed cash...'
+
+                  : 'Loading transactions...'}
+
+            </div>
 
             <div className="text-xs text-gray-600">Fetching your financial data</div>
 
           </div>
 
         </div>
+
+      ) : scope === 'security' ? (
+
+        filteredSecurityRows.length === 0 ? (
+
+          <div className="text-center py-14 text-gray-500 text-sm rounded-xl border border-dark-600 bg-dark-800/50">
+
+            No refundable security deposits found. Create a new broker/sub-broker with security amount.
+
+          </div>
+
+        ) : (
+
+          <div className="bg-dark-800 rounded-xl border border-dark-600 overflow-x-auto">
+
+            <table className="w-full text-sm min-w-[640px]">
+
+              <thead className="bg-dark-700">
+
+                <tr>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Broker name</th>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date</th>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Area pincode</th>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Area name</th>
+
+                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Amount</th>
+
+                </tr>
+
+              </thead>
+
+              <tbody>
+
+                {filteredSecurityRows.map((row) => (
+
+                  <tr key={row._id} className="border-t border-dark-600 hover:bg-dark-700/40">
+
+                    <td className="px-3 py-2 text-gray-200">
+
+                      <div className="font-medium">{row.brokerName || '—'}</div>
+
+                      <div className="text-[10px] text-gray-500 font-mono">{row.adminCode} · {row.role === 'SUB_BROKER' ? 'Sub-Broker' : 'Broker'}</div>
+
+                    </td>
+
+                    <td className="px-3 py-2 text-gray-400 text-[11px] whitespace-nowrap">
+
+                      {new Date(row.createdAt).toLocaleString('en-IN')}
+
+                    </td>
+
+                    <td className="px-3 py-2 font-mono text-blue-400">{row.cityCode || '—'}</td>
+
+                    <td className="px-3 py-2 text-gray-300">{row.cityName || '—'}</td>
+
+                    <td className="px-3 py-2 text-right font-bold text-amber-300 tabular-nums">
+
+                      {Number(row.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+                    </td>
+
+                  </tr>
+
+                ))}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        )
+
+      ) : scope === 'distributed' ? (
+
+        filteredDistributedRows.length === 0 ? (
+
+          <div className="text-center py-14 text-gray-500 text-sm rounded-xl border border-dark-600 bg-dark-800/50">
+
+            No distributed cash records found. Add funds to an admin or approve an admin fund request.
+
+          </div>
+
+        ) : (
+
+          <div className="bg-dark-800 rounded-xl border border-dark-600 overflow-x-auto">
+
+            <table className="w-full text-sm min-w-[760px]">
+
+              <thead className="bg-dark-700">
+
+                <tr>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Admin name</th>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date given</th>
+
+                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Amount given</th>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date returned</th>
+
+                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Amount returned</th>
+
+                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Net outstanding</th>
+
+                </tr>
+
+              </thead>
+
+              <tbody>
+
+                {filteredDistributedRows.map((row) => (
+
+                  <tr key={row.adminId} className="border-t border-dark-600 hover:bg-dark-700/40">
+
+                    <td className="px-3 py-2 text-gray-200">
+
+                      <div className="font-medium">{row.adminName || '—'}</div>
+
+                      <div className="text-[10px] text-gray-500 font-mono">
+
+                        {row.adminCode} · {roleLabel(row.role)}
+
+                      </div>
+
+                    </td>
+
+                    <td className="px-3 py-2 text-gray-400 text-[11px] whitespace-nowrap">
+
+                      {row.lastGivenAt ? new Date(row.lastGivenAt).toLocaleString('en-IN') : '—'}
+
+                      {row.givenCount > 1 ? (
+
+                        <div className="text-[10px] text-gray-600">{row.givenCount} deposits</div>
+
+                      ) : null}
+
+                    </td>
+
+                    <td className="px-3 py-2 text-right font-bold text-teal-300 tabular-nums">
+
+                      {Number(row.totalGiven || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+                    </td>
+
+                    <td className="px-3 py-2 text-gray-400 text-[11px] whitespace-nowrap">
+
+                      {row.lastReturnedAt ? new Date(row.lastReturnedAt).toLocaleString('en-IN') : '—'}
+
+                      {row.returnCount > 1 ? (
+
+                        <div className="text-[10px] text-gray-600">{row.returnCount} returns</div>
+
+                      ) : null}
+
+                    </td>
+
+                    <td className="px-3 py-2 text-right font-bold text-rose-300 tabular-nums">
+
+                      {Number(row.totalReturned || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+                    </td>
+
+                    <td className="px-3 py-2 text-right font-bold text-cyan-300 tabular-nums">
+
+                      {Number(row.netOutstanding || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+                    </td>
+
+                  </tr>
+
+                ))}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        )
 
       ) : filteredRows.length === 0 ? (
 
@@ -36664,7 +37214,7 @@ const SystemDefaultSettings = () => {
 
                 <div>
 
-                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount ()</label>
+                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount</label>
 
                   <input
 
@@ -38370,7 +38920,7 @@ const DeliveryPledgeManagement = () => {
 
                 <div>
 
-                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount ()</label>
+                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount</label>
 
                   <input
 
@@ -38744,7 +39294,7 @@ const DeliveryPledgeManagement = () => {
 
               <div>
 
-                <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount</label>
 
                 <input
 
@@ -39366,7 +39916,7 @@ const PattiSharingManagement = () => {
 
               <div className={`text-lg font-bold tabular-nums ${earningsSummary.netEarnings >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                {earningsSummary.netEarnings >= 0 ? '+' : ''}₹{fmtInr(earningsSummary.netEarnings)}
+                {earningsSummary.netEarnings >= 0 ? '+' : ''}{fmtInr(earningsSummary.netEarnings)}
 
               </div>
 
@@ -39378,7 +39928,7 @@ const PattiSharingManagement = () => {
 
               <div className="text-[10px] text-gray-500 uppercase">Total credits</div>
 
-              <div className="text-lg font-bold text-amber-300 tabular-nums">+₹{fmtInr(earningsSummary.totalCredits)}</div>
+              <div className="text-lg font-bold text-amber-300 tabular-nums">+{fmtInr(earningsSummary.totalCredits)}</div>
 
             </div>
 
@@ -39428,7 +39978,7 @@ const PattiSharingManagement = () => {
 
               >
 
-                {pa.name || 'Admin'} {pa.adminCode ? `(${pa.adminCode})` : ''} — {pa.net >= 0 ? '+' : ''}₹{fmtInr(pa.net)}
+                {pa.name || 'Admin'} {pa.adminCode ? `(${pa.adminCode})` : ''} — {pa.net >= 0 ? '+' : ''}{fmtInr(pa.net)}
 
               </button>
 
@@ -39568,7 +40118,7 @@ const PattiSharingManagement = () => {
 
                     <td className={`px-3 py-2 text-right font-mono tabular-nums ${tx.signedAmount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
 
-                      {tx.signedAmount >= 0 ? '+' : ''}₹{fmtInr(Math.abs(tx.signedAmount))}
+                      {tx.signedAmount >= 0 ? '+' : ''}{fmtInr(Math.abs(tx.signedAmount))}
 
                     </td>
 
@@ -39642,7 +40192,7 @@ const PattiSharingManagement = () => {
 
           <p>• Super Admin sets patti % on an <span className="text-purple-300">ADMIN</span> — applies to their full subtree (brokers, sub-brokers, clients)</p>
 
-          <p>• Normal ₹/crore MLM brokerage runs for broker chain; patti split applies only on the ADMIN↔SA top slice</p>
+          <p>• Normal /crore MLM brokerage runs for broker chain; patti split applies only on the ADMIN↔SA top slice</p>
 
           <p>• Example: Radha 25% patti on CRYPTOFUT → Radha gets 25% of top pool, Super Admin gets 75%</p>
 
@@ -40248,7 +40798,7 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
 
   const fmtInr = (v) =>
     v != null && Number.isFinite(Number(v))
-      ? `₹${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      ? `${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : '—';
   const fmtUsd = (v) =>
     v != null && Number.isFinite(Number(v))
@@ -40388,7 +40938,7 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
                 <span className="text-white font-medium">
                   {row.currency === 'USD'
                     ? `$${row.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : `₹${row.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    : `${row.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 </span>
                 <span className="text-gray-500 text-[10px] shrink-0">{row.istTime}</span>
               </div>
@@ -44201,7 +44751,7 @@ const PlatformChargesManagement = () => {
 
             <div>
 
-              <label className="block text-sm text-gray-400 mb-1">Daily amount ()</label>
+              <label className="block text-sm text-gray-400 mb-1">Daily Amount</label>
 
               <input
 
@@ -50629,7 +51179,7 @@ const AllUsersManagement = () => {
 
                         className="p-2 hover:bg-dark-600 rounded transition text-green-400"
 
-                        title="Manage INR Wallet"
+                        title="Manage Wallet"
 
                       >
 
@@ -54822,7 +55372,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
 
           <div>
 
-            <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
 
             <input
 
@@ -55390,7 +55940,7 @@ const UserManagement = () => {
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
       alert(
-        `Franchise charge ₹${franchiseChargePerCrore.toLocaleString('en-IN')}/crore saved for ${selectedUser.fullName || selectedUser.username}`
+        `Franchise charge ${franchiseChargePerCrore.toLocaleString('en-IN')}/crore saved for ${selectedUser.fullName || selectedUser.username}`
       );
       setShowFranchiseUserModal(false);
       setFranchiseUserChargeInput('');
@@ -56240,7 +56790,7 @@ const UserManagement = () => {
                       className={`p-2 bg-dark-700 rounded ${user.franchiseChargePerCrore > 0 ? 'text-purple-300' : 'text-red-400 ring-1 ring-red-500/40'}`}
                       title={
                         user.franchiseChargePerCrore > 0
-                          ? `Franchise ₹${user.franchiseChargePerCrore}/crore`
+                          ? `Franchise ${user.franchiseChargePerCrore}/crore`
                           : 'Set franchise charge per crore (required for correct brokerage split)'
                       }
                     >
@@ -56250,7 +56800,7 @@ const UserManagement = () => {
 
                   <button onClick={() => { setSelectedUser(user); setShowCopyModal(true); }} className="p-2 bg-dark-700 rounded text-cyan-400"><Copy size={16} /></button>
 
-                  <button onClick={() => { setSelectedUser(user); setShowWalletModal(true); }} className="p-2 bg-dark-700 rounded text-green-400" title="Manage INR Wallet"><Wallet size={16} /></button>
+                  <button onClick={() => { setSelectedUser(user); setShowWalletModal(true); }} className="p-2 bg-dark-700 rounded text-green-400" title="Manage Wallet"><Wallet size={16} /></button>
 
                   {isSuperAdmin && <button onClick={() => handleLoginAsUser(user._id)} className="p-2 bg-dark-700 rounded text-indigo-400" title="Login As User"><Eye size={16} /></button>}
 
@@ -56418,7 +56968,7 @@ const UserManagement = () => {
                           className={`p-2 hover:bg-dark-600 rounded transition ${user.franchiseChargePerCrore > 0 ? 'text-purple-300' : 'text-red-400 ring-1 ring-red-500/40'}`}
                           title={
                             user.franchiseChargePerCrore > 0
-                              ? `Franchise ₹${Number(user.franchiseChargePerCrore).toLocaleString('en-IN')}/crore`
+                              ? `Franchise ${Number(user.franchiseChargePerCrore).toLocaleString('en-IN')}/crore`
                               : 'Set franchise charge per crore (required for correct brokerage split)'
                           }
                         >
@@ -56446,7 +56996,7 @@ const UserManagement = () => {
 
                         className="p-2 hover:bg-dark-600 rounded transition text-green-400"
 
-                        title="Manage INR Wallet"
+                        title="Manage Wallet"
 
                       >
 
@@ -56562,12 +57112,12 @@ const UserManagement = () => {
                   <strong>Client:</strong> {selectedUser.fullName || selectedUser.username}
                 </p>
                 <p className="text-xs text-gray-400 mt-2">
-                  Sub-broker / broker / admin client par ₹ per crore set karein. Trading turnover ke hisaab se charge
+                  Sub-broker / broker / admin client par  per crore set karein. Trading turnover ke hisaab se charge
                   apply hoga (franchise hierarchy ke andar).
                 </p>
                 {admin?.restrictMode?.brokerageChargePerCrore > 0 && (
                   <p className="text-xs text-amber-400 mt-2">
-                    Minimum client rate: ₹{Number(admin.restrictMode.brokerageChargePerCrore).toLocaleString('en-IN')}
+                    Minimum client rate: {Number(admin.restrictMode.brokerageChargePerCrore).toLocaleString('en-IN')}
                     /crore (aapke franchise rate se kam nahi ho sakta).
                   </p>
                 )}
@@ -56579,7 +57129,7 @@ const UserManagement = () => {
               </div>
               <div className="mb-4 p-4 bg-dark-700 rounded-lg border border-purple-600/40">
                 <label className="font-medium flex items-center gap-2 mb-2 text-purple-400 text-sm">
-                  <DollarSign size={16} /> Franchise Charge Per Crore (₹)
+                  <DollarSign size={16} /> Franchise Charge Per Crore ()
                 </label>
                 <input
                   type="number"
@@ -60046,7 +60596,7 @@ const WalletModal = ({ user, onClose, onSuccess, token }) => {
 
           <div>
 
-            <label className="block text-sm text-gray-400 mb-1">Amount ()</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
 
             <input
 

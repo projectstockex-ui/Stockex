@@ -50,7 +50,7 @@ function main() {
   assertApprox(sbAmt + brAmt + adAmt + saAmt, parts.brokerage, 'splits sum to T');
   assertApprox(saAmt, 69.75, 'SA remainder of T');
 
-  // Real-world example from plan: ₹1,500 @ 1.78×, brokeragePercent 5
+  // Real-world example from plan: 1,500 @ 1.78×, brokeragePercent 5
   const plan = computeUpDownWinPayout(1500, 1.78, 5);
   if (plan.creditTotal !== 2670) fail(`plan credit expected 2670, got ${plan.creditTotal}`);
   if (plan.brokerage !== 58.5) fail(`plan T expected 58.50, got ${plan.brokerage}`);

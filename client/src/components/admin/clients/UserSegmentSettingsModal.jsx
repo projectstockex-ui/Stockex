@@ -403,7 +403,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                       </div>
                       <div>
                         <label className="block text-xs text-gray-400 mb-1">
-                          {segmentPermissions[segment]?.commissionType === 'PER_LOT' ? 'Commission (₹/Lot)' : 'Commission (₹)'}
+                          {segmentPermissions[segment]?.commissionType === 'PER_LOT' ? 'Commission (/Lot)' : 'Commission ()'}
                         </label>
                         <input
                           type="number"
@@ -478,7 +478,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                         <h4 className="text-sm font-semibold text-white mb-3">Crypto Settings</h4>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                           <div>
-                            <label className="block text-xs text-gray-400 mb-1">Spread (INR)</label>
+                            <label className="block text-xs text-gray-400 mb-1">Spread</label>
                             <input
                               type="number"
                               step="0.01"
@@ -498,7 +498,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-400 mb-1">Price Per Lot (INR)</label>
+                            <label className="block text-xs text-gray-400 mb-1">Price Per Lot</label>
                             <input
                               type="number"
                               step="0.01"

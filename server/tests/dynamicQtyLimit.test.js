@@ -34,7 +34,7 @@ function testDynamicQtyLogic() {
   // TEST 1: INTRADAY - BUY 1000, PROFIT +500
   // ============================================
   console.log('\n' + '='.repeat(60));
-  console.log('TEST 1: INTRADAY - BUY 1000 shares, PROFIT +₹500');
+  console.log('TEST 1: INTRADAY - BUY 1000 shares, PROFIT +500');
   console.log('='.repeat(60));
   
   let tradedQty = 1000;
@@ -56,7 +56,7 @@ function testDynamicQtyLogic() {
   
   // Step 2: Close position with profit
   console.log('\n📉 STEP 2: Closing Position with PROFIT');
-  console.log(`   Net P&L: +₹${netPnL}`);
+  console.log(`   Net P&L: +${netPnL}`);
   console.log(`   Available Before Close: ${availableIntradayQty}`);
   
   if (netPnL >= 0) {
@@ -76,7 +76,7 @@ function testDynamicQtyLogic() {
   // TEST 2: INTRADAY - BUY 1000, LOSS -800
   // ============================================
   console.log('\n' + '='.repeat(60));
-  console.log('TEST 2: INTRADAY - BUY 1000 shares, LOSS -₹800');
+  console.log('TEST 2: INTRADAY - BUY 1000 shares, LOSS -800');
   console.log('='.repeat(60));
   
   // Reset for new test
@@ -99,7 +99,7 @@ function testDynamicQtyLogic() {
   
   // Step 2: Close position with loss
   console.log('\n📉 STEP 2: Closing Position with LOSS');
-  console.log(`   Net P&L: ₹${netPnL}`);
+  console.log(`   Net P&L: ${netPnL}`);
   console.log(`   Available Before Close: ${availableIntradayQty}`);
   
   if (netPnL >= 0) {
@@ -117,7 +117,7 @@ function testDynamicQtyLogic() {
   // TEST 3: CARRY FORWARD - BUY 1000, PROFIT +500
   // ============================================
   console.log('\n' + '='.repeat(60));
-  console.log('TEST 3: CARRY FORWARD - BUY 1000 shares, PROFIT +₹500');
+  console.log('TEST 3: CARRY FORWARD - BUY 1000 shares, PROFIT +500');
   console.log('='.repeat(60));
   
   availableCarryQty = maxCarryQty;
@@ -139,7 +139,7 @@ function testDynamicQtyLogic() {
   
   // Step 2: Close with profit
   console.log('\n📉 STEP 2: Closing Position with PROFIT');
-  console.log(`   Net P&L: +₹${netPnL}`);
+  console.log(`   Net P&L: +${netPnL}`);
   console.log(`   Available Before Close: ${availableCarryQty}`);
   
   if (netPnL >= 0) {
@@ -157,7 +157,7 @@ function testDynamicQtyLogic() {
   // TEST 4: CARRY FORWARD - BUY 1000, LOSS -300
   // ============================================
   console.log('\n' + '='.repeat(60));
-  console.log('TEST 4: CARRY FORWARD - BUY 1000 shares, LOSS -₹300');
+  console.log('TEST 4: CARRY FORWARD - BUY 1000 shares, LOSS -300');
   console.log('='.repeat(60));
   
   availableCarryQty = maxCarryQty;
@@ -179,7 +179,7 @@ function testDynamicQtyLogic() {
   
   // Step 2: Close with loss
   console.log('\n📉 STEP 2: Closing Position with LOSS');
-  console.log(`   Net P&L: ₹${netPnL}`);
+  console.log(`   Net P&L: ${netPnL}`);
   console.log(`   Available Before Close: ${availableCarryQty}`);
   
   if (netPnL >= 0) {
@@ -227,21 +227,21 @@ function testDynamicQtyLogic() {
   console.log('\n📋 Starting Available: 2000');
   
   // Trade 1: Buy 500, Loss -200
-  console.log('\n🔹 Trade 1: Buy 500, Loss -₹200');
+  console.log('\n🔹 Trade 1: Buy 500, Loss -200');
   availableIntradayQty -= 500; // Open: 2000 - 500 = 1500
   console.log(`   After Open: ${availableIntradayQty}`);
   availableIntradayQty = Math.max(0, availableIntradayQty - 200); // Close with loss: 1500 - 200 = 1300
   console.log(`   After Close (Loss -200): ${availableIntradayQty}`);
   
   // Trade 2: Buy 500, Loss -300
-  console.log('\n🔹 Trade 2: Buy 500, Loss -₹300');
+  console.log('\n🔹 Trade 2: Buy 500, Loss -300');
   availableIntradayQty -= 500; // Open: 1300 - 500 = 800
   console.log(`   After Open: ${availableIntradayQty}`);
   availableIntradayQty = Math.max(0, availableIntradayQty - 300); // Close with loss: 800 - 300 = 500
   console.log(`   After Close (Loss -300): ${availableIntradayQty}`);
   
   // Trade 3: Buy 500, Profit +100
-  console.log('\n🔹 Trade 3: Buy 500, Profit +₹100');
+  console.log('\n🔹 Trade 3: Buy 500, Profit +100');
   availableIntradayQty -= 500; // Open: 500 - 500 = 0
   console.log(`   After Open: ${availableIntradayQty}`);
   availableIntradayQty = Math.min(maxIntradayQty, availableIntradayQty + 500); // Close with profit: 0 + 500 = 500

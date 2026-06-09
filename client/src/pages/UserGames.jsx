@@ -63,8 +63,8 @@ function ledgerGameIdFromUi(uiId) {
   return m[uiId] || uiId;
 }
 
-/** INR only — integer in `className` colour, paise (.xx) in red */
-function renderInrRedPaise(amount, className) {
+/** Stockex coins — integer in `className` colour, decimals (.xx) in red */
+function renderCoinsRedPaise(amount, className) {
   if (amount == null || !Number.isFinite(Number(amount))) {
     return <span className="text-gray-500">—</span>;
   }
@@ -72,12 +72,12 @@ function renderInrRedPaise(amount, className) {
   const dot = s.lastIndexOf('.');
   if (dot === -1) {
     return (
-      <span className={`font-bold tabular-nums tracking-tight ${className}`}>₹{s}</span>
+      <span className={`font-bold tabular-nums tracking-tight ${className}`}>{s}</span>
     );
   }
   return (
     <span className={`font-bold tabular-nums tracking-tight ${className}`}>
-      ₹{s.slice(0, dot)}
+      {s.slice(0, dot)}
       <span className="text-red-500">{s.slice(dot)}</span>
     </span>
   );
@@ -620,7 +620,7 @@ const UserGames = () => {
             <div className="bg-dark-700 rounded-lg px-4 py-2">
               <div className="text-xs text-gray-400">Balance</div>
               <div className="font-bold text-purple-400">{(gamesBalance / (activeGame ? resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame]) : (gameSettings?.tokenValue || 300))).toFixed(2)} Tickets</div>
-              <div className="text-[10px] text-gray-500">₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+              <div className="text-[10px] text-gray-500">{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
             </div>
           </div>
         </div>
@@ -731,10 +731,10 @@ const UserGames = () => {
                         Total won today (IST)
                       </div>
                       <div className={`text-sm font-bold tabular-nums ${grossTone}`}>
-                        {gross > 0 ? '+' : ''}₹{grossFormatted}
+                        {gross > 0 ? '+' : ''}{grossFormatted}
                       </div>
                       <div className={`text-[10px] font-medium tabular-nums mt-1 ${netTone}`}>
-                        Net today: {net > 0 ? '+' : net < 0 ? '−' : ''}₹{netFormatted}
+                        Net today: {net > 0 ? '+' : net < 0 ? '−' : ''}{netFormatted}
                       </div>
                       <div className="text-[9px] text-gray-600 mt-0.5 leading-tight">
                         Resets daily at midnight India time
@@ -951,7 +951,7 @@ const UserGames = () => {
                               </div>
                             ) : (
                               <div className="text-lg font-bold text-green-400">
-                                ₹{(isLTP ? item.closingLTP : item.closingPrice || item.clearingPrice || item.lockedPrice)?.toLocaleString('en-IN', {
+                                {(isLTP ? item.closingLTP : item.closingPrice || item.clearingPrice || item.lockedPrice)?.toLocaleString('en-IN', {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2
                               }) || '—'}
@@ -988,7 +988,7 @@ const UserGames = () => {
                               <div className="text-xs text-cyan-400 mt-1">
                                 Locked price:{' '}
                                 {Number.isFinite(Number(item.closingPrice))
-                                  ? `₹${Number(item.closingPrice).toLocaleString('en-IN', {
+                                  ? `${Number(item.closingPrice).toLocaleString('en-IN', {
                                       minimumFractionDigits: 2,
                                       maximumFractionDigits: 2,
                                     })}`
@@ -1092,7 +1092,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
                         <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 500} Tickets</span></li>
-                        <li>3. 1 Ticket = ₹{tv}</li>
+                        <li>3. 1 Ticket = {tv}</li>
                       </ul>
                     </div>
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
@@ -1144,7 +1144,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
                         <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 500} Tickets</span></li>
-                        <li>3. 1 Ticket = ₹{tv}</li>
+                        <li>3. 1 Ticket = {tv}</li>
                       </ul>
                     </div>
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
@@ -1177,7 +1177,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Pick the <span className="text-purple-400 font-bold">last 2 decimal digits</span> (.00 to .99) of the Nifty 50 closing price.</li>
                         <li>2. If the Nifty closes at 24,850<span className="text-yellow-400 font-bold">.75</span>, the winning number is <span className="text-yellow-400 font-bold">75</span>.</li>
-                        <li>3. Correct guess wins <span className="text-green-400 font-bold">₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross</span> per winning ticket (<span className="text-cyan-400 font-bold">{gs.winMultiplier != null ? `${tkt}×${gs.winMultiplier}` : `fixed ₹${gs.fixedProfit || 4000}`}</span>), before hierarchy.</li>
+                        <li>3. Correct guess wins <span className="text-green-400 font-bold">{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross</span> per winning ticket (<span className="text-cyan-400 font-bold">{gs.winMultiplier != null ? `${tkt}×${gs.winMultiplier}` : `fixed ${gs.fixedProfit || 4000}`}</span>), before hierarchy.</li>
                         <li>4. You can place up to <span className="text-cyan-400 font-bold">{gs.betsPerDay || 10} bets per day</span> on different numbers.</li>
                       </ul>
                     </div>
@@ -1195,7 +1195,7 @@ const UserGames = () => {
                         <li>1. Min per bet: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
                         <li>2. Max per bet: <span className="text-purple-400 font-bold">{gs.maxTickets || 100} Tickets</span></li>
                         <li>3. Max bets per day: <span className="text-purple-400 font-bold">{gs.betsPerDay || 10}</span></li>
-                        <li>4. 1 Ticket = ₹{tv}</li>
+                        <li>4. 1 Ticket = {tv}</li>
                       </ul>
                     </div>
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
@@ -1203,13 +1203,13 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1.5 pl-1">
                         <li>1. Pick any number from <span className="text-yellow-400 font-bold">00 to 99</span> from the grid.</li>
                         <li>2. At market close, the last 2 decimals of Nifty closing price are checked.</li>
-                        <li>3. If your number matches → <span className="text-green-400 font-bold">You WIN ₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross!</span></li>
+                        <li>3. If your number matches → <span className="text-green-400 font-bold">You WIN {niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross!</span></li>
                         <li>4. If not → <span className="text-red-400 font-bold">You lose your bet amount.</span></li>
                       </ul>
                       <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
                         <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
                         <div className="text-gray-400">You bet <span className="text-purple-400 font-bold">2 Tkt</span> on number <span className="text-yellow-400 font-bold">75</span>. Nifty closes at 24,850.75.</div>
-                        <div className="text-green-400 font-bold mt-1">Result: WIN! You get ₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross credited</div>
+                        <div className="text-green-400 font-bold mt-1">Result: WIN! You get {niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross credited</div>
                       </div>
                     </div>
                     <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
@@ -1228,7 +1228,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Pick the <span className="text-amber-400 font-bold">last 2 decimal digits</span> (.00 to .99) of the <span className="text-amber-400 font-bold">BTC / USDT</span> spot at result time (IST).</li>
                         <li>2. If BTC is <span className="text-yellow-400 font-bold">76,123.65</span>, the winning number is <span className="text-yellow-400 font-bold">65</span> (.65).</li>
-                        <li>3. Correct guess wins <span className="text-green-400 font-bold">₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross</span> per ticket (same payout rules as Nifty Number).</li>
+                        <li>3. Correct guess wins <span className="text-green-400 font-bold">{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross</span> per ticket (same payout rules as Nifty Number).</li>
                         <li>4. You can place up to <span className="text-cyan-400 font-bold">{gs.betsPerDay || 10} bets per day</span> on different numbers.</li>
                       </ul>
                     </div>
@@ -1245,7 +1245,7 @@ const UserGames = () => {
                         <li>1. Min per bet: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
                         <li>2. Max per bet: <span className="text-purple-400 font-bold">{gs.maxTickets || 100} Tickets</span></li>
                         <li>3. Max bets per day: <span className="text-purple-400 font-bold">{gs.betsPerDay || 10}</span></li>
-                        <li>4. 1 Ticket = ₹{tv}</li>
+                        <li>4. 1 Ticket = {tv}</li>
                       </ul>
                     </div>
                     <div className="bg-amber-900/20 border border-amber-500/20 rounded-xl p-3">
@@ -1282,7 +1282,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
                         <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 250} Tickets</span></li>
-                        <li>3. 1 Ticket = ₹{tv}</li>
+                        <li>3. 1 Ticket = {tv}</li>
                       </ul>
                     </div>
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
@@ -1331,9 +1331,9 @@ const UserGames = () => {
                     <div>
                       <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bid Limits</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
-                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span> (₹{(gs.minTickets || 1) * tv})</li>
-                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 500} Tickets</span> (₹{(gs.maxTickets || 500) * tv})</li>
-                        <li>3. 1 Ticket = ₹{tv}</li>
+                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span> ({(gs.minTickets || 1) * tv})</li>
+                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 500} Tickets</span> ({(gs.maxTickets || 500) * tv})</li>
+                        <li>3. 1 Ticket = {tv}</li>
                       </ul>
                     </div>
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
@@ -1402,9 +1402,9 @@ const UserGames = () => {
                     <div>
                       <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bid Limits</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
-                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span> (₹{((gs.minTickets || 1) * tkt).toLocaleString('en-IN')})</li>
-                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets != null && gs.maxTickets > 0 ? gs.maxTickets : 5000} Tickets</span> (₹{((gs.maxTickets != null && gs.maxTickets > 0 ? gs.maxTickets : 5000) * tkt).toLocaleString('en-IN')})</li>
-                        <li>3. 1 Ticket = ₹{tkt.toLocaleString('en-IN')}</li>
+                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span> ({((gs.minTickets || 1) * tkt).toLocaleString('en-IN')})</li>
+                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets != null && gs.maxTickets > 0 ? gs.maxTickets : 5000} Tickets</span> ({((gs.maxTickets != null && gs.maxTickets > 0 ? gs.maxTickets : 5000) * tkt).toLocaleString('en-IN')})</li>
+                        <li>3. 1 Ticket = {tkt.toLocaleString('en-IN')}</li>
                       </ul>
                     </div>
                     <div className="bg-amber-900/20 border border-amber-500/25 rounded-xl p-3">
@@ -1514,7 +1514,7 @@ const UserGames = () => {
                   </div>
                   <div className="text-right shrink-0 pl-2">
                     <div className="text-green-400 font-bold tabular-nums">
-                      +₹{Number(w.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      +{Number(w.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </div>
                     <div className="text-xs text-gray-500 whitespace-nowrap">
                       {formatGamesRelativeTime(w.createdAt)}
@@ -1995,7 +1995,7 @@ const InstructionsModal = ({ onClose, gameId }) => {
               <li className="flex items-start gap-2">
                 <span className="text-green-400 mt-0.5">4.</span>
                 <span>
-                  If your prediction is correct, your games wallet is credited the <strong className="text-purple-400">full gross win</strong> (stake × multiplier, e.g. ₹300 at 1.95× → <strong className="text-white">₹585</strong>).
+                  If your prediction is correct, your games wallet is credited the <strong className="text-purple-400">full gross win</strong> (stake × multiplier, e.g. 300 at 1.95× → <strong className="text-white">585</strong>).
                   {isBTCModal && (
                     <> Brokerage for your hierarchy is paid from the <strong className="text-orange-300">house pool</strong>, not subtracted from that amount.</>
                   )}
@@ -2696,14 +2696,14 @@ const GameLivePricePanel = ({
 
   const priceLine =
     displayPrice != null
-      ? `${isBTC ? '$' : '₹'}${displayPrice.toLocaleString(isBTC ? 'en-US' : 'en-IN', {
+      ? `${isBTC ? '$' : ''}${displayPrice.toLocaleString(isBTC ? 'en-US' : 'en-IN', {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })}`
       : '—';
 
-  /** INR only — integer in `className` colour, paise (.xx) in red */
-  const renderInrRedPaise = (amount, className) => {
+  /** Stockex coins — integer in `className` colour, decimals (.xx) in red */
+  const renderCoinsRedPaise = (amount, className) => {
     if (amount == null || !Number.isFinite(Number(amount))) {
       return <span className="text-gray-500">—</span>;
     }
@@ -2711,19 +2711,19 @@ const GameLivePricePanel = ({
     const dot = s.lastIndexOf('.');
     if (dot === -1) {
       return (
-        <span className={`font-bold tabular-nums tracking-tight ${className}`}>₹{s}</span>
+        <span className={`font-bold tabular-nums tracking-tight ${className}`}>{s}</span>
       );
     }
     return (
       <span className={`font-bold tabular-nums tracking-tight ${className}`}>
-        ₹{s.slice(0, dot)}
+        {s.slice(0, dot)}
         <span className="text-red-500">{s.slice(dot)}</span>
       </span>
     );
   };
 
   const changeLine = priceChange
-    ? `${isUp ? '+' : ''}${isBTC ? '$' : '₹'}${priceChange.change} (${priceChange.percent}%)`
+    ? `${isUp ? '+' : ''}${isBTC ? '$' : ''}${priceChange.change} (${priceChange.percent}%)`
     : '—';
 
   return (
@@ -2838,22 +2838,22 @@ const GameLivePricePanel = ({
             <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 tabular-nums text-gray-200">
               <span className="text-gray-500">Open</span>
               <span className="text-right">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(formingOhlc.open)}
               </span>
               <span className="text-gray-500">High</span>
               <span className="text-right">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(formingOhlc.high)}
               </span>
               <span className="text-gray-500">Low</span>
               <span className="text-right">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(formingOhlc.low)}
               </span>
               <span className="text-gray-500">Close</span>
               <span className="text-right font-medium text-white">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(formingOhlc.close)}
               </span>
             </div>
@@ -2869,22 +2869,22 @@ const GameLivePricePanel = ({
             <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 tabular-nums text-gray-200">
               <span className="text-gray-500">Open</span>
               <span className="text-right">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(closedOhlc.open)}
               </span>
               <span className="text-gray-500">High</span>
               <span className="text-right">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(closedOhlc.high)}
               </span>
               <span className="text-gray-500">Low</span>
               <span className="text-right">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(closedOhlc.low)}
               </span>
               <span className="text-gray-500">Close</span>
               <span className="text-right font-medium text-slate-100">
-                {isBTC ? '$' : '₹'}
+                {isBTC ? '$' : ''}
                 {formatGameOhlcPx(closedOhlc.close)}
               </span>
             </div>
@@ -2929,7 +2929,7 @@ const GameLivePricePanel = ({
                     className="flex items-center justify-between gap-2 px-2 py-1.5 tabular-nums"
                   >
                     <span className="text-white font-medium">
-                      ₹{row.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {row.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                     <span className="text-gray-500 shrink-0 text-[10px]">{row.istTime}</span>
                   </div>
@@ -3460,7 +3460,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           serverRow ||
           (!isBTC && lockedClose != null && published);
 
-        // BTC: prices from GameResult; Nifty: DB close, else Kite socket lock — same ₹ as tracker / tape.
+        // BTC: prices from GameResult; Nifty: DB close, else Kite socket lock — same  as tracker / tape.
         const resultPrice = isBTC
           ? serverRow
             ? serverClosePx
@@ -3934,7 +3934,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     return null;
   };
 
-  const currSymbol = isBTC ? '$' : '₹';
+  const currSymbol = isBTC ? '$' : '';
   const prevWindowNumber =
     windowInfo.windowNumber > 1 ? windowInfo.windowNumber - 1 : null;
   const prevPrevWindowNumber =
@@ -4029,7 +4029,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         };
       }
 
-      // Kite/socket boundary lock + chart — show before Mongo `GameResult` row appears (same ₹ as LTP tape).
+      // Kite/socket boundary lock + chart — show before Mongo `GameResult` row appears (same  as LTP tape).
       if (lockedPx != null && resultPublished) {
         const prevGr = Number(winNum) > 1 ? pickLatestGameResultForWindow(resultsForPick, winNum - 1) : null;
         const prevCloseOfficial =
@@ -4396,7 +4396,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 >
                   {item.ltp != null && Number(item.ltp) > 0 ? (
                     <>
-                      {isBTC ? '$' : '₹'}
+                      {isBTC ? '$' : ''}
                       {Number(item.ltp).toLocaleString('en-IN', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
@@ -4829,7 +4829,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                     {balanceTokens} Tkt
                   </div>
                   <div className="text-sm sm:text-base text-gray-400 tabular-nums leading-tight">
-                    ₹{Number(balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
               </div>
@@ -4937,7 +4937,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">1 Ticket</span>
-                  <span className="font-medium">₹{tokenValue}</span>
+                  <span className="font-medium">{tokenValue}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Players</span>
@@ -4985,7 +4985,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 </div>
                 {sidePanelPrice && sidePanelPrice > 0 ? (
                   <div className="text-2xl font-bold text-center text-cyan-300 tabular-nums">
-                    {isBTC ? '$' : '₹'}{sidePanelPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {isBTC ? '$' : ''}{sidePanelPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 ) : (
                   <div className="text-center py-2">
@@ -5062,7 +5062,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   step="0.01"
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xl font-bold text-center focus:border-purple-500 focus:outline-none"
                 />
-                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = ₹{actualTokenValue})</div>
+                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = {actualTokenValue})</div>
                 <div className="grid grid-cols-4 gap-1.5 mt-2">
                   {quickAmounts.map(amt => (
                     <button
@@ -5642,7 +5642,7 @@ const NiftyNumberScreen = ({
     if (selectedNumber == null || count <= 0) return;
     const amt = minBet; // Use minimum bet amount
     const totalCost = amt * count;
-    if (totalCost > balance) { setMessage({ type: 'error', text: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${count} ticket(s)` }); return; }
+    if (totalCost > balance) { setMessage({ type: 'error', text: `Insufficient balance. Need ${totalCost.toLocaleString()} for ${count} ticket(s)` }); return; }
     if (!gameEnabled) { setMessage({ type: 'error', text: 'Game is currently disabled' }); return; }
     if (isBtcNumberBettingClosed) {
       setMessage({ type: 'error', text: 'BTC Number betting time is over for today.' });
@@ -5676,8 +5676,8 @@ const NiftyNumberScreen = ({
   const handleModifyBet = async (betId) => {
     const newAmt = parseFloat(editAmount);
     if (isNaN(newAmt) || newAmt <= 0) { setMessage({ type: 'error', text: 'Enter a valid amount' }); return; }
-    if (newAmt < minBet) { setMessage({ type: 'error', text: `Minimum bet is ₹${minBet}` }); return; }
-    if (newAmt > maxBet) { setMessage({ type: 'error', text: `Maximum bet is ₹${maxBet}` }); return; }
+    if (newAmt < minBet) { setMessage({ type: 'error', text: `Minimum bet is ${minBet}` }); return; }
+    if (newAmt > maxBet) { setMessage({ type: 'error', text: `Maximum bet is ${maxBet}` }); return; }
 
     setModifying(true);
     setMessage(null);
@@ -5687,7 +5687,7 @@ const NiftyNumberScreen = ({
       }, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
-      setMessage({ type: 'success', text: `Bet updated to ₹${newAmt.toLocaleString()}` });
+      setMessage({ type: 'success', text: `Bet updated to ${newAmt.toLocaleString()}` });
       setEditingBetId(null);
       setEditAmount('');
       refreshBalance();
@@ -5775,13 +5775,13 @@ const NiftyNumberScreen = ({
                 </div>
                 <div>
                   <h1 className="font-bold">{game.name}</h1>
-                  <p className="text-xs text-gray-400">Win ₹{grossWinPerTicketDisplay.toLocaleString()} gross</p>
+                  <p className="text-xs text-gray-400">Win {grossWinPerTicketDisplay.toLocaleString()} gross</p>
                 </div>
               </div>
             </div>
             <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
               <div className="text-[10px] text-gray-400">Balance</div>
-              <div className="font-bold text-purple-400">₹{balance.toLocaleString()}</div>
+              <div className="font-bold text-purple-400">{balance.toLocaleString()}</div>
             </div>
           </div>
         </div>
@@ -5821,7 +5821,7 @@ const NiftyNumberScreen = ({
                             <span className={`${allDecimals ? 'text-red-400 text-base' : 'text-purple-400 text-sm'} font-bold`}>
                               {formatDisplayedPick(bet.selectedNumber)}
                             </span>
-                            <span className="text-gray-400">₹{bet.amount.toLocaleString()}</span>
+                            <span className="text-gray-400">{bet.amount.toLocaleString()}</span>
                             {(bet.quantity || 1) > 1 && (
                               <span className="text-[10px] text-purple-300 bg-purple-500/20 px-1.5 py-0.5 rounded">×{bet.quantity}</span>
                             )}
@@ -5849,8 +5849,8 @@ const NiftyNumberScreen = ({
                           )}
                           {bet.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
                           {bet.status === 'expired' && <span className="text-gray-400 font-medium">Removed (refunded)</span>}
-                          {bet.status === 'won' && <span className="text-green-400 font-bold">WIN +₹{bet.profit?.toLocaleString()}</span>}
-                          {bet.status === 'lost' && <span className="text-red-400 font-bold">LOSS -₹{bet.amount.toLocaleString()}</span>}
+                          {bet.status === 'won' && <span className="text-green-400 font-bold">WIN +{bet.profit?.toLocaleString()}</span>}
+                          {bet.status === 'lost' && <span className="text-red-400 font-bold">LOSS -{bet.amount.toLocaleString()}</span>}
                         </div>
                       </div>
                                       {bet.status !== 'pending' && bet.resultNumber != null && (
@@ -5913,15 +5913,15 @@ const NiftyNumberScreen = ({
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Win Profit</span>
-                  <span className="text-green-400 font-bold">₹{grossWinPerTicketDisplay.toLocaleString()}</span>
+                  <span className="text-green-400 font-bold">{grossWinPerTicketDisplay.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Min Bet</span>
-                  <span className="font-medium">{minTickets} Ticket{minTickets > 1 ? 's' : ''} (₹{minBet.toLocaleString()})</span>
+                  <span className="font-medium">{minTickets} Ticket{minTickets > 1 ? 's' : ''} ({minBet.toLocaleString()})</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Max Bet</span>
-                  <span className="font-medium">{maxTickets} Tickets (₹{maxBet.toLocaleString()})</span>
+                  <span className="font-medium">{maxTickets} Tickets ({maxBet.toLocaleString()})</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Bets/Day</span>
@@ -5941,7 +5941,7 @@ const NiftyNumberScreen = ({
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
-                Bet {minTickets} Ticket (₹{minBet}) → If you win: <span className="text-green-400 font-medium">+₹{grossWinPerTicketDisplay.toLocaleString()} gross</span>
+                Bet {minTickets} Ticket ({minBet}) → If you win: <span className="text-green-400 font-medium">+{grossWinPerTicketDisplay.toLocaleString()} gross</span>
               </div>
               <p className="text-[10px] text-gray-500 mt-2 text-center leading-snug">
                 Jeet/haar upar wale &quot;Aaj ka result&quot; box aur har line par tab dikhega jab admin aaj ka result declare karein ({resultTimeDisplay} IST policy).
@@ -5977,7 +5977,7 @@ const NiftyNumberScreen = ({
                         </div>
                         <div className="font-bold">
                           <span className={allDecimals ? 'text-red-400 text-base' : ''}>{formatDisplayedPick(bet.selectedNumber)}</span>{' '}
-                          <span className="text-gray-400 font-normal">₹{bet.amount.toLocaleString()}</span>{(bet.quantity || 1) > 1 && <span className="text-purple-300 text-[10px] ml-1">×{bet.quantity}</span>}
+                          <span className="text-gray-400 font-normal">{bet.amount.toLocaleString()}</span>{(bet.quantity || 1) > 1 && <span className="text-purple-300 text-[10px] ml-1">×{bet.quantity}</span>}
                         </div>
                         {bet.status !== 'pending' && bet.resultNumber != null && (
                           <div className="text-[9px] text-gray-500 mt-0.5">
@@ -5988,8 +5988,8 @@ const NiftyNumberScreen = ({
                       <div className="text-right">
                         {bet.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
                         {bet.status === 'expired' && <span className="text-gray-400 font-medium">Removed</span>}
-                        {bet.status === 'won' && <span className="text-green-400 font-bold">WIN +₹{bet.profit?.toLocaleString()}</span>}
-                        {bet.status === 'lost' && <span className="text-red-400 font-bold">LOSS -₹{bet.amount.toLocaleString()}</span>}
+                        {bet.status === 'won' && <span className="text-green-400 font-bold">WIN +{bet.profit?.toLocaleString()}</span>}
+                        {bet.status === 'lost' && <span className="text-red-400 font-bold">LOSS -{bet.amount.toLocaleString()}</span>}
                       </div>
                     </div>
                   ))}
@@ -6041,7 +6041,7 @@ const NiftyNumberScreen = ({
                     const priceStr = priceToShow.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                     const dotIndex = priceStr.lastIndexOf('.');
                     if (dotIndex === -1) {
-                      return `₹${priceStr}`;
+                      return `${priceStr}`;
                     }
                     if (allDecimals) {
                       const intPart = priceStr.slice(0, dotIndex);
@@ -6050,7 +6050,7 @@ const NiftyNumberScreen = ({
                       const intPrefix = intPart.replace(/\d{1,2}$/, '');
                       return (
                         <>
-                          ₹{intPrefix}
+                          {intPrefix}
                           <span className="text-red-400 text-4xl sm:text-5xl font-extrabold tracking-wide">
                             {leftTwoDigits}
                           </span>
@@ -6060,7 +6060,7 @@ const NiftyNumberScreen = ({
                     }
                     return (
                       <>
-                        ₹{priceStr.slice(0, dotIndex)}
+                        {priceStr.slice(0, dotIndex)}
                         <span className="text-purple-400 text-3xl sm:text-4xl font-bold ml-1">
                           {priceStr.slice(dotIndex)}
                         </span>
@@ -6126,7 +6126,7 @@ const NiftyNumberScreen = ({
                     ))}
                   </div>
                   <div className="text-gray-400 text-sm mb-1">
-                    Total: ₹{todayBets.reduce((s, b) => s + b.amount, 0).toLocaleString()}
+                    Total: {todayBets.reduce((s, b) => s + b.amount, 0).toLocaleString()}
                   </div>
                   <div className="text-yellow-400 text-xs font-medium">Result policy {resultTimeDisplay} IST — declare ke baad yahi screen par WIN/LOSS</div>
                   <div className="text-[10px] text-gray-500 mt-2">You can still edit pending bet amounts from the left panel</div>
@@ -6561,7 +6561,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
         headers: { Authorization: `Bearer ${user.token}` }
       });
       const lockedPrice = prediction === 'BUY' ? upperTarget : lowerTarget;
-      setMessage({ type: 'success', text: `${prediction} trade placed! Target: ₹${lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` });
+      setMessage({ type: 'success', text: `${prediction} trade placed! Target: ${lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` });
       setLockedDisplayPrice(lockedPrice); // Lock the target price
       fetchActiveTrades();
       refreshBalance();
@@ -6666,7 +6666,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <div key={idx} className="flex justify-between items-center py-1.5 border-b border-dark-600 last:border-0">
                       <span className="text-xs text-gray-400">{item.date}</span>
                       <span className="text-sm font-bold text-cyan-400">
-                        ₹{Number(item.closingLTP).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(item.closingLTP).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   ))}
@@ -6735,7 +6735,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">1 Ticket</span>
-                  <span className="font-medium">₹{tokenValue}</span>
+                  <span className="font-medium">{tokenValue}</span>
                 </div>
                 {settleAtResultTime && (
                   <div className="flex justify-between py-1">
@@ -6930,7 +6930,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   step="0.01"
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xl font-bold text-center focus:border-cyan-500 focus:outline-none"
                 />
-                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = ₹{tokenValue})</div>
+                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = {tokenValue})</div>
                 <div className="grid grid-cols-3 gap-1.5 mt-2">
                   {quickAmounts.map(amt => (
                     <button
@@ -6956,7 +6956,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <div key={`ltp-${priceUpdateTick}`} className="text-center mb-3 pb-3 border-b border-dark-600">
                     <div className="text-xs text-cyan-400 mb-1">NIFTY 50 LTP</div>
                     <div className="text-3xl font-bold text-cyan-300" key={currentPrice}>
-                      ₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div className="text-[10px] text-gray-500 mt-1">Bracket: {bracketGapType === 'percentage' ? `±${bracketGapPercent}%` : `±${bracketGap} points`}</div>
                   </div>
@@ -6987,8 +6987,8 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-white font-bold text-xl">₹{upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                          <div className="text-xs text-white/80">{bracketGapType === 'percentage' ? `+${bracketGapPercent}%` : `+${bracketGap} pts`} • Bid: ₹{bidAsk.bid?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
+                          <div className="text-white font-bold text-xl">{upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                          <div className="text-xs text-white/80">{bracketGapType === 'percentage' ? `+${bracketGapPercent}%` : `+${bracketGap} pts`} • Bid: {bidAsk.bid?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
                         </div>
                       </div>
                     </button>
@@ -7014,15 +7014,15 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-white font-bold text-xl">₹{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                          <div className="text-xs text-white/80">{bracketGapType === 'percentage' ? `-${bracketGapPercent}%` : `-${bracketGap} pts`} • Ask: ₹{bidAsk.ask?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
+                          <div className="text-white font-bold text-xl">{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                          <div className="text-xs text-white/80">{bracketGapType === 'percentage' ? `-${bracketGapPercent}%` : `-${bracketGap} pts`} • Ask: {bidAsk.ask?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
                         </div>
                       </div>
                     </button>
 
                     {/* Win Info */}
                     <div className="mt-3 p-2 bg-yellow-900/20 border border-yellow-500/30 rounded-lg text-center">
-                      <span className="text-yellow-400 text-xs font-medium">Win {winMultiplier}x = ₹{betAmount ? (parseFloat(betAmount) * tokenValue * winMultiplier).toLocaleString() : '0'}</span>
+                      <span className="text-yellow-400 text-xs font-medium">Win {winMultiplier}x = {betAmount ? (parseFloat(betAmount) * tokenValue * winMultiplier).toLocaleString() : '0'}</span>
                       <span className="text-gray-500 text-[10px] ml-1">(no fee on profit)</span>
                     </div>
                   </>
@@ -7092,7 +7092,7 @@ function formatJackpotPoolPercent(percent) {
 }
 
 /**
- * Gross ₹ for leaderboard row at `index` (same as Super Admin / `declareNiftyJackpotResult`):
+ * Gross  for leaderboard row at `index` (same as Super Admin / `declareNiftyJackpotResult`):
  * rank = index + 1 → full ladder % for that rank × pool.
  */
 function estimatedJackpotGrossPrizeForEntryAtIndex(fullLeaderboard, index, totalPool, topWinners, gameSettings) {
@@ -7363,7 +7363,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
       const px = data.bid?.niftyPriceAtBid;
       const pxText =
         px != null && Number.isFinite(Number(px))
-          ? ` at predicted NIFTY ₹${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+          ? ` at predicted NIFTY ${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
           : '.';
       setMessage({ type: 'success', text: `1 ticket placed${pxText}` });
       refreshBalance();
@@ -7399,7 +7399,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
       }
       const pxText =
         px != null && Number.isFinite(Number(px))
-          ? ` Predicted NIFTY ₹${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+          ? ` Predicted NIFTY ${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
           : '';
       setMessage({ type: 'success', text: `Prediction saved.${pxText}` });
       fetchTodayBid();
@@ -7413,10 +7413,10 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
   const formatNiftyBidPx = (px) =>
     px != null && Number.isFinite(Number(px))
-      ? `₹${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      ? `${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : null;
 
-  /** User's predicted NIFTY level stored per ticket — not ticket ₹ */
+  /** User's predicted NIFTY level stored per ticket — not ticket  */
   const niftyAtBidDisplay = (niftyPriceAtBid) => formatNiftyBidPx(niftyPriceAtBid) || '—';
 
   return (
@@ -7447,7 +7447,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <div className="text-[10px] text-green-400 flex items-center gap-1">
                     <Lock size={9} /> Locked Price
                   </div>
-                  <div className="font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                  <div className="font-bold text-green-400">{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
                 </div>
               )}
               {myRank && (
@@ -7505,7 +7505,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <div key={idx} className="flex justify-between items-center py-1.5 border-b border-dark-600 last:border-0">
                       <span className="text-xs text-gray-400">{item.resultDate}</span>
                       <span className="text-sm font-bold text-cyan-400">
-                        ₹{Number(item.lockedPrice).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(item.lockedPrice).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   ))}
@@ -7520,7 +7520,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 Prize Structure (full pool share)
               </h3>
               <p className="text-[9px] text-gray-500 mb-1.5">
-                Each rank wins the shown <span className="text-cyan-400/90">% of the total kitty</span> (not tickets). ₹ shown is a projection from the current pool.
+                Each rank wins the shown <span className="text-cyan-400/90">% of the total kitty</span> (not tickets).  shown is a projection from the current pool.
               </p>
               <p className="text-[9px] text-amber-200/90 mb-1.5 leading-snug rounded-md bg-amber-950/25 border border-amber-700/30 px-2 py-1.5">
                 <span className="font-semibold text-amber-300">Ties (same distance to result / spot):</span> earlier
@@ -7536,7 +7536,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                       <span className="text-gray-500 text-[10px] ml-1">of pool</span>
                       {totalPool > 0 && percent > 0 && (
                         <div className="text-[10px] text-gray-500 tabular-nums">
-                          ≈ ₹{Math.round((totalPool * percent) / 100).toLocaleString('en-IN')}
+                          ≈ {Math.round((totalPool * percent) / 100).toLocaleString('en-IN')}
                         </div>
                       )}
                     </div>
@@ -7550,7 +7550,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">1 Ticket</span>
-                  <span className="font-medium">₹{tokenValue}</span>
+                  <span className="font-medium">{tokenValue}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Result At</span>
@@ -7559,7 +7559,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Nifty Price</span>
                   {priceLocked && lockedPrice ? (
-                    <span className="text-green-400 font-bold flex items-center gap-1"><Lock size={10} /> ₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-green-400 font-bold flex items-center gap-1"><Lock size={10} /> {lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   ) : (
                     <span className="text-yellow-400 text-[10px]">Not locked yet</span>
                   )}
@@ -7659,7 +7659,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <Zap size={10} /> BANK 
                 </div>
                 <div className="text-2xl font-bold text-purple-300 tabular-nums">
-                  ₹{Number(totalPool || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(totalPool || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="text-[10px] text-gray-400 mt-1">
                   {uniquePlayerCount} contributor{uniquePlayerCount !== 1 ? 's' : ''} in the kitty
@@ -7714,7 +7714,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <span className="text-cyan-500/90">
                       {' '}
                       ·{' '}
-                      {jackpotRankingMode === 'nearest_locked_close' ? 'result' : 'spot'} ₹
+                      {jackpotRankingMode === 'nearest_locked_close' ? 'result' : 'spot'} 
                       {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))
                         ? jackpotRankingReference
                         : leaderboardSpot
@@ -7780,13 +7780,13 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                               className="text-yellow-300 font-bold text-[11px] tabular-nums"
                               title="Amount staked on this ticket (not the prize)"
                             >
-                              ₹{Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                             <div className="text-[9px] text-gray-500">Stake</div>
                             {estGross != null && estGross > 0 && (
                               <>
                                 <div className="text-emerald-300/95 font-bold text-[11px] tabular-nums mt-1">
-                                  ≈ ₹{estGross.toLocaleString('en-IN')}
+                                  ≈ {estGross.toLocaleString('en-IN')}
                                 </div>
                                 <div className="text-[9px] text-emerald-500/80">Est. gross</div>
                               </>
@@ -7815,7 +7815,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <div className="text-gray-400 mb-1">Your tickets today</div>
                     <div className="text-lg font-bold text-yellow-400">{ticketsToday}</div>
                     <div className="text-[10px] text-gray-500 mt-1">
-                      Staked ₹{Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      Staked {Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       {myRank != null && (
                         <span className="text-cyan-400/90"> · Best rank #{myRank}</span>
                       )}
@@ -7904,7 +7904,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
                       <Lock size={10} /> Nifty Price Locked
                     </div>
-                    <div className="text-xl font-bold text-green-400">₹24,066.39</div>
+                    <div className="text-xl font-bold text-green-400">24,066.39</div>
                     {lockedAt && (
                       <div className="text-[10px] text-gray-500 mt-1">
                         Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
@@ -7918,7 +7918,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
             {/* Fixed bet placement box at bottom */}
             <div className="mt-2 space-y-2 flex-shrink-0">
               <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center space-y-2">
-                <div className="text-[10px] text-gray-400 font-medium">Each purchase · 1 ticket · ₹{oneTicketRs.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] text-gray-400 font-medium">Each purchase · 1 ticket · {oneTicketRs.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
                 <div className="text-left">
                   <label htmlFor="nifty-jackpot-predicted" className="block text-[10px] text-gray-500 mb-1 font-medium">
                     Predicted NIFTY price
@@ -7956,7 +7956,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 ) : !gameEnabled ? (
                   'Game disabled'
                 ) : (
-                  `Add 1 ticket (₹${oneTicketRs.toLocaleString('en-IN')})`
+                  `Add 1 ticket (${oneTicketRs.toLocaleString('en-IN')})`
                 )}
               </button>
 
@@ -8402,7 +8402,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                 Prize Structure (full pool share)
               </h3>
               <p className="text-[9px] text-gray-500 mb-1.5">
-                Each rank wins the shown <span className="text-cyan-400/90">% of the Bank</span>. ₹ shown is a projection from the current pool.
+                Each rank wins the shown <span className="text-cyan-400/90">% of the Bank</span>.  shown is a projection from the current pool.
               </p>
               <p className="text-[9px] text-amber-200/90 mb-1.5 leading-snug rounded-md bg-amber-950/25 border border-amber-700/30 px-2 py-1.5">
                 <span className="font-semibold text-amber-300">Ties (same distance to BTC close):</span> <span>winning</span>
@@ -8417,7 +8417,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                       <span className="text-gray-500 text-[10px] ml-1">of pool</span>
                       {totalPool > 0 && percent > 0 && (
                         <div className="text-[10px] text-gray-500 tabular-nums">
-                          ≈ ₹{Math.round((totalPool * percent) / 100).toLocaleString('en-IN')}
+                          ≈ {Math.round((totalPool * percent) / 100).toLocaleString('en-IN')}
                         </div>
                       )}
                     </div>
@@ -8431,7 +8431,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">1 Ticket</span>
-                  <span className="font-medium">₹{oneTicketRs}</span>
+                  <span className="font-medium">{oneTicketRs}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Bidding until</span>
@@ -8621,13 +8621,13 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                               className="text-yellow-300 font-bold text-[11px] tabular-nums"
                               title="Amount staked on this ticket (not the prize)"
                             >
-                              ₹{Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                             <div className="text-[9px] text-gray-500">Stake</div>
                             {estGross > 0 && (
                               <>
                                 <div className="text-emerald-300/95 font-bold text-[11px] tabular-nums mt-1">
-                                  ≈ ₹{estGross.toLocaleString('en-IN')}
+                                  ≈ {estGross.toLocaleString('en-IN')}
                                 </div>
                                 <div className="text-[9px] text-emerald-500/80">Est. gross</div>
                               </>
@@ -8655,7 +8655,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                     <div className="text-gray-400 mb-1">Your tickets today</div>
                     <div className="text-lg font-bold text-yellow-400">{ticketsToday}</div>
                     <div className="text-[10px] text-gray-500 mt-1">
-                      Staked ₹{Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      Staked {Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       {myRank != null && (
                         <span className="text-cyan-400/90"> · Best rank #{myRank}</span>
                       )}
@@ -8760,7 +8760,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
 
             <div className="mt-2 space-y-2 flex-shrink-0">
               <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center space-y-2">
-                <div className="text-[10px] text-gray-400 font-medium">Each purchase · 1 ticket · ₹{oneTicketRs.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] text-gray-400 font-medium">Each purchase · 1 ticket · {oneTicketRs.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
                 <div className="text-left">
                   <label htmlFor="btc-jackpot-predicted" className="block text-[10px] text-gray-500 mb-1 font-medium">
                     Predicted BTC price (USD)
@@ -8801,7 +8801,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                 ) : !biddingWindow.ok ? (
                   'Bidding closed'
                 ) : (
-                  `Add 1 ticket (₹${oneTicketRs.toLocaleString('en-IN')})`
+                  `Add 1 ticket (${oneTicketRs.toLocaleString('en-IN')})`
                 )}
               </button>
 

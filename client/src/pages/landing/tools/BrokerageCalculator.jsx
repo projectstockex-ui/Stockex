@@ -44,7 +44,7 @@ export default function BrokerageCalculator() {
       sebiCharges = turnover * 0.000001
       stampDuty = buyValue * 0.00015
     } else if (segment === "equity-intraday") {
-      brokerage = Math.min(turnover * 0.0003, 40) // 0.03% or max ₹20 per order
+      brokerage = Math.min(turnover * 0.0003, 40) // 0.03% or max 20 per order
       sttSell = sellValue * 0.00025 // 0.025% on sell
       exchangeCharges = turnover * 0.0000345
       sebiCharges = turnover * 0.000001
@@ -56,7 +56,7 @@ export default function BrokerageCalculator() {
       sebiCharges = turnover * 0.000001
       stampDuty = buyValue * 0.00002
     } else if (segment === "options") {
-      brokerage = 40 // Flat ₹20 per order
+      brokerage = 40 // Flat 20 per order
       sttSell = sellValue * 0.000625
       exchangeCharges = turnover * 0.00053
       sebiCharges = turnover * 0.000001
@@ -130,7 +130,7 @@ export default function BrokerageCalculator() {
             {/* Input Fields */}
             <div className="grid sm:grid-cols-3 gap-6 mb-8">
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">Buy Price (₹)</label>
+                <label className="block text-sm font-medium text-white/70 mb-2">Buy Price ()</label>
                 <input
                   type="number"
                   value={buyPrice}
@@ -140,7 +140,7 @@ export default function BrokerageCalculator() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">Sell Price (₹)</label>
+                <label className="block text-sm font-medium text-white/70 mb-2">Sell Price ()</label>
                 <input
                   type="number"
                   value={sellPrice}
@@ -174,14 +174,14 @@ export default function BrokerageCalculator() {
                 <h3 className="text-lg font-semibold text-white mb-6">Breakdown</h3>
                 <div className="grid sm:grid-cols-2 gap-4">
                   {[
-                    { label: "Turnover", value: `₹${results.turnover}` },
-                    { label: "Brokerage", value: `₹${results.brokerage}` },
-                    { label: "STT", value: `₹${results.stt}` },
-                    { label: "Exchange Charges", value: `₹${results.exchangeCharges}` },
-                    { label: "GST (18%)", value: `₹${results.gst}` },
-                    { label: "SEBI Charges", value: `₹${results.sebiCharges}` },
-                    { label: "Stamp Duty", value: `₹${results.stampDuty}` },
-                    { label: "Breakeven Price", value: `₹${results.breakeven}` },
+                    { label: "Turnover", value: `${results.turnover}` },
+                    { label: "Brokerage", value: `${results.brokerage}` },
+                    { label: "STT", value: `${results.stt}` },
+                    { label: "Exchange Charges", value: `${results.exchangeCharges}` },
+                    { label: "GST (18%)", value: `${results.gst}` },
+                    { label: "SEBI Charges", value: `${results.sebiCharges}` },
+                    { label: "Stamp Duty", value: `${results.stampDuty}` },
+                    { label: "Breakeven Price", value: `${results.breakeven}` },
                   ].map((item, i) => (
                     <div key={i} className="flex justify-between items-center bg-white/5 rounded-xl p-4">
                       <span className="text-white/70">{item.label}</span>
@@ -194,12 +194,12 @@ export default function BrokerageCalculator() {
                 <div className="mt-6 grid sm:grid-cols-2 gap-4">
                   <div className="bg-white/10 rounded-xl p-6 text-center">
                     <div className="text-white/70 text-sm mb-2">Total Charges</div>
-                    <div className="text-2xl font-bold text-yellow-accent">₹{results.totalCharges}</div>
+                    <div className="text-2xl font-bold text-yellow-accent">{results.totalCharges}</div>
                   </div>
                   <div className={`rounded-xl p-6 text-center ${parseFloat(results.netPnL) >= 0 ? "bg-green-500/20" : "bg-red-500/20"}`}>
                     <div className="text-white/70 text-sm mb-2">Net P&L</div>
                     <div className={`text-2xl font-bold ${parseFloat(results.netPnL) >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      ₹{results.netPnL}
+                      {results.netPnL}
                     </div>
                   </div>
                 </div>

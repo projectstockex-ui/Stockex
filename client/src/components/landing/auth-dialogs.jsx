@@ -117,7 +117,7 @@ export function LoginDialog({ trigger }) {
 }
 
 
-export function OpenAccountDialog({ trigger }) {
+export function OpenAccountDialog({ trigger, title, description, submitLabel }) {
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState({
@@ -147,9 +147,9 @@ export function OpenAccountDialog({ trigger }) {
       <DialogContent className="sm:max-w-[425px] p-0 overflow-hidden">
         <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 pb-4">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-bold text-foreground">Create Account</DialogTitle>
+            <DialogTitle className="text-2xl font-bold text-foreground">{title || 'Create Account'}</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Start your trading journey with VXNESS
+              {description || 'Start your trading journey with Stockex'}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -257,7 +257,7 @@ export function OpenAccountDialog({ trigger }) {
             className="w-full h-11 bg-primary hover:bg-primary/90 text-white font-semibold"
             disabled={isLoading}
           >
-            {isLoading ? "Creating Account..." : "Create Account"}
+            {isLoading ? "Creating Account..." : (submitLabel || "Create Account")}
           </Button>
 
           <p className="text-center text-sm text-muted-foreground">
@@ -556,7 +556,7 @@ export function DemoTradingDialog({ trigger }) {
 }
 
 
-export function BrokerProgramDialog({ trigger }) {
+export function BrokerProgramDialog({ trigger, title, description, submitLabel }) {
   const [isLoading, setIsLoading] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [formData, setFormData] = useState({
@@ -585,10 +585,10 @@ export function BrokerProgramDialog({ trigger }) {
               <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
                 <Building2 className="w-5 h-5 text-primary" />
               </div>
-              <DialogTitle className="text-2xl font-bold text-foreground">Become a Broker</DialogTitle>
+              <DialogTitle className="text-2xl font-bold text-foreground">{title || 'Become a Broker'}</DialogTitle>
             </div>
             <DialogDescription className="text-muted-foreground">
-              Start your own brokerage business with our white-label solution.
+              {description || 'Start your own brokerage business with our white-label solution.'}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -692,7 +692,7 @@ export function BrokerProgramDialog({ trigger }) {
               className="w-full h-11 bg-primary hover:bg-primary/90 text-white font-semibold"
               disabled={isLoading}
             >
-              {isLoading ? "Submitting..." : "Apply for Broker Program"}
+              {isLoading ? "Submitting..." : (submitLabel || "Apply for Broker Program")}
             </Button>
           </form>
         )}
@@ -727,9 +727,9 @@ export function DepositDialog({ trigger }) {
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
             <h4 className="font-semibold text-blue-800 mb-2">Deposit Methods:</h4>
             <ul className="text-sm text-blue-700 space-y-2">
-              <li className="flex items-center gap-2">• UPI - Instant deposit</li>
-              <li className="flex items-center gap-2">• Net Banking - All major banks</li>
-              <li className="flex items-center gap-2">• IMPS/NEFT - Bank transfer</li>
+              <li className="flex items-center gap-2">? UPI - Instant deposit</li>
+              <li className="flex items-center gap-2">? Net Banking - All major banks</li>
+              <li className="flex items-center gap-2">? IMPS/NEFT - Bank transfer</li>
             </ul>
           </div>
 
@@ -835,7 +835,7 @@ export function BecomePartnerDialog({ trigger }) {
             </div>
             <h3 className="text-xl font-bold text-foreground">Application Received!</h3>
             <p className="text-muted-foreground text-sm max-w-xs">
-              Thank you for your interest in partnering with VXNESS. Our partnership team will review your application and reach out within 1–2 business days.
+              Thank you for your interest in partnering with VXNESS. Our partnership team will review your application and reach out within 1?2 business days.
             </p>
           </div>
         ) : (

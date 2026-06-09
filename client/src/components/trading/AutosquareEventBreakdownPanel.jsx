@@ -10,12 +10,12 @@ function fmt(n) {
   if (n == null || !Number.isFinite(Number(n))) return '—';
   const x = Number(n);
   const prefix = x >= 0 ? '+' : '';
-  return `${prefix}₹${Math.abs(x).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return `${prefix}${Math.abs(x).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 function fmtPx(n) {
   if (n == null || !Number.isFinite(Number(n))) return '—';
-  return `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return `${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 /** Inline breakdown for one autosquare run — not full trade close. */

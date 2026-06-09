@@ -86,7 +86,7 @@ export default function MarginCalculator() {
             {/* Input Fields */}
             <div className="grid sm:grid-cols-2 gap-6 mb-8">
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">Stock/Contract Price (₹)</label>
+                <label className="block text-sm font-medium text-white/70 mb-2">Stock/Contract Price ()</label>
                 <input
                   type="number"
                   value={stockPrice}
@@ -120,11 +120,11 @@ export default function MarginCalculator() {
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div className="bg-white/5 rounded-xl p-6 text-center">
                     <div className="text-white/70 text-sm mb-2">Total Position Value</div>
-                    <div className="text-2xl font-bold text-white">₹{results.totalValue}</div>
+                    <div className="text-2xl font-bold text-white">{results.totalValue}</div>
                   </div>
                   <div className="bg-yellow-accent/20 rounded-xl p-6 text-center">
                     <div className="text-white/70 text-sm mb-2">Margin Required</div>
-                    <div className="text-2xl font-bold text-yellow-accent">₹{results.marginRequired}</div>
+                    <div className="text-2xl font-bold text-yellow-accent">{results.marginRequired}</div>
                     <div className="text-sm text-white/50 mt-1">{results.marginPercent}% of value</div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-6 text-center">

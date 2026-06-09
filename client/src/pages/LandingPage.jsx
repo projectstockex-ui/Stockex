@@ -207,7 +207,7 @@ const LandingPage = () => {
     {
       name: 'Neha Desai',
       role: 'Professional Trader, Pune',
-      experience: 'Portfolio: ₹25L+',
+      experience: 'Portfolio: 25L+',
       quote: "The delivery pledge feature is brilliant! I can hold my long-term stocks and still leverage them for F&O trading. It's like having my cake and eating it too. The platform is fast, reliable, and the customer service responds within minutes."
     },
     {
@@ -568,7 +568,7 @@ const LandingPage = () => {
                   <ul className="space-y-3 text-gray-300">
                     <li className="flex items-start gap-3">
                       <ChevronRight className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-                      <span>Buy Reliance shares worth ₹1,00,000 → ₹50,000 margin becomes immediately available for F&O trades</span>
+                      <span>Buy Reliance shares worth 1,00,000 → 50,000 margin becomes immediately available for F&O trades</span>
                     </li>
                     <li className="flex items-start gap-3">
                       <ChevronRight className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />

@@ -4,6 +4,7 @@ import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
 import { usePagination } from '../utils/hooks';
 import Pagination from '../ui/Pagination';
+import { formatCoins } from '../../../../utils/stockexCoins.js';
 
 const FundRequests = () => {
   const { admin } = useAuth();
@@ -89,7 +90,7 @@ const FundRequests = () => {
                     <span className={`px-2 py-0.5 rounded text-xs ${req.type === 'DEPOSIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
                       {req.type}
                     </span>
-                    <span className="font-bold">₹{req.amount.toLocaleString()}</span>
+                    <span className="font-bold">{formatCoins(req.amount)}</span>
                   </div>
                   <div className="text-sm text-gray-400 mt-1">
                     User: {req.user?.fullName || req.user?.username} ({req.userId})

@@ -140,7 +140,7 @@ gameResultSchema.statics.getRecentResultsWithFallback = async function(gameId, l
   if (recentResults.length > 0) {
     // Log the latest result for debugging
     const latest = recentResults[0];
-    console.log(`[GameResult] Latest result: Window #${latest.windowNumber}, Result: ${latest.result}, Price: ₹${latest.closePrice}, Date: ${latest.windowDate}`);
+    console.log(`[GameResult] Latest result: Window #${latest.windowNumber}, Result: ${latest.result}, Price: ${latest.closePrice}, Date: ${latest.windowDate}`);
     return recentResults;
   }
   

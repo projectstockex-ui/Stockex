@@ -216,10 +216,10 @@ const LedgerView = () => {
                           <span>Games: {entry.transactionSlip.gameIds.join(', ')}</span>
                         </div>
                         <div className="flex justify-between text-[8px]">
-                          <span className="text-red-400">Debit: ₹{entry.transactionSlip.totalDebitAmount.toFixed(2)}</span>
-                          <span className="text-green-400">Credit: ₹{entry.transactionSlip.totalCreditAmount.toFixed(2)}</span>
+                          <span className="text-red-400">Debit: {entry.transactionSlip.totalDebitAmount.toFixed(2)}</span>
+                          <span className="text-green-400">Credit: {entry.transactionSlip.totalCreditAmount.toFixed(2)}</span>
                           <span className={`font-semibold ${entry.transactionSlip.netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            Net: {entry.transactionSlip.netPnL >= 0 ? '+' : ''}₹{entry.transactionSlip.netPnL.toFixed(2)}
+                            Net: {entry.transactionSlip.netPnL >= 0 ? '+' : ''}{entry.transactionSlip.netPnL.toFixed(2)}
                           </span>
                         </div>
                       </div>
@@ -229,7 +229,7 @@ const LedgerView = () => {
                     {formatLedgerSharePercent(entry)}
                   </td>
                   <td className={`px-4 py-3 text-right ${entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                    {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
+                    {entry.type === 'CREDIT' ? '+' : '-'}{entry.amount.toLocaleString()}
                   </td>
                   <td className="px-4 py-3">
                     <button
@@ -285,7 +285,7 @@ const LedgerView = () => {
                       <div>
                         <div className="text-gray-400 text-xs">Amount</div>
                         <div className={`font-semibold ${selectedEntry?.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                          {selectedEntry?.type === 'CREDIT' ? '+' : '-'}₹{selectedEntry?.amount?.toLocaleString() || '0'}
+                          {selectedEntry?.type === 'CREDIT' ? '+' : '-'}{selectedEntry?.amount?.toLocaleString() || '0'}
                         </div>
                       </div>
                     </div>

@@ -186,7 +186,7 @@ async function main() {
   for (const uid of userIds) {
     const u = await User.findById(uid).select('userId').lean();
     const mcxBal = await repairUserWallets(uid);
-    console.log(`  ${u?.userId || uid} — mcx balance ≈ ₹${mcxBal ?? '?'}`);
+    console.log(`  ${u?.userId || uid} — mcx balance ≈ ${mcxBal ?? '?'}`);
   }
 
   console.log('\nDone.');

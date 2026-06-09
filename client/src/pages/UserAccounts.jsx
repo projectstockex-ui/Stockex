@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import {
-  Wallet, Plus, Minus, RefreshCw, IndianRupee, MoreHorizontal, X, ArrowRight,   ArrowLeftRight, Gem, Gamepad2,
+  Wallet, Plus, Minus, RefreshCw, MoreHorizontal, X, ArrowRight, ArrowLeftRight, Gem, Gamepad2,
   Send,
   History,
   Bitcoin,
@@ -29,6 +29,8 @@ import {
   MAX_SANE_WALLET_DISPLAY_INR,
 } from '../utils/walletDisplaySanity.js';
 import PeerTransferModal from '../components/PeerTransferModal.jsx';
+import { formatCoins } from '../utils/stockexCoins.js';
+import { StockexCoinSymbol } from '../components/StockexCoinSymbol.jsx';
 
 function WalletBlockedBanner() {
   return (
@@ -672,6 +674,7 @@ const UserAccounts = () => {
     <div className="p-4 md:p-6 overflow-y-auto h-full">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
+        <div>
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold">My Accounts</h1>
           <button
@@ -683,6 +686,7 @@ const UserAccounts = () => {
           >
             <RefreshCw size={18} />
           </button>
+        </div>
         </div>
       </div>
 
@@ -718,7 +722,7 @@ const UserAccounts = () => {
             </div>
             
             <div className="text-4xl font-bold mb-1">
-              ₹{nseBseBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(nseBseBalance)}
             </div>
             {nseBseBalanceCorrupted && (
               <p className="text-xs text-amber-400 mt-1">
@@ -728,7 +732,7 @@ const UserAccounts = () => {
             <div className="text-sm text-gray-500">NSE & BSE only</div>
             {usedMargin > 0 && (
               <div className="text-xs text-yellow-400 mt-1">
-                Margin Used: ₹{usedMargin.toLocaleString()} | Available: ₹{availableNseBseBalance.toLocaleString()}
+                Margin Used: {usedMargin.toLocaleString()} | Available: {availableNseBseBalance.toLocaleString()}
               </div>
             )}
 
@@ -827,7 +831,7 @@ const UserAccounts = () => {
                             </td>
                             <td className="px-2 py-2 text-right align-top tabular-nums">
                               <span className={row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
-                                {row.type === 'CREDIT' ? '+' : '-'}₹
+                                {row.type === 'CREDIT' ? '+' : '-'}
                                 {Number(row.amount || 0).toLocaleString('en-IN', {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
@@ -884,7 +888,7 @@ const UserAccounts = () => {
                         <tr key={row.id} className="border-t border-dark-700/80">
                           <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
                           <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
-                            ₹
+                            
                             {Number(row.amount || 0).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
@@ -911,7 +915,7 @@ const UserAccounts = () => {
               onClick={opestockexRoom}
               className="flex-1 flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 py-3 rounded-lg font-medium transition"
             >
-              <IndianRupee size={18} />
+              <StockexCoinSymbol size={18} />
               Trade
             </button>
             <button 
@@ -1009,17 +1013,17 @@ const UserAccounts = () => {
             </div>
             
             <div className="text-4xl font-bold mb-1">
-              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(mcxBalance)}
             </div>
             <div className="text-sm text-gray-500">MCX Trading Balance</div>
             {mcxUsedMargin > 0 && (
               <div className="text-xs text-yellow-400 mt-1">
-                Margin Used: ₹{mcxUsedMargin.toLocaleString()} | Available: ₹{mcxAvailableBalance.toLocaleString()}
+                Margin Used: {mcxUsedMargin.toLocaleString()} | Available: {mcxAvailableBalance.toLocaleString()}
               </div>
             )}
             {mcxRealizedPnL !== 0 && (
               <div className={`text-xs mt-1 ${mcxRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                P&L: {mcxRealizedPnL >= 0 ? '+' : ''}₹{mcxRealizedPnL.toLocaleString()}
+                P&L: {mcxRealizedPnL >= 0 ? '+' : ''}{mcxRealizedPnL.toLocaleString()}
               </div>
             )}
 
@@ -1130,18 +1134,18 @@ const UserAccounts = () => {
                               <td className="px-2 py-2 align-top text-gray-300">{row.status || '—'}</td>
                               <td className="px-2 py-2 text-right text-gray-300 align-top tabular-nums">
                                 {row.entryPrice != null
-                                  ? `₹${Number(row.entryPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                                  ? `${Number(row.entryPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
                                   : '—'}
                               </td>
                               <td className="px-2 py-2 text-right text-gray-300 align-top tabular-nums">
                                 {row.exitPrice != null && row.status === 'CLOSED'
-                                  ? `₹${Number(row.exitPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                                  ? `${Number(row.exitPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
                                   : '—'}
                               </td>
                               <td className="px-2 py-2 text-right align-top tabular-nums">
                                 {pnl != null && Number.isFinite(Number(pnl)) ? (
                                   <span className={Number(pnl) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                    {Number(pnl) >= 0 ? '+' : ''}₹
+                                    {Number(pnl) >= 0 ? '+' : ''}
                                     {Number(pnl).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                   </span>
                                 ) : (
@@ -1151,7 +1155,7 @@ const UserAccounts = () => {
                               <td className="px-2 py-2 text-right align-top tabular-nums">
                                 {(Number(row.commission) || 0) > 0 ? (
                                   <span className="text-amber-300" title="Round-trip brokerage (charged at open)">
-                                    ₹{Number(row.commission).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                    {Number(row.commission).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                   </span>
                                 ) : (
                                   <span className="text-gray-600">—</span>
@@ -1206,7 +1210,7 @@ const UserAccounts = () => {
                   <>
                     {sumBrokerageFromLedger(mcxTransferLedger) > 0 && (
                       <p className="text-[10px] text-amber-300/90 px-2 pt-2 border-b border-dark-700/80">
-                        Total brokerage (shown below): ₹
+                        Total brokerage (shown below): 
                         {sumBrokerageFromLedger(mcxTransferLedger).toLocaleString('en-IN', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
@@ -1226,7 +1230,7 @@ const UserAccounts = () => {
                         <tr key={row.id} className="border-t border-dark-700/80">
                           <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
                           <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                            ₹
+                            
                             {Number(row.amount || 0).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
@@ -1360,17 +1364,17 @@ const UserAccounts = () => {
             </div>
             
             <div className="text-4xl font-bold mb-1">
-              ₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(gamesBalance)}
             </div>
             <div className="text-sm text-gray-500">Games Balance</div>
             {gamesUsedMargin > 0 && (
               <div className="text-xs text-purple-400 mt-1">
-                In Play: ₹{gamesUsedMargin.toLocaleString()} | Available: ₹{gamesAvailableBalance.toLocaleString()}
+                In Play: {gamesUsedMargin.toLocaleString()} | Available: {gamesAvailableBalance.toLocaleString()}
               </div>
             )}
             {gamesRealizedPnL !== 0 && (
               <div className={`text-xs mt-1 ${gamesRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                P&L: {gamesRealizedPnL >= 0 ? '+' : ''}₹{gamesRealizedPnL.toLocaleString()}
+                P&L: {gamesRealizedPnL >= 0 ? '+' : ''}{gamesRealizedPnL.toLocaleString()}
               </div>
             )}
 
@@ -1469,13 +1473,13 @@ const UserAccounts = () => {
                                   row.entryType === 'credit' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'
                                 }
                               >
-                                {row.entryType === 'credit' ? '+' : '−'}₹
+                                {row.entryType === 'credit' ? '+' : '−'}
                                 {(row.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                               </span>
                               <div className="text-[10px] text-gray-600 uppercase mt-0.5">{row.entryType}</div>
                             </td>
                             <td className="px-2 py-2 text-right text-gray-300 align-top whitespace-nowrap">
-                              ₹
+                              
                               {(row.balanceAfter ?? 0).toLocaleString('en-IN', {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
@@ -1530,7 +1534,7 @@ const UserAccounts = () => {
                         <tr key={row.id} className="border-t border-dark-700/80">
                           <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
                           <td className={`p-2 align-top text-right font-mono tabular-nums ${row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                            ₹
+                            
                             {Number(row.amount || 0).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
@@ -1662,12 +1666,12 @@ const UserAccounts = () => {
             </div>
 
             <div className="text-4xl font-bold mb-1">
-              ₹{cryptoBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCoins(cryptoBalance)}
             </div>
-            <div className="text-sm text-gray-500">Crypto balance (INR)</div>
+            <div className="text-sm text-gray-500">Crypto balance</div>
             {cryptoRealizedPnL !== 0 && (
               <div className={`text-xs mt-1 ${cryptoRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                Realized P/L: {cryptoRealizedPnL >= 0 ? '+' : ''}₹{cryptoRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                Realized P/L: {cryptoRealizedPnL >= 0 ? '+' : ''}{cryptoRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             )}
 
@@ -1712,7 +1716,7 @@ const UserAccounts = () => {
                   <>
                     {sumBrokerageFromLedger(cryptoTransferLedger) > 0 && (
                       <p className="text-[10px] text-amber-300/90 px-2 pt-2 border-b border-dark-700/80">
-                        Brokerage in this list (latest {cryptoTransferLedger.length} rows): ₹
+                        Brokerage in this list (latest {cryptoTransferLedger.length} rows): 
                         {sumBrokerageFromLedger(cryptoTransferLedger).toLocaleString('en-IN', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
@@ -1736,7 +1740,7 @@ const UserAccounts = () => {
                                 row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
                               }`}
                             >
-                              ₹
+                              
                               {Number(row.amount || 0).toLocaleString('en-IN', {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
@@ -1766,7 +1770,7 @@ const UserAccounts = () => {
             </div>
 
             <div className="mt-3 text-[11px] text-gray-500 leading-snug">
-              Deposit moves Indian Rupees (₹) from your Main Wallet into this crypto trading wallet (also ₹). Use Trade for Binance spot pairs in the terminal.
+              Deposit moves funds from your Main Wallet into this crypto trading wallet. Use Trade for Binance spot pairs in the terminal.
             </div>
           </div>
 
@@ -1783,7 +1787,7 @@ const UserAccounts = () => {
               type="button"
               onClick={() => openCryptoTransfer('toCrypto')}
               className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
-              title="Transfer from Main Wallet (₹) to Crypto Account (₹)"
+              title="Transfer from Main Wallet to Crypto Account"
             >
               <Plus size={18} />
               Deposit
@@ -1792,7 +1796,7 @@ const UserAccounts = () => {
               type="button"
               onClick={() => openCryptoTransfer('fromCrypto')}
               className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
-              title="Transfer from Crypto Account (₹) to Main Wallet (₹)"
+              title="Transfer from Crypto Account to Main Wallet"
             >
               <Minus size={18} />
               Withdraw
@@ -1873,12 +1877,12 @@ const UserAccounts = () => {
               </div>
 
               <div className="text-4xl font-bold mb-1">
-                ₹{forexBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {formatCoins(forexBalance)}
               </div>
-              <div className="text-sm text-gray-500">Forex balance (INR)</div>
+              <div className="text-sm text-gray-500">Forex balance</div>
               {forexRealizedPnL !== 0 && (
                 <div className={`text-xs mt-1 ${forexRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  Realized P/L: {forexRealizedPnL >= 0 ? '+' : ''}₹{forexRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  Realized P/L: {forexRealizedPnL >= 0 ? '+' : ''}{forexRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               )}
 
@@ -1923,7 +1927,7 @@ const UserAccounts = () => {
                     <>
                       {sumBrokerageFromLedger(forexTransferLedger) > 0 && (
                         <p className="text-[10px] text-amber-300/90 px-2 pt-2 border-b border-dark-700/80">
-                          Total brokerage (shown below): ₹
+                          Total brokerage (shown below): 
                           {sumBrokerageFromLedger(forexTransferLedger).toLocaleString('en-IN', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
@@ -1947,7 +1951,7 @@ const UserAccounts = () => {
                                   row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
                                 }`}
                               >
-                                ₹
+                                
                                 {Number(row.amount || 0).toLocaleString('en-IN', {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
@@ -1977,7 +1981,7 @@ const UserAccounts = () => {
               </div>
 
               <div className="mt-3 text-[11px] text-gray-500 leading-snug">
-                Move Indian Rupees (₹) from your Main Wallet into this forex wallet. Trade major FX pairs in the terminal (USD quotes, INR wallet).
+                Move funds from your Main Wallet into this forex wallet. Trade major FX pairs in the terminal.
               </div>
             </div>
 
@@ -1994,7 +1998,7 @@ const UserAccounts = () => {
                 type="button"
                 onClick={() => openForexTransfer('toForex')}
                 className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
-                title="Transfer from Main Wallet (₹) to Forex Account (₹)"
+                title="Transfer from Main Wallet to Forex Account"
               >
                 <Plus size={18} />
                 Deposit
@@ -2003,7 +2007,7 @@ const UserAccounts = () => {
                 type="button"
                 onClick={() => openForexTransfer('fromForex')}
                 className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
-                title="Transfer from Forex Account (₹) to Main Wallet (₹)"
+                title="Transfer from Forex Account to Main Wallet"
               >
                 <Minus size={18} />
                 Withdraw
@@ -2071,7 +2075,7 @@ const UserAccounts = () => {
             </h2>
             <p className="text-sm text-gray-400 mt-1">Main Wallet (cash)</p>
             <p className="text-2xl font-bold text-blue-400 tabular-nums mt-1">
-              ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(mainWalletBalance)}
             </p>
             <p className="text-xs text-gray-500 mt-1">
               Deposit / withdraw with admin · send to clients in your hierarchy
@@ -2151,7 +2155,7 @@ const UserAccounts = () => {
                       </td>
                       <td className="p-2 text-right tabular-nums">
                         <span className={row.direction === 'sent' ? 'text-red-400' : 'text-green-400'}>
-                          {row.direction === 'sent' ? '−' : '+'}₹
+                          {row.direction === 'sent' ? '−' : '+'}
                           {Number(row.amount || 0).toLocaleString('en-IN', {
                             minimumFractionDigits: 2,
                           })}
@@ -2173,49 +2177,49 @@ const UserAccounts = () => {
           <div>
             <div className="text-sm text-gray-400 mb-1">Main Wallet</div>
             <div className="text-2xl font-bold text-blue-400">
-              ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(mainWalletBalance)}
             </div>
           </div>
           <div>
             <div className="text-sm text-gray-400 mb-1">NSE & BSE Wallet</div>
             <div className="text-2xl font-bold text-green-400">
-              ₹{nseBseBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(nseBseBalance)}
             </div>
           </div>
           <div>
             <div className="text-sm text-gray-400 mb-1">MCX Account</div>
             <div className="text-2xl font-bold text-yellow-400">
-              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(mcxBalance)}
             </div>
           </div>
           <div>
             <div className="text-sm text-gray-400 mb-1">Games Account</div>
             <div className="text-2xl font-bold text-purple-400">
-              ₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {formatCoins(gamesBalance)}
             </div>
           </div>
           <div>
             <div className="text-sm text-gray-400 mb-1">Crypto</div>
             <div className="text-2xl font-bold text-orange-400">
-              ₹{cryptoBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCoins(cryptoBalance)}
             </div>
           </div>
           <div>
             <div className="text-sm text-gray-400 mb-1">Forex</div>
             <div className="text-2xl font-bold text-cyan-400">
-              ₹{forexBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {forexBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
           <div>
             <div className="text-sm text-gray-400 mb-1">Total Deposited</div>
             <div className="text-2xl font-bold">
-              ₹{(walletData?.wallet?.totalDeposited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {(walletData?.wallet?.totalDeposited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div>
             <div className="text-sm text-gray-400 mb-1">Total Withdrawn</div>
             <div className="text-2xl font-bold">
-              ₹{(walletData?.wallet?.totalWithdrawn || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {(walletData?.wallet?.totalWithdrawn || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
           </div>
         </div>
@@ -2415,7 +2419,7 @@ const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction,
           <div className="flex items-center justify-between">
             <div className="text-center flex-1">
               <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
-              <div className="text-lg font-bold text-green-400">₹{sourceBalance.toLocaleString()}</div>
+              <div className="text-lg font-bold text-green-400">{sourceBalance.toLocaleString()}</div>
             </div>
             <div className="px-4">
               <ArrowRight size={24} className="text-blue-400" />
@@ -2423,7 +2427,7 @@ const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction,
             <div className="text-center flex-1">
               <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
               <div className="text-lg font-bold text-blue-400">
-                ₹{(isToAccount ? tradingBalance : walletBalance).toLocaleString()}
+                {(isToAccount ? tradingBalance : walletBalance).toLocaleString()}
               </div>
             </div>
           </div>
@@ -2437,7 +2441,7 @@ const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction,
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}
@@ -2456,7 +2460,7 @@ const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction,
                 onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(amt, sourceBalance) : amt))}
                 className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
               >
-                ₹{amt.toLocaleString()}
+                {amt.toLocaleString()}
               </button>
             ))}
             <button
@@ -2542,7 +2546,7 @@ const McxTransferModal = ({ user, walletBalance, mcxBalance, direction, onClose,
             <div className="text-center flex-1">
               <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
               <div className={`text-lg font-bold ${isToMcx ? 'text-blue-400' : 'text-yellow-400'}`}>
-                ₹{sourceBalance.toLocaleString()}
+                {sourceBalance.toLocaleString()}
               </div>
             </div>
             <div className="px-4">
@@ -2551,7 +2555,7 @@ const McxTransferModal = ({ user, walletBalance, mcxBalance, direction, onClose,
             <div className="text-center flex-1">
               <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
               <div className={`text-lg font-bold ${isToMcx ? 'text-yellow-400' : 'text-blue-400'}`}>
-                ₹{(isToMcx ? mcxBalance : walletBalance).toLocaleString()}
+                {(isToMcx ? mcxBalance : walletBalance).toLocaleString()}
               </div>
             </div>
           </div>
@@ -2576,7 +2580,7 @@ const McxTransferModal = ({ user, walletBalance, mcxBalance, direction, onClose,
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}
@@ -2595,7 +2599,7 @@ const McxTransferModal = ({ user, walletBalance, mcxBalance, direction, onClose,
                 onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(amt, sourceBalance) : amt))}
                 className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
               >
-                ₹{amt.toLocaleString()}
+                {amt.toLocaleString()}
               </button>
             ))}
             <button
@@ -2681,7 +2685,7 @@ const GamesTransferModal = ({ user, walletBalance, gamesBalance, direction, onCl
             <div className="text-center flex-1">
               <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
               <div className={`text-lg font-bold ${isToGames ? 'text-blue-400' : 'text-purple-400'}`}>
-                ₹{sourceBalance.toLocaleString()}
+                {sourceBalance.toLocaleString()}
               </div>
             </div>
             <div className="px-4">
@@ -2690,7 +2694,7 @@ const GamesTransferModal = ({ user, walletBalance, gamesBalance, direction, onCl
             <div className="text-center flex-1">
               <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
               <div className={`text-lg font-bold ${isToGames ? 'text-purple-400' : 'text-blue-400'}`}>
-                ₹{(isToGames ? gamesBalance : walletBalance).toLocaleString()}
+                {(isToGames ? gamesBalance : walletBalance).toLocaleString()}
               </div>
             </div>
           </div>
@@ -2715,7 +2719,7 @@ const GamesTransferModal = ({ user, walletBalance, gamesBalance, direction, onCl
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}
@@ -2734,7 +2738,7 @@ const GamesTransferModal = ({ user, walletBalance, gamesBalance, direction, onCl
                 onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(amt, sourceBalance) : amt))}
                 className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
               >
-                ₹{amt.toLocaleString()}
+                {amt.toLocaleString()}
               </button>
             ))}
             <button
@@ -2759,7 +2763,7 @@ const GamesTransferModal = ({ user, walletBalance, gamesBalance, direction, onCl
   );
 };
 
-// Crypto transfer — Main Wallet (INR) ↔ Crypto wallet (INR notional for spot)
+// Crypto transfer — Main Wallet (Stockex coins) ↔ Crypto wallet (INR notional for spot)
 const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, onClose, onSuccess }) => {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
@@ -2803,7 +2807,7 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
   const amtNum = parseFloat(amount);
   const estimateLine =
     amtNum > 0 && Number.isFinite(amtNum)
-      ? `₹${amtNum.toLocaleString('en-IN', { maximumFractionDigits: 2 })} will be moved to ${destLabel}`
+      ? `${amtNum.toLocaleString('en-IN', { maximumFractionDigits: 2 })} will be moved to ${destLabel}`
       : null;
 
   return (
@@ -2824,7 +2828,7 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
             <div className="text-center flex-1 min-w-0">
               <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
               <div className={`text-lg font-bold truncate ${isToCrypto ? 'text-blue-400' : 'text-orange-400'}`}>
-                ₹{sourceBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                {sourceBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </div>
             </div>
             <div className="px-2 shrink-0">
@@ -2833,7 +2837,7 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
             <div className="text-center flex-1 min-w-0">
               <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
               <div className={`text-lg font-bold truncate ${isToCrypto ? 'text-orange-400' : 'text-blue-400'}`}>
-                ₹{(isToCrypto ? cryptoBalance : walletBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                {(isToCrypto ? cryptoBalance : walletBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </div>
             </div>
           </div>
@@ -2846,8 +2850,8 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
           </div>
           <div className="mt-1 text-gray-300 text-xs">
             {isToCrypto
-              ? 'Move Indian Rupees (₹) from your Main Wallet into your crypto trading wallet.'
-              : 'Move Indian Rupees (₹) from your crypto trading wallet back to your Main Wallet.'}
+              ? 'Move funds from your Main Wallet into your crypto trading wallet.'
+              : 'Move funds from your crypto trading wallet back to your Main Wallet.'}
           </div>
         </div>
 
@@ -2855,13 +2859,13 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               step="1"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder="Enter amount in INR"
+              placeholder="Enter amount"
               className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-orange-500 text-lg"
             />
             {estimateLine && <p className="text-xs text-gray-500 mt-2">{estimateLine}</p>}
@@ -2875,7 +2879,7 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
                 onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(q, sourceBalance) : q))}
                 className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
               >
-                ₹{q.toLocaleString()}
+                {q.toLocaleString()}
               </button>
             ))}
             <button
@@ -2900,7 +2904,7 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
   );
 };
 
-// Forex transfer — Main Wallet (INR) ↔ Forex wallet (INR)
+// Forex transfer — Main Wallet (Stockex coins) ↔ Forex wallet (Stockex coins)
 const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onClose, onSuccess }) => {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
@@ -2944,7 +2948,7 @@ const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onCl
   const amtNum = parseFloat(amount);
   const estimateLine =
     amtNum > 0 && Number.isFinite(amtNum)
-      ? `₹${amtNum.toLocaleString('en-IN', { maximumFractionDigits: 2 })} will be moved to ${destLabel}`
+      ? `${amtNum.toLocaleString('en-IN', { maximumFractionDigits: 2 })} will be moved to ${destLabel}`
       : null;
 
   return (
@@ -2965,7 +2969,7 @@ const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onCl
             <div className="text-center flex-1 min-w-0">
               <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
               <div className={`text-lg font-bold truncate ${isToForex ? 'text-blue-400' : 'text-cyan-400'}`}>
-                ₹{sourceBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                {sourceBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </div>
             </div>
             <div className="px-2 shrink-0">
@@ -2974,7 +2978,7 @@ const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onCl
             <div className="text-center flex-1 min-w-0">
               <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
               <div className={`text-lg font-bold truncate ${isToForex ? 'text-cyan-400' : 'text-blue-400'}`}>
-                ₹{(isToForex ? forexBalance : walletBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                {(isToForex ? forexBalance : walletBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </div>
             </div>
           </div>
@@ -2987,8 +2991,8 @@ const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onCl
           </div>
           <div className="mt-1 text-gray-300 text-xs">
             {isToForex
-              ? 'Move Indian Rupees (₹) from your Main Wallet into your forex trading wallet.'
-              : 'Move Indian Rupees (₹) from your forex trading wallet back to your Main Wallet.'}
+              ? 'Move funds from your Main Wallet into your forex trading wallet.'
+              : 'Move funds from your forex trading wallet back to your Main Wallet.'}
           </div>
         </div>
 
@@ -2996,13 +3000,13 @@ const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onCl
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               step="1"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder="Enter amount in INR"
+              placeholder="Enter amount"
               className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-cyan-500 text-lg"
             />
             {estimateLine && <p className="text-xs text-gray-500 mt-2">{estimateLine}</p>}
@@ -3016,7 +3020,7 @@ const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onCl
                 onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(q, sourceBalance) : q))}
                 className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
               >
-                ₹{q.toLocaleString()}
+                {q.toLocaleString()}
               </button>
             ))}
             <button
@@ -3117,7 +3121,7 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
         headers: { Authorization: `Bearer ${token}` }
       });
       
-      setSuccess(`Successfully transferred ₹${Number(amount).toLocaleString()}`);
+      setSuccess(`Successfully transferred ${Number(amount).toLocaleString()}`);
       setAmount('');
       setRemarks('');
       setTimeout(() => {
@@ -3215,7 +3219,7 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
           )}
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-xs text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}

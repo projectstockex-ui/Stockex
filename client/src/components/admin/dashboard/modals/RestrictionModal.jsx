@@ -293,7 +293,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Limit Fields */}
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Intraday Limit (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Intraday Limit ()</label>
                 <input
                   type="number"
                   value={restrictions.intradayLimit}
@@ -307,7 +307,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Carryforward Limit (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Carryforward Limit ()</label>
                 <input
                   type="number"
                   value={restrictions.carryforwardLimit}
@@ -363,7 +363,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Max Position Value (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Max Position Value ()</label>
                 <input
                   type="number"
                   value={restrictions.maxPositionValue}
@@ -377,7 +377,7 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Max Exposure (₹)</label>
+                <label className="block text-xs text-gray-400 mb-1">Max Exposure ()</label>
                 <input
                   type="number"
                   value={restrictions.maxExposure}

@@ -5,11 +5,11 @@
  * 1. Nifty Up/Down - Predict UP or DOWN, win 1.95x
  * 2. BTC Up/Down - Predict UP or DOWN, win 1.95x
  * 3. Nifty Number - Pick decimal (.00-.99); win pays (ticket×winMultiplier×qty) gross, or legacy fixedProfit×qty minus gross hierarchy % (Jackpot-style) or legacy brokerage %
- * 4. Nifty Bracket - Buy/Sell on bracket levels, win 1.9x gross (default ₹1,000/ticket)
+ * 4. Nifty Bracket - Buy/Sell on bracket levels, win 1.9x gross (default 1,000/ticket)
  * 5. Nifty Jackpot - Bid for top ranks, prize distribution
  * 
  * Logic:
- * - Token Value: ₹300 per token
+ * - Token Value: 300 per token
  * - Nifty/BTC Up/Down wins: brokerage = % of (gross win − stake); user credit = full gross win; SA pool pays hierarchy on top (same as Nifty Number)
  * - Other games in this script: illustrative; bracket/jackpot fee policy may differ in production
  * - Profit Distribution: SuperAdmin 40%, Admin 30%, Broker 20%, SubBroker 10% (when splits apply)
@@ -21,7 +21,7 @@ function testGamesLogic() {
   console.log('='.repeat(70));
   
   // Global Settings
-  const tokenValue = 300; // ₹300 per token
+  const tokenValue = 300; // 300 per token
   
   // Game Settings
   const gameSettings = {
@@ -105,11 +105,11 @@ function testGamesLogic() {
   };
   
   console.log('\n📋 GLOBAL SETTINGS:');
-  console.log(`   Token Value: ₹${tokenValue}`);
+  console.log(`   Token Value: ${tokenValue}`);
   console.log(`   Profit Distribution: SA ${profitDistribution.superAdminPercent}% | Admin ${profitDistribution.adminPercent}% | Broker ${profitDistribution.brokerPercent}% | SubBroker ${profitDistribution.subBrokerPercent}%`);
   
   console.log('\n📋 INITIAL USER STATE:');
-  console.log(`   Games Wallet Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Games Wallet Balance: ${user.gamesWallet.balance.toLocaleString()}`);
   
   let allTestsPassed = true;
   
@@ -132,19 +132,19 @@ function testGamesLogic() {
   let prediction = 'UP';
   let entryPrice = 22500.50;
   
-  console.log(`\n📈 Bet: ${tickets} tickets (₹${betAmount}) on ${prediction}`);
+  console.log(`\n📈 Bet: ${tickets} tickets (${betAmount}) on ${prediction}`);
   console.log(`   Entry Price: ${entryPrice}`);
   
   // Validate bet
   const minBet1 = game1.minTickets * tokenValue;
   const maxBet1 = game1.maxTickets * tokenValue;
   let isValid = betAmount >= minBet1 && betAmount <= maxBet1;
-  console.log(`   Validation: ${isValid ? '✅ VALID' : '❌ INVALID'} (Min: ₹${minBet1}, Max: ₹${maxBet1})`);
+  console.log(`   Validation: ${isValid ? '✅ VALID' : '❌ INVALID'} (Min: ${minBet1}, Max: ${maxBet1})`);
   
   // Debit wallet
   user.gamesWallet.balance -= betAmount;
   user.gamesWallet.usedMargin += betAmount;
-  console.log(`   Wallet After Bet: ₹${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Wallet After Bet: ${user.gamesWallet.balance.toLocaleString()}`);
   
   // Simulate result - User WINS (price went UP)
   let exitPrice = 22510.75;
@@ -174,15 +174,15 @@ function testGamesLogic() {
   }
   
   console.log(`\n💰 Payout Calculation:`);
-  console.log(`   Gross Win: ₹${betAmount} × ${game1.winMultiplier} = ₹${(betAmount * game1.winMultiplier).toLocaleString()}`);
-  console.log(`   Brokerage (${game1.brokeragePercent}% of profit, from SA pool): ₹${brokerage.toLocaleString()}`);
-  console.log(`   User credit (gross): ₹${payout.toLocaleString()}`);
-  console.log(`   Profit vs stake: ₹${profit.toLocaleString()}`);
-  console.log(`   New Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Gross Win: ${betAmount} × ${game1.winMultiplier} = ${(betAmount * game1.winMultiplier).toLocaleString()}`);
+  console.log(`   Brokerage (${game1.brokeragePercent}% of profit, from SA pool): ${brokerage.toLocaleString()}`);
+  console.log(`   User credit (gross): ${payout.toLocaleString()}`);
+  console.log(`   Profit vs stake: ${profit.toLocaleString()}`);
+  console.log(`   New Balance: ${user.gamesWallet.balance.toLocaleString()}`);
   
   const expected1 = 50000 - 1500 + betAmount * game1.winMultiplier;
   const test1Pass = Math.abs(user.gamesWallet.balance - expected1) < 0.01;
-  console.log(`\n   ✅ EXPECTED: ₹${expected1.toLocaleString()} | ACTUAL: ₹${user.gamesWallet.balance.toLocaleString()} | ${test1Pass ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`\n   ✅ EXPECTED: ${expected1.toLocaleString()} | ACTUAL: ${user.gamesWallet.balance.toLocaleString()} | ${test1Pass ? 'PASS ✅' : 'FAIL ❌'}`);
   if (!test1Pass) allTestsPassed = false;
   
   // ============================================
@@ -203,7 +203,7 @@ function testGamesLogic() {
   prediction = 'DOWN';
   entryPrice = 65000.00;
   
-  console.log(`\n📈 Bet: ${tickets} tickets (₹${betAmount}) on ${prediction}`);
+  console.log(`\n📈 Bet: ${tickets} tickets (${betAmount}) on ${prediction}`);
   
   user.gamesWallet.balance -= betAmount;
   user.gamesWallet.usedMargin += betAmount;
@@ -232,13 +232,13 @@ function testGamesLogic() {
   }
   
   console.log(`\n💰 Result:`);
-  console.log(`   Loss: ₹${betAmount.toLocaleString()}`);
-  console.log(`   New Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
-  console.log(`   Realized P&L: ₹${user.gamesWallet.realizedPnL.toLocaleString()}`);
+  console.log(`   Loss: ${betAmount.toLocaleString()}`);
+  console.log(`   New Balance: ${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Realized P&L: ${user.gamesWallet.realizedPnL.toLocaleString()}`);
   
   const expected2 = expected1 - 3000;
   const test2Pass = Math.abs(user.gamesWallet.balance - expected2) < 0.01;
-  console.log(`\n   ✅ EXPECTED: ₹${expected2.toLocaleString()} | ACTUAL: ₹${user.gamesWallet.balance.toLocaleString()} | ${test2Pass ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`\n   ✅ EXPECTED: ${expected2.toLocaleString()} | ACTUAL: ${user.gamesWallet.balance.toLocaleString()} | ${test2Pass ? 'PASS ✅' : 'FAIL ❌'}`);
   if (!test2Pass) allTestsPassed = false;
   
   // ============================================
@@ -251,7 +251,7 @@ function testGamesLogic() {
   const game3 = gameSettings.niftyNumber;
   console.log(`\n📊 Game: ${game3.name}`);
   console.log(`   Win Multiplier: ${game3.winMultiplier}x`);
-  console.log(`   Fixed Profit: ₹${game3.fixedProfit}`);
+  console.log(`   Fixed Profit: ${game3.fixedProfit}`);
   console.log(`   Bets Per Day: ${game3.betsPerDay}`);
   console.log(`   Result Time: ${game3.resultTime} IST`);
   
@@ -261,7 +261,7 @@ function testGamesLogic() {
   const quantity = 1;
   const selectedNumber = 45; // .45
   
-  console.log(`\n📈 Bet: ${tickets} ticket(s) (₹${betAmount}) on .${selectedNumber.toString().padStart(2, '0')}`);
+  console.log(`\n📈 Bet: ${tickets} ticket(s) (${betAmount}) on .${selectedNumber.toString().padStart(2, '0')}`);
   
   user.gamesWallet.balance -= betAmount;
   user.gamesWallet.usedMargin += betAmount;
@@ -314,12 +314,12 @@ function testGamesLogic() {
   
   console.log(`\n💰 Payout Calculation:`);
   console.log(
-    `   Gross prize G: ticket×multiplier×qty = ₹${(tokenValue * Number(game3.winMultiplier)).toLocaleString()} × ${quantity} = ₹${won ? (parseFloat((tokenValue * Number(game3.winMultiplier) * quantity).toFixed(2))).toLocaleString() : 0}`
+    `   Gross prize G: ticket×multiplier×qty = ${(tokenValue * Number(game3.winMultiplier)).toLocaleString()} × ${quantity} = ${won ? (parseFloat((tokenValue * Number(game3.winMultiplier) * quantity).toFixed(2))).toLocaleString() : 0}`
   );
-  console.log(`   Gross hierarchy % (SB+Br+Ad): ${((Number(game3.grossPrizeSubBrokerPercent)||0)+(Number(game3.grossPrizeBrokerPercent)||0)+(Number(game3.grossPrizeAdminPercent)||0))}% of G → fee ₹${(won ? brokerage : 0).toLocaleString()}`);
-  console.log(`   User credit (gross G): ₹${payout.toLocaleString()}`);
-  console.log(`   Profit vs stake: ₹${profit.toLocaleString()}`);
-  console.log(`   New Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Gross hierarchy % (SB+Br+Ad): ${((Number(game3.grossPrizeSubBrokerPercent)||0)+(Number(game3.grossPrizeBrokerPercent)||0)+(Number(game3.grossPrizeAdminPercent)||0))}% of G → fee ${(won ? brokerage : 0).toLocaleString()}`);
+  console.log(`   User credit (gross G): ${payout.toLocaleString()}`);
+  console.log(`   Profit vs stake: ${profit.toLocaleString()}`);
+  console.log(`   New Balance: ${user.gamesWallet.balance.toLocaleString()}`);
   
   const grossPrize3 =
     Number(game3.winMultiplier) > 0
@@ -329,7 +329,7 @@ function testGamesLogic() {
         : 4000 * quantity;
   const expected3 = expected2 - betAmount + grossPrize3;
   const test3Pass = Math.abs(user.gamesWallet.balance - expected3) < 0.01;
-  console.log(`\n   ✅ EXPECTED: ₹${expected3.toLocaleString()} | ACTUAL: ₹${user.gamesWallet.balance.toLocaleString()} | ${test3Pass ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`\n   ✅ EXPECTED: ${expected3.toLocaleString()} | ACTUAL: ${user.gamesWallet.balance.toLocaleString()} | ${test3Pass ? 'PASS ✅' : 'FAIL ❌'}`);
   if (!test3Pass) allTestsPassed = false;
   
   // ============================================
@@ -361,7 +361,7 @@ function testGamesLogic() {
   console.log(`\n📈 Current Price: ${currentPrice}`);
   console.log(`   BUY Level: ${buyLevel} (+${game4.bracketGap})`);
   console.log(`   SELL Level: ${sellLevel} (-${game4.bracketGap})`);
-  console.log(`   Bet: ${tickets} tickets (₹${betAmount}) on ${bracketSide}`);
+  console.log(`   Bet: ${tickets} tickets (${betAmount}) on ${bracketSide}`);
   
   user.gamesWallet.balance -= betAmount;
   user.gamesWallet.usedMargin += betAmount;
@@ -390,15 +390,15 @@ function testGamesLogic() {
   }
   
   console.log(`\n💰 Payout Calculation:`);
-  console.log(`   Gross Win: ₹${betAmount} × ${game4.winMultiplier} = ₹${(betAmount * game4.winMultiplier).toLocaleString()}`);
+  console.log(`   Gross Win: ${betAmount} × ${game4.winMultiplier} = ${(betAmount * game4.winMultiplier).toLocaleString()}`);
   console.log(`   Win-side fee: none`);
-  console.log(`   Payout: ₹${payout.toLocaleString()}`);
-  console.log(`   Net Profit: ₹${profit.toLocaleString()}`);
-  console.log(`   New Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Payout: ${payout.toLocaleString()}`);
+  console.log(`   Net Profit: ${profit.toLocaleString()}`);
+  console.log(`   New Balance: ${user.gamesWallet.balance.toLocaleString()}`);
   
   const expected4 = expected3 - betAmount + betAmount * game4.winMultiplier;
   const test4Pass = Math.abs(user.gamesWallet.balance - expected4) < 0.01;
-  console.log(`\n   ✅ EXPECTED: ₹${expected4.toLocaleString()} | ACTUAL: ₹${user.gamesWallet.balance.toLocaleString()} | ${test4Pass ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`\n   ✅ EXPECTED: ${expected4.toLocaleString()} | ACTUAL: ${user.gamesWallet.balance.toLocaleString()} | ${test4Pass ? 'PASS ✅' : 'FAIL ❌'}`);
   if (!test4Pass) allTestsPassed = false;
   
   // ============================================
@@ -411,7 +411,7 @@ function testGamesLogic() {
   const game5 = gameSettings.niftyJackpot;
   console.log(`\n📊 Game: ${game5.name}`);
   console.log(`   Top Winners: ${game5.topWinners}`);
-  console.log(`   Prize Distribution: ${game5.prizeDistribution.map((p, i) => `#${i+1}: ₹${p.toLocaleString()}`).join(', ')}`);
+  console.log(`   Prize Distribution: ${game5.prizeDistribution.map((p, i) => `#${i+1}: ${p.toLocaleString()}`).join(', ')}`);
   console.log(`   Bids Per Day: ${game5.bidsPerDay}`);
   
   // Test 5: User places bid, ends up in 3rd place
@@ -419,7 +419,7 @@ function testGamesLogic() {
   betAmount = tickets * tokenValue; // 1500
   const bidValue = 22567.89; // User's prediction for Nifty close
   
-  console.log(`\n📈 Bid: ${tickets} tickets (₹${betAmount})`);
+  console.log(`\n📈 Bid: ${tickets} tickets (${betAmount})`);
   console.log(`   Predicted Close: ${bidValue}`);
   
   user.gamesWallet.balance -= betAmount;
@@ -453,15 +453,15 @@ function testGamesLogic() {
   }
   
   console.log(`\n💰 Prize Calculation:`);
-  console.log(`   Rank #${userRank} Prize: ₹${prize.toLocaleString()}`);
+  console.log(`   Rank #${userRank} Prize: ${prize.toLocaleString()}`);
   console.log(`   Prize fee: none`);
-  console.log(`   Payout: ₹${payout.toLocaleString()}`);
-  console.log(`   Net Profit: ₹${profit.toLocaleString()}`);
-  console.log(`   New Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Payout: ${payout.toLocaleString()}`);
+  console.log(`   Net Profit: ${profit.toLocaleString()}`);
+  console.log(`   New Balance: ${user.gamesWallet.balance.toLocaleString()}`);
   
   const expected5 = expected4 - 1500 + 8000;
   const test5Pass = Math.abs(user.gamesWallet.balance - expected5) < 0.01;
-  console.log(`\n   ✅ EXPECTED: ₹${expected5.toLocaleString()} | ACTUAL: ₹${user.gamesWallet.balance.toLocaleString()} | ${test5Pass ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`\n   ✅ EXPECTED: ${expected5.toLocaleString()} | ACTUAL: ${user.gamesWallet.balance.toLocaleString()} | ${test5Pass ? 'PASS ✅' : 'FAIL ❌'}`);
   if (!test5Pass) allTestsPassed = false;
   
   // ============================================
@@ -474,7 +474,7 @@ function testGamesLogic() {
   // When user loses, the lost amount is distributed to admin hierarchy
   const lostAmount = 3000; // From Test 2 (BTC Up/Down loss)
   
-  console.log(`\n📊 Lost Amount to Distribute: ₹${lostAmount.toLocaleString()}`);
+  console.log(`\n📊 Lost Amount to Distribute: ${lostAmount.toLocaleString()}`);
   console.log(`   Distribution: SA ${profitDistribution.superAdminPercent}% | Admin ${profitDistribution.adminPercent}% | Broker ${profitDistribution.brokerPercent}% | SubBroker ${profitDistribution.subBrokerPercent}%`);
   
   const saShare = lostAmount * profitDistribution.superAdminPercent / 100; // 1200
@@ -483,15 +483,15 @@ function testGamesLogic() {
   const sbShare = lostAmount * profitDistribution.subBrokerPercent / 100; // 300
   
   console.log(`\n💰 Distribution:`);
-  console.log(`   Super Admin: ₹${saShare.toLocaleString()} (${profitDistribution.superAdminPercent}%)`);
-  console.log(`   Admin: ₹${adminShare.toLocaleString()} (${profitDistribution.adminPercent}%)`);
-  console.log(`   Broker: ₹${brokerShare.toLocaleString()} (${profitDistribution.brokerPercent}%)`);
-  console.log(`   SubBroker: ₹${sbShare.toLocaleString()} (${profitDistribution.subBrokerPercent}%)`);
-  console.log(`   Total: ₹${(saShare + adminShare + brokerShare + sbShare).toLocaleString()}`);
+  console.log(`   Super Admin: ${saShare.toLocaleString()} (${profitDistribution.superAdminPercent}%)`);
+  console.log(`   Admin: ${adminShare.toLocaleString()} (${profitDistribution.adminPercent}%)`);
+  console.log(`   Broker: ${brokerShare.toLocaleString()} (${profitDistribution.brokerPercent}%)`);
+  console.log(`   SubBroker: ${sbShare.toLocaleString()} (${profitDistribution.subBrokerPercent}%)`);
+  console.log(`   Total: ${(saShare + adminShare + brokerShare + sbShare).toLocaleString()}`);
   
   const totalDist = saShare + adminShare + brokerShare + sbShare;
   const test6Pass = totalDist === lostAmount;
-  console.log(`\n   ✅ EXPECTED Total: ₹${lostAmount.toLocaleString()} | ACTUAL: ₹${totalDist.toLocaleString()} | ${test6Pass ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`\n   ✅ EXPECTED Total: ${lostAmount.toLocaleString()} | ACTUAL: ${totalDist.toLocaleString()} | ${test6Pass ? 'PASS ✅' : 'FAIL ❌'}`);
   if (!test6Pass) allTestsPassed = false;
   
   // ============================================
@@ -517,7 +517,7 @@ function testGamesLogic() {
     const isValid = amount >= minAmt && amount <= maxAmt && test.tickets > 0;
     const result = isValid ? 'VALID' : 'INVALID';
     const pass = result === test.expected;
-    console.log(`   ${test.tickets} tickets (₹${amount.toLocaleString()}): ${result} - ${test.reason} | ${pass ? 'PASS ✅' : 'FAIL ❌'}`);
+    console.log(`   ${test.tickets} tickets (${amount.toLocaleString()}): ${result} - ${test.reason} | ${pass ? 'PASS ✅' : 'FAIL ❌'}`);
     if (!pass) allTestsPassed = false;
   });
   
@@ -544,7 +544,7 @@ function testGamesLogic() {
   const userBalance = 1000;
   const requiredAmount = 1500;
   const canBet = userBalance >= requiredAmount;
-  console.log(`   Balance: ₹${userBalance} | Required: ₹${requiredAmount} | ${canBet ? 'CAN BET' : 'INSUFFICIENT'} | ${!canBet ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`   Balance: ${userBalance} | Required: ${requiredAmount} | ${canBet ? 'CAN BET' : 'INSUFFICIENT'} | ${!canBet ? 'PASS ✅' : 'FAIL ❌'}`);
   if (canBet) allTestsPassed = false;
   
   // ============================================
@@ -553,12 +553,12 @@ function testGamesLogic() {
   console.log('\n' + '='.repeat(70));
   console.log('TEST SUMMARY');
   console.log('='.repeat(70));
-  console.log('Test 1: Nifty Up/Down (WIN)     - 5 tickets, +₹1,425 (gross credit) ✅ PASS');
-  console.log('Test 2: BTC Up/Down (LOSS)     - 10 tickets, -₹3,000      ✅ PASS');
+  console.log('Test 1: Nifty Up/Down (WIN)     - 5 tickets, +1,425 (gross credit) ✅ PASS');
+  console.log('Test 2: BTC Up/Down (LOSS)     - 10 tickets, -3,000      ✅ PASS');
   console.log('Test 3: Nifty Number (WIN)     - 1 ticket, full gross + SA hierarchy ✅ PASS');
-  console.log('Test 4: Nifty Bracket (WIN)    - 3 tickets, +₹900         ✅ PASS');
-  console.log('Test 5: Nifty Jackpot (#3)     - 5 tickets, +₹6,500       ✅ PASS');
-  console.log('Test 6: Profit Distribution    - ₹3,000 distributed       ✅ PASS');
+  console.log('Test 4: Nifty Bracket (WIN)    - 3 tickets, +900         ✅ PASS');
+  console.log('Test 5: Nifty Jackpot (#3)     - 5 tickets, +6,500       ✅ PASS');
+  console.log('Test 6: Profit Distribution    - 3,000 distributed       ✅ PASS');
   console.log('Test 7: Validation Tests       - All validations          ✅ PASS');
   
   console.log('\n' + (allTestsPassed ? '✅ ALL TESTS PASSED' : '❌ SOME TESTS FAILED') + ' - Games Logic is ' + (allTestsPassed ? 'working correctly!' : 'having issues!'));
@@ -566,9 +566,9 @@ function testGamesLogic() {
   
   // Final state
   console.log('\n📋 FINAL USER STATE:');
-  console.log(`   Initial Balance: ₹50,000`);
-  console.log(`   Final Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
-  console.log(`   Net P&L: ₹${user.gamesWallet.realizedPnL.toLocaleString()}`);
+  console.log(`   Initial Balance: 50,000`);
+  console.log(`   Final Balance: ${user.gamesWallet.balance.toLocaleString()}`);
+  console.log(`   Net P&L: ${user.gamesWallet.realizedPnL.toLocaleString()}`);
   console.log(`   Total Bets: 5 (3 wins, 1 loss, 1 jackpot)`);
 }
 

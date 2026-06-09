@@ -120,10 +120,10 @@ export function emptyInstrumentTradingForm() {
       perTradeEnabled: false,
       perLotEnabled: false,
       perCroreEnabled: false,
-      perTradeUnit: 'INR',
-      perLotUnit: 'INR',
+      perTradeUnit: 'COINS',
+      perLotUnit: 'COINS',
       perCroreUnit: 'PERCENT',
-      extraCommissionUnit: 'INR',
+      extraCommissionUnit: 'COINS',
     },
   };
 }
@@ -247,8 +247,8 @@ export function serializeInstrumentTradingForm(form) {
       perTradeEnabled: !!form.additionalCharges?.perTradeEnabled,
       perLotEnabled: !!form.additionalCharges?.perLotEnabled,
       perCroreEnabled: !!form.additionalCharges?.perCroreEnabled,
-      perTradeUnit: 'INR',
-      perLotUnit: 'INR',
+      perTradeUnit: 'COINS',
+      perLotUnit: 'COINS',
       perCroreUnit: 'PERCENT',
     },
   };
@@ -264,7 +264,7 @@ export const EXTRA_CHARGE_TYPE_META = [
     enKey: 'perTradeEnabled',
     label: 'Per trade',
     step: '0.01',
-    suffix: '₹',
+    suffix: '',
     shortHint: 'Flat fee each time an order completes',
   },
   {
@@ -273,7 +273,7 @@ export const EXTRA_CHARGE_TYPE_META = [
     enKey: 'perLotEnabled',
     label: 'Per lot',
     step: '0.01',
-    suffix: '₹',
+    suffix: '',
     shortHint: 'Charged per lot traded',
   },
   {

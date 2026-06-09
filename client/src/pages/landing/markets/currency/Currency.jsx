@@ -91,7 +91,7 @@ export default function Currency() {
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground mb-2">{currency.name}</p>
-                <p className="text-lg font-semibold text-foreground">₹{currency.price}</p>
+                <p className="text-lg font-semibold text-foreground">{currency.price}</p>
               </div>
             ))}
           </div>

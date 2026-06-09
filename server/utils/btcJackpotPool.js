@@ -22,7 +22,7 @@ async function findActiveSuperAdmin() {
 }
 
 /**
- * Credit Super Admin ₹amount when a user places a ticket.
+ * Credit Super Admin amount when a user places a ticket.
  * @param {number} amount
  * @param {string} description
  * @param {object} [meta] — e.g. `{ gameKey: 'btcNumber', poolDebitKind: 'BTC_NUMBER_STAKE', relatedUserId }` overrides defaults
@@ -61,7 +61,7 @@ export async function creditSuperAdminForBtcJackpotStake(amount, description, me
 }
 
 /**
- * Debit Super Admin ₹amount to pay a winner or a hierarchy member.
+ * Debit Super Admin amount to pay a winner or a hierarchy member.
  * @param {number} amount
  * @param {string} description
  * @param {object} [meta]
@@ -86,7 +86,7 @@ export async function debitSuperAdminForBtcJackpotPayout(amount, description, me
   if (bal < 0) {
     const gk = meta?.gameKey || 'btcJackpot';
     console.warn(
-      `[${gk} pool] Super Admin balance went negative after debit ₹${amt.toFixed(2)}: ₹${bal.toFixed(
+      `[${gk} pool] Super Admin balance went negative after debit ${amt.toFixed(2)}: ${bal.toFixed(
         2
       )} — top up SA wallet`
     );

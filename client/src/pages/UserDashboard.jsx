@@ -6444,12 +6444,12 @@ const TradingPanel = ({
       const brokerageDue = Number(previewGate.brokerage || 0) > 0.01;
       if (mShort > 0 && bShort > 0 && brokerageDue) {
         rejectOrder(
-          `Insufficient funds. Need ₹${mShort.toLocaleString('en-IN')} more margin and ₹${bShort.toLocaleString('en-IN')} more for brokerage.`
+          `Insufficient funds. Need ${mShort.toLocaleString('en-IN')} more margin and ${bShort.toLocaleString('en-IN')} more for brokerage.`
         );
       } else if (mShort > 0) {
-        rejectOrder(`Insufficient margin. Need ₹${mShort.toLocaleString('en-IN')} more available margin.`);
+        rejectOrder(`Insufficient margin. Need ${mShort.toLocaleString('en-IN')} more available margin.`);
       } else if (bShort > 0) {
-        rejectOrder(`Insufficient available margin for brokerage (₹${Number(previewGate.brokerage || 0).toLocaleString('en-IN')}). Need ₹${bShort.toLocaleString('en-IN')} more available margin.`);
+        rejectOrder(`Insufficient available margin for brokerage (${Number(previewGate.brokerage || 0).toLocaleString('en-IN')}). Need ${bShort.toLocaleString('en-IN')} more available margin.`);
       } else {
         rejectOrder('Cannot place trade. Check quantity limits or refresh margin preview.');
       }
@@ -9478,18 +9478,18 @@ const MobileProfilePanel = ({ user, walletData, onLogout }) => {
         <div className="bg-dark-700 rounded-xl p-4">
           <p className="text-gray-400 text-sm mb-1">Cash Balance (NSE/BSE)</p>
           <p className="text-2xl font-bold text-green-400">
-            ₹{nseBseBalanceFromWalletData(walletData).toLocaleString('en-IN')}
+            {nseBseBalanceFromWalletData(walletData).toLocaleString('en-IN')}
           </p>
           <div className="flex justify-between mt-2 text-sm">
             <span className="text-gray-400">Real Balance (MTM)</span>
             <span className="text-cyan-400 font-medium">
-              ₹{nseBseRealBalanceFromWalletData(walletData).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {nseBseRealBalanceFromWalletData(walletData).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
           {walletData?.nseBseWallet?.ledgerReferenceBalance > 0 && (
             <div className="flex justify-between text-xs mt-1 text-gray-500">
               <span>Auto-square floor ({walletData.nseBseWallet.ledgerClosePercent ?? 90}% loss)</span>
-              <span>₹{(walletData.nseBseWallet.ledgerMinEquityFloor ?? 0).toLocaleString('en-IN')}</span>
+              <span>{(walletData.nseBseWallet.ledgerMinEquityFloor ?? 0).toLocaleString('en-IN')}</span>
             </div>
           )}
           {walletData?.nseBseWallet?.ledgerAutosquareActive && (
@@ -10503,7 +10503,7 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
               <p className="text-sm text-gray-400">
                 Main:{' '}
                 <span className="text-green-400 font-medium">
-                  ₹{resolveMainWalletBalance(walletData).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  {resolveMainWalletBalance(walletData).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                 </span>
               </p>
             </div>
@@ -10651,7 +10651,7 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
 
             {/* Amount Input */}
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Amount ()</label>
+              <label className="block text-sm text-gray-400 mb-2">Amount</label>
               <input
                 type="number"
                 value={amount}
@@ -10707,7 +10707,7 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
 
             {/* Amount Input */}
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Withdrawal Amount ()</label>
+              <label className="block text-sm text-gray-400 mb-2">Withdrawal Amount</label>
               <input
                 type="number"
                 value={amount}
@@ -11087,7 +11087,7 @@ const BuySellModal = ({
   // Product types based on segment
   const productTypes = isUsdSpot
     ? [
-        { value: 'MIS', label: 'Spot', desc: isForex ? 'Forex spot (INR wallet)' : 'Crypto spot trading' }
+        { value: 'MIS', label: 'Spot', desc: isForex ? 'Forex spot' : 'Crypto spot trading' }
       ]
     : isFnO || isMCX
     ? [
@@ -12124,7 +12124,7 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
           )}
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-xs text-gray-400 mb-1">Amount</label>
             <input 
               type="number" 
               placeholder={

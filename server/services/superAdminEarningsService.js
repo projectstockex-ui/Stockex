@@ -50,7 +50,7 @@ export async function trackHierarchyEarnings(adminId, amount, segment) {
       segment
     );
 
-    console.log(`[SuperAdminEarnings] Tracked ₹${amount} ${segment} earnings from ${rootAdmin.username}'s hierarchy. Total: ₹${earnings.totalEarnings}`);
+    console.log(`[SuperAdminEarnings] Tracked ${amount} ${segment} earnings from ${rootAdmin.username}'s hierarchy. Total: ${earnings.totalEarnings}`);
     
     return earnings;
   } catch (error) {

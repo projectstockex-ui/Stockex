@@ -547,11 +547,11 @@ const AdminManagement = () => {
                 <div className="flex gap-4 flex-wrap">
                   <div className="text-center">
                     <div className="text-xs text-gray-400">Wallet</div>
-                    <div className="text-lg font-bold text-green-400">₹{(adm.wallet?.balance || 0).toLocaleString()}</div>
+                    <div className="text-lg font-bold text-green-400">{(adm.wallet?.balance || 0).toLocaleString()}</div>
                   </div>
                   <div className="text-center">
                     <div className="text-xs text-gray-400">Total Added</div>
-                    <div className="text-lg font-bold text-yellow-400">₹{(adm.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                    <div className="text-lg font-bold text-yellow-400">{(adm.wallet?.totalDeposited || 0).toLocaleString()}</div>
                   </div>
                   <div className="text-center">
                     <div className="text-xs text-gray-400">Users</div>
@@ -603,7 +603,7 @@ const AdminManagement = () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-400 mb-1">SA Fixed ₹</label>
+                      <label className="block text-xs text-gray-400 mb-1">SA Fixed </label>
                       <input
                         type="number"
                         min="0"
@@ -611,7 +611,7 @@ const AdminManagement = () => {
                         value={adm.superAdminFixedBrokerage || 0}
                         onChange={(e) => handleSuperAdminBrokerageChange(adm._id, 'fixed', parseFloat(e.target.value) || 0)}
                         className="w-24 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
-                        placeholder="₹"
+                        placeholder=""
                       />
                     </div>
                   </div>
@@ -958,12 +958,12 @@ const AdminManagement = () => {
                         <div className="flex gap-4 text-center">
                           <div>
                             <div className="text-xs text-gray-400">Cash Balance</div>
-                            <div className="text-green-400 font-bold">₹{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                            <div className="text-green-400 font-bold">{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
                           </div>
                           <div>
                             <div className="text-xs text-gray-400">P&L</div>
                             <div className={`font-bold ${(user.wallet?.totalPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                              ₹{(user.wallet?.totalPnL || 0).toLocaleString()}
+                              {(user.wallet?.totalPnL || 0).toLocaleString()}
                             </div>
                           </div>
                           <div>
@@ -1279,7 +1279,7 @@ const AdminManagement = () => {
                                 <td className="p-3">{user.fullName || user.name || '-'}</td>
                                 <td className="p-3 font-mono text-sm text-blue-400">{user.username}</td>
                                 <td className="p-3 text-gray-400 text-sm">{user.email}</td>
-                                <td className="p-3 text-yellow-400">₹{(user.wallet?.balance || 0).toLocaleString()}</td>
+                                <td className="p-3 text-yellow-400">{(user.wallet?.balance || 0).toLocaleString()}</td>
                                 <td className="p-3">
                                   <span className={`px-2 py-1 rounded text-xs ${user.isActive ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
                                     {user.isActive ? 'Active' : 'Inactive'}
@@ -1350,15 +1350,15 @@ const AdminManagement = () => {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
                   <div className="text-sm text-green-400">Total Deposited</div>
-                  <div className="text-2xl font-bold text-green-300">₹{(selectedAdmin.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-green-300">{(selectedAdmin.wallet?.totalDeposited || 0).toLocaleString()}</div>
                 </div>
                 <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
                   <div className="text-sm text-red-400">Total Withdrawn</div>
-                  <div className="text-2xl font-bold text-red-300">₹{(selectedAdmin.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-red-300">{(selectedAdmin.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
                 </div>
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
                   <div className="text-sm text-blue-400">Current Balance</div>
-                  <div className="text-2xl font-bold text-blue-300">₹{(selectedAdmin.wallet?.balance || 0).toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-blue-300">{(selectedAdmin.wallet?.balance || 0).toLocaleString()}</div>
                 </div>
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
                   <div className="text-sm text-yellow-400">Transactions</div>
@@ -1402,9 +1402,9 @@ const AdminManagement = () => {
                             </span>
                           </td>
                           <td className={`p-3 font-bold ${txn.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
-                            {txn.type === 'CREDIT' ? '+' : '-'}₹{(txn.amount || 0).toLocaleString()}
+                            {txn.type === 'CREDIT' ? '+' : '-'}{(txn.amount || 0).toLocaleString()}
                           </td>
-                          <td className="p-3 text-blue-400">₹{(txn.balanceAfter || 0).toLocaleString()}</td>
+                          <td className="p-3 text-blue-400">{(txn.balanceAfter || 0).toLocaleString()}</td>
                           <td className="p-3 text-sm text-gray-300">{txn.description || txn.reason || '-'}</td>
                           <td className="p-3 text-sm text-purple-400">{txn.performedBy?.name || txn.performedBy?.username || 'System'}</td>
                         </tr>
@@ -1461,29 +1461,29 @@ const AdminManagement = () => {
                     <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-center">
                       <div className="text-xs text-blue-400">Brokers</div>
                       <div className="text-xl font-bold text-blue-300">{hierarchyData.stats?.totalBrokers || 0}</div>
-                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalBrokerBalance || 0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">{(hierarchyData.stats?.totalBrokerBalance || 0).toLocaleString()}</div>
                     </div>
                     <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 text-center">
                       <div className="text-xs text-green-400">Sub-Brokers</div>
                       <div className="text-xl font-bold text-green-300">{hierarchyData.stats?.totalSubBrokers || 0}</div>
-                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalSubBrokerBalance || 0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">{(hierarchyData.stats?.totalSubBrokerBalance || 0).toLocaleString()}</div>
                     </div>
                     <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-center">
                       <div className="text-xs text-yellow-400">Total Clients</div>
                       <div className="text-xl font-bold text-yellow-300">{hierarchyData.stats?.totalUsers || 0}</div>
-                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalUserBalance || 0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">{(hierarchyData.stats?.totalUserBalance || 0).toLocaleString()}</div>
                     </div>
                     <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 text-center">
                       <div className="text-xs text-purple-400">Admin Balance</div>
-                      <div className="text-xl font-bold text-purple-300">₹{(hierarchyData.admin?.wallet?.balance || 0).toLocaleString()}</div>
+                      <div className="text-xl font-bold text-purple-300">{(hierarchyData.admin?.wallet?.balance || 0).toLocaleString()}</div>
                     </div>
                     <div className="bg-teal-500/10 border border-teal-500/30 rounded-lg p-3 text-center">
                       <div className="text-xs text-teal-400">Total Deposited</div>
-                      <div className="text-xl font-bold text-teal-300">₹{(hierarchyData.admin?.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                      <div className="text-xl font-bold text-teal-300">{(hierarchyData.admin?.wallet?.totalDeposited || 0).toLocaleString()}</div>
                     </div>
                     <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-center">
                       <div className="text-xs text-red-400">Total Withdrawn</div>
-                      <div className="text-xl font-bold text-red-300">₹{(hierarchyData.admin?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+                      <div className="text-xl font-bold text-red-300">{(hierarchyData.admin?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
                     </div>
                   </div>
 
@@ -1509,7 +1509,7 @@ const AdminManagement = () => {
                               </div>
                               <div className="flex gap-4 text-sm">
                                 <span className="text-gray-400">{broker.stats?.totalUsers || 0} users</span>
-                                <span className="text-green-400">₹{(broker.wallet?.balance || 0).toLocaleString()}</span>
+                                <span className="text-green-400">{(broker.wallet?.balance || 0).toLocaleString()}</span>
                               </div>
                             </div>
                             {expandedBrokers[broker._id] && broker.subBrokers && (
@@ -1523,7 +1523,7 @@ const AdminManagement = () => {
                                           <div className="text-xs text-gray-500">{subBroker.adminCode}</div>
                                         </div>
                                         <div className="text-sm text-gray-400">
-                                          {subBroker.stats?.totalUsers || 0} users • ₹{(subBroker.wallet?.balance || 0).toLocaleString()}
+                                          {subBroker.stats?.totalUsers || 0} users • {(subBroker.wallet?.balance || 0).toLocaleString()}
                                         </div>
                                       </div>
                                     </div>

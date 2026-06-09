@@ -28,14 +28,14 @@ export function yourAccountFromClientTx(tx) {
     if (tx.type === 'DEBIT') {
       return {
         state: 'DEBIT',
-        amountStr: `−₹${abs}`,
+        amountStr: `−${abs}`,
         badge: 'bg-red-500/20 text-red-300',
         amountCls: 'text-red-400',
       };
     }
     return {
       state: 'CREDIT',
-      amountStr: `+₹${abs}`,
+      amountStr: `+${abs}`,
       badge: 'bg-green-500/20 text-green-300',
       amountCls: 'text-green-400',
     };
@@ -44,7 +44,7 @@ export function yourAccountFromClientTx(tx) {
   if (tx.type === 'CREDIT') {
     return {
       state: 'DEBIT',
-      amountStr: `−₹${abs}`,
+      amountStr: `−${abs}`,
       badge: 'bg-red-500/20 text-red-300',
       amountCls: 'text-red-400',
     };
@@ -52,7 +52,7 @@ export function yourAccountFromClientTx(tx) {
 
   return {
     state: 'CREDIT',
-    amountStr: `+₹${abs}`,
+    amountStr: `+${abs}`,
     badge: 'bg-green-500/20 text-green-300',
     amountCls: 'text-green-400',
   };

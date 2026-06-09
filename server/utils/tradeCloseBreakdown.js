@@ -215,7 +215,7 @@ export async function getTradeCloseBreakdown(tradeId) {
     notes.push({
       code: 'GROSS_SIGN_FIXED',
       message:
-        `Stored gross (₹${grossStoredRaw.toLocaleString('en-IN')}) did not match entry/exit sign — corrected to ₹${grossCanonical.toLocaleString('en-IN')}.`,
+        `Stored gross (${grossStoredRaw.toLocaleString('en-IN')}) did not match entry/exit sign — corrected to ${grossCanonical.toLocaleString('en-IN')}.`,
     });
   } else if (Math.abs(screenGross - grossStoredRaw) > 0.02) {
     notes.push({
@@ -236,7 +236,7 @@ export async function getTradeCloseBreakdown(tradeId) {
     notes.push({
       code: 'PREPAID_BROKERAGE',
       message:
-        `Round-trip brokerage ₹${commission.toLocaleString('en-IN')} was debited on open. Total impact ≈ ₹${Math.abs(totalEconomicImpact).toLocaleString('en-IN')} (loss + brokerage).`,
+        `Round-trip brokerage ${commission.toLocaleString('en-IN')} was debited on open. Total impact ≈ ${Math.abs(totalEconomicImpact).toLocaleString('en-IN')} (loss + brokerage).`,
     });
   }
   if (trade.bookType === 'B_BOOK') {

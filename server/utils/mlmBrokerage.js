@@ -62,7 +62,7 @@ export function readMlmSliceCommission(rawSlice, systemSlice) {
 
 /**
 
- * Resolve an admin's upstream cost rate for MLM cascade (₹/crore or per-lot).
+ * Resolve an admin's upstream cost rate for MLM cascade (/crore or per-lot).
 
  * Priority: restrictMode → segment PER_CRORE → defaultSettings → parent chain → system.
 
@@ -152,7 +152,7 @@ export function resolveAdminMlmCommissionRate(
 
 /**
 
- * One-way ₹ brokerage at each hierarchy level for MLM diff distribution.
+ * One-way  brokerage at each hierarchy level for MLM diff distribution.
 
  * @param {Function} commissionToInr - (commType, commValue) => inr (from TradeService)
 

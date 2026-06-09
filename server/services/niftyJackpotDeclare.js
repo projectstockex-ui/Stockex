@@ -138,7 +138,7 @@ export async function declareNiftyJackpotResult(date) {
         );
         if (!poolPay.ok) {
           console.error(
-            `[Nifty Jackpot] Super Admin pool debit failed for user ${bid.user} payout ₹${prizeCredit}`
+            `[Nifty Jackpot] Super Admin pool debit failed for user ${bid.user} payout ${prizeCredit}`
           );
         }
 
@@ -215,7 +215,7 @@ export async function declareNiftyJackpotResult(date) {
           );
           if (referralResult.credited) {
             console.log(
-              `[Referral] Credited ₹${referralResult.amount} to referrer for ${bid.user} Nifty Jackpot (rank ${bid.rank}, pool ₹${totalPool}, referred stake ₹${userTotalStake})`
+              `[Referral] Credited ${referralResult.amount} to referrer for ${bid.user} Nifty Jackpot (rank ${bid.rank}, pool ${totalPool}, referred stake ${userTotalStake})`
             );
           }
         }

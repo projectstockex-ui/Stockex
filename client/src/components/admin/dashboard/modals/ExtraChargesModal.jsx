@@ -79,7 +79,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setSuccess(
-        `Successfully took ₹${formData.amount} from ${targetAdmin.name || targetAdmin.username}'s main wallet`
+        `Successfully took ${formData.amount} from ${targetAdmin.name || targetAdmin.username}'s main wallet`
       );
       setFormData((prev) => ({ ...prev, amount: '', description: '' }));
       setTimeout(() => {
@@ -108,12 +108,12 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
       }, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
-      let msg = `Successfully gave ₹${formData.amount} incentive to ${targetAdmin.name || targetAdmin.username}`;
+      let msg = `Successfully gave ${formData.amount} incentive to ${targetAdmin.name || targetAdmin.username}`;
       const c = data?.creditsTo;
       if (c && (c.trading > 0 || c.games > 0)) {
         const parts = [];
-        if (Number(c.trading) > 0) parts.push(`main/trading wallet ₹${Number(c.trading).toFixed(2)}`);
-        if (Number(c.games) > 0) parts.push(`games (temp) wallet ₹${Number(c.games).toFixed(2)}`);
+        if (Number(c.trading) > 0) parts.push(`main/trading wallet ${Number(c.trading).toFixed(2)}`);
+        if (Number(c.games) > 0) parts.push(`games (temp) wallet ${Number(c.games).toFixed(2)}`);
         if (parts.length) msg += ` — ${parts.join(', ')}`;
       }
       setSuccess(msg);
@@ -191,13 +191,13 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
                   <p className="text-xs text-gray-400 mb-2">
                     Admin main wallet:{' '}
                     <span className="text-white font-semibold tabular-nums">
-                      ₹{Number(targetAdmin.wallet?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      {Number(targetAdmin.wallet?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </span>
                     <span className="text-gray-500"> (temporary wallet use nahi hota)</span>
                   </p>
                 )}
                 <label className="block text-sm text-gray-400 mb-1">
-                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore (₹) — from Franchise' : 'Amount to Take (₹)'}
+                  {partnerMode === 'EXTERNAL' ? 'Brokerage Charge Per Crore () — from Franchise' : 'Amount to Take ()'}
                 </label>
                 <input
                   type="number"
@@ -210,7 +210,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
                 />
                 {partnerMode === 'EXTERNAL' && targetAdmin.restrictMode?.brokerageChargePerCrore > 0 && (
                   <p className="text-xs text-rose-400 mt-1">
-                    Preset from Franchise: ₹{Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
+                    Preset from Franchise: {Number(targetAdmin.restrictMode.brokerageChargePerCrore).toLocaleString()}
                   </p>
                 )}
               </div>
@@ -261,7 +261,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
             <>
               <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
                 <label className="block text-sm text-green-400 mb-1">
-                  Monthly Incentive Amount (₹) — from Limits
+                  Monthly Incentive Amount — from Limits
                 </label>
                 <input
                   type="number"
@@ -274,7 +274,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
                 />
                 {targetAdmin.restrictMode?.monthlyIncentiveAmount > 0 && (
                   <p className="text-xs text-green-500 mt-1">
-                    Preset from Limits: ₹{Number(targetAdmin.restrictMode.monthlyIncentiveAmount).toLocaleString()}
+                    Preset from Limits: {Number(targetAdmin.restrictMode.monthlyIncentiveAmount).toLocaleString()}
                   </p>
                 )}
               </div>

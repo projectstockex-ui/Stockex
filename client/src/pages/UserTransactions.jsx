@@ -292,16 +292,16 @@ const UserTransactions = () => {
         <div className="flex items-center gap-6 flex-wrap">
           <div className="flex items-center gap-2">
             <span className="text-gray-400 text-sm">Total Credits:</span>
-            <span className="font-bold text-green-400">+₹{totalCredits.toLocaleString()}</span>
+            <span className="font-bold text-green-400">+{totalCredits.toLocaleString()}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-gray-400 text-sm">Total Debits:</span>
-            <span className="font-bold text-red-400">-₹{totalDebits.toLocaleString()}</span>
+            <span className="font-bold text-red-400">-{totalDebits.toLocaleString()}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-gray-400 text-sm">Net:</span>
             <span className={`font-bold ${totalCredits - totalDebits >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {totalCredits - totalDebits >= 0 ? '+' : ''}₹{(totalCredits - totalDebits).toLocaleString()}
+              {totalCredits - totalDebits >= 0 ? '+' : ''}{(totalCredits - totalDebits).toLocaleString()}
             </span>
           </div>
         </div>
@@ -425,7 +425,7 @@ const UserTransactions = () => {
                         </td>
                         <td className="px-2 py-2 text-right align-top tabular-nums">
                           <span className={(item.displayAmount || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {(item.displayAmount || 0) >= 0 ? '+' : ''}₹
+                            {(item.displayAmount || 0) >= 0 ? '+' : ''}
                             {Math.abs(item.displayAmount || item.amount || 0).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,

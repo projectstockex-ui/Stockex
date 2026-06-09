@@ -104,7 +104,7 @@ class StopOutService {
           currentWalletState = await WalletService.recalculateWallet(userId);
           currentWalletState = currentWalletState[walletField];
           
-          console.log(`Closed ${position.symbol} ${position.side}. PnL: ₹${closeResult.realizedPnL.toFixed(2)}. New margin level: ${currentWalletState.marginLevel?.toFixed(1) || '--'}%`);
+          console.log(`Closed ${position.symbol} ${position.side}. PnL: ${closeResult.realizedPnL.toFixed(2)}. New margin level: ${currentWalletState.marginLevel?.toFixed(1) || '--'}%`);
           
           // Check if margin is restored
           if (currentWalletState.marginLevel === null || currentWalletState.marginLevel > stopOutLevel) {
@@ -119,7 +119,7 @@ class StopOutService {
       const balance = finalWallet?.tradingBalance || finalWallet?.balance || 0;
       
       if (balance < 0 && currentWalletState.usedMargin === 0) {
-        console.log(`NEGATIVE BALANCE: User ${user.userId} has negative balance: ₹${balance}`);
+        console.log(`NEGATIVE BALANCE: User ${user.userId} has negative balance: ${balance}`);
         
         // Flag user for admin review
         await User.updateOne(
@@ -136,7 +136,7 @@ class StopOutService {
         await Notification.create({
           title: 'Negative Balance Alert',
           subject: `🚨 User ${user.userId} has negative balance after stop-out`,
-          description: `User ${user.userId} (${user.username}) has a negative balance of ₹${Math.abs(balance).toFixed(2)} after stop-out. Trading has been blocked. Admin action required.`,
+          description: `User ${user.userId} (${user.username}) has a negative balance of ${Math.abs(balance).toFixed(2)} after stop-out. Trading has been blocked. Admin action required.`,
           senderType: 'SYSTEM',
           targetType: 'ADMIN',
           targetAdminCode: user.adminCode,
@@ -395,7 +395,7 @@ class StopOutService {
         title: 'Daily Loss Limit Reached',
         subject: `🛑 Trading blocked - Daily loss limit exceeded`,
         description: `You have exceeded your daily loss limit. All ${closedCount} positions have been closed. ` +
-          `Total P&L: ₹${totalPnL.toFixed(2)}. Trading will be re-enabled tomorrow.`,
+          `Total P&L: ${totalPnL.toFixed(2)}. Trading will be re-enabled tomorrow.`,
         senderType: 'SYSTEM',
         targetType: 'SINGLE_USER',
         targetUserId: userId,

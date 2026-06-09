@@ -83,7 +83,7 @@ const LiveChart = ({
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
-      return isBTC ? `$${s}` : `₹${s}`;
+      return isBTC ? `$${s}` : `${s}`;
     },
     [isBTC],
   );

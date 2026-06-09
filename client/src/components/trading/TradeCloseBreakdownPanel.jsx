@@ -5,12 +5,12 @@ function fmt(n) {
   if (n == null || !Number.isFinite(Number(n))) return '—';
   const x = Number(n);
   const prefix = x >= 0 ? '+' : '';
-  return `${prefix}₹${Math.abs(x).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return `${prefix}${Math.abs(x).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 function fmtPx(n) {
   if (n == null || !Number.isFinite(Number(n))) return '—';
-  return `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return `${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 function LedgerList({ rows, emptyLabel }) {
@@ -26,7 +26,7 @@ function LedgerList({ rows, emptyLabel }) {
             {row.sharePct != null ? ` (${row.sharePct}%)` : ''}
           </span>
           <span className={row.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
-            {row.type === 'CREDIT' ? '+' : '-'}₹{row.amount.toLocaleString('en-IN')}
+            {row.type === 'CREDIT' ? '+' : '-'}{row.amount.toLocaleString('en-IN')}
           </span>
         </div>
       ))}
@@ -110,7 +110,7 @@ export default function TradeCloseBreakdownPanel({ data, loading, error, highlig
           </div>
           {pnl.grossSignCorrected && (
             <div className="col-span-2 text-[11px] text-amber-300/90">
-              DB had ₹{Math.abs(pnl.grossStoredRaw).toLocaleString('en-IN')} with wrong sign — corrected from
+              DB had {Math.abs(pnl.grossStoredRaw).toLocaleString('en-IN')} with wrong sign — corrected from
               entry/exit.
             </div>
           )}
@@ -119,7 +119,7 @@ export default function TradeCloseBreakdownPanel({ data, loading, error, highlig
               <div className="text-gray-500">
                 Brokerage (round-trip){pnl.prepaidBrokerage ? ' · debited on open' : ''}
               </div>
-              <div className="text-amber-300">−₹{pnl.commission.toLocaleString('en-IN')}</div>
+              <div className="text-amber-300">−{pnl.commission.toLocaleString('en-IN')}</div>
             </div>
           )}
           {pnl.prepaidBrokerage && pnl.commission > 0 && pnl.grossPnL < 0 && (
@@ -131,7 +131,7 @@ export default function TradeCloseBreakdownPanel({ data, loading, error, highlig
           {pnl.closingCharges > 0 && (
             <div>
               <div className="text-gray-500">Exchange charges at close</div>
-              <div className="text-amber-300">₹{pnl.closingCharges.toLocaleString('en-IN')}</div>
+              <div className="text-amber-300">{pnl.closingCharges.toLocaleString('en-IN')}</div>
             </div>
           )}
         </div>

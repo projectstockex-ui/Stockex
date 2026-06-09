@@ -5,7 +5,7 @@ import { PlayCircle, Check, Wallet, Activity, Shield, Monitor } from "lucide-rea
 import { DemoTradingDialog } from "@/components/landing/auth-dialogs"
 
 const features = [
-  { icon: Wallet, title: "₹1,00,000 Virtual Balance", desc: "Practice with virtual money without any risk." },
+  { icon: Wallet, title: "1,00,000 Virtual Balance", desc: "Practice with virtual money without any risk." },
   { icon: Activity, title: "Real-Time Simulation", desc: "Experience live market conditions." },
   { icon: Shield, title: "Risk-Free Learning", desc: "Learn trading without losing real money." },
   { icon: Monitor, title: "Full Platform Access", desc: "Access all trading tools and features." },
@@ -44,7 +44,7 @@ export default function DemoAccount() {
               
               <div className="flex flex-wrap gap-4 mb-8">
                 <div className="bg-white/10 rounded-xl px-6 py-4 text-center">
-                  <div className="text-2xl font-bold text-green-400">₹1,00,000</div>
+                  <div className="text-2xl font-bold text-green-400">1,00,000</div>
                   <div className="text-sm text-white/60">Virtual Balance</div>
                 </div>
                 <div className="bg-white/10 rounded-xl px-6 py-4 text-center">

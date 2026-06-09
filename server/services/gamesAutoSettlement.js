@@ -417,7 +417,7 @@ async function tryAutoLockNiftyJackpotPrice(settings) {
 
     console.log(
 
-      `[gamesAutoSettlement] nifty jackpot auto-locked @ ₹${Number(lp)} for ${today} (IST ≥ ${gc.resultTime || '15:45'})`
+      `[gamesAutoSettlement] nifty jackpot auto-locked @ ${Number(lp)} for ${today} (IST ≥ ${gc.resultTime || '15:45'})`
 
     );
 
@@ -1169,7 +1169,7 @@ export async function runGamesAutoSettlementTick() {
             );
             if (refOut.credited) {
               console.log(
-                `[gamesAutoSettlement] referral per-win user=${uid} game=${r.gameId} w=${wn} → referrer ₹${refOut.amount}`
+                `[gamesAutoSettlement] referral per-win user=${uid} game=${r.gameId} w=${wn} → referrer ${refOut.amount}`
               );
             }
           } catch (refErr) {

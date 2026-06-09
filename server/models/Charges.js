@@ -68,7 +68,7 @@ const chargesSchema = new mongoose.Schema({
   // SEBI charges (per crore)
   sebiCharges: {
     type: Number,
-    default: 10 // ₹10 per crore
+    default: 10 // 10 per crore
   },
   
   // Stamp duty (percentage)

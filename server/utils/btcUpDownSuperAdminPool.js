@@ -68,7 +68,7 @@ export async function debitBtcUpDownSuperAdminPool(amount, description, ledgerMe
   const bal = updated.wallet?.balance ?? 0;
   if (bal < 0) {
     console.warn(
-      `[BTC Up/Down pool] Super Admin balance went negative after debit ₹${amt.toFixed(2)}: ₹${bal.toFixed(2)} — top up SA wallet`
+      `[BTC Up/Down pool] Super Admin balance went negative after debit ${amt.toFixed(2)}: ${bal.toFixed(2)} — top up SA wallet`
     );
   }
 

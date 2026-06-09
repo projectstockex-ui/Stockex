@@ -10,7 +10,7 @@ const RANK1_PCT = resolveJackpotPrizePercentForRank(1, {});
 assert.equal(RANK1_PCT, 45, 'rank 1 should resolve to 45% of pool (default ladder)');
 
 const G = Math.round((KITTY * RANK1_PCT) / 100);
-assert.equal(G, 13_500, '45% of ₹30,000 kitty = ₹13,500 gross G');
+assert.equal(G, 13_500, '45% of 30,000 kitty = 13,500 gross G');
 
 const gc = {
   grossPrizeSubBrokerPercent: 2,
@@ -34,6 +34,6 @@ assert.equal(netPrize, 13_027.5, 'net prize credited to winner (G − hierarchy)
 const stake = 1000;
 const prizeCredit = netPrize;
 const winnerRoundPnL = parseFloat((prizeCredit - stake).toFixed(2));
-assert.equal(winnerRoundPnL, 12_027.5, 'realized PnL increment = net prize − stake (example stake ₹1000)');
+assert.equal(winnerRoundPnL, 12_027.5, 'realized PnL increment = net prize − stake (example stake 1000)');
 
 console.log('niftyJackpotTc3.test.mjs: all assertions passed');

@@ -17,7 +17,7 @@ export class ReferralTestVerificationService {
     
     try {
       console.log(`[VerificationService] Verifying referral commission for ${referrer.username} (Phase: ${phase})`);
-      console.log(`[VerificationService] Expected amount: ₹${expectedAmount}`);
+      console.log(`[VerificationService] Expected amount: ${expectedAmount}`);
       
       // Check wallet ledger for referral commission entries
       const referralEntries = await this.walletLedgerRepository.find({
@@ -31,7 +31,7 @@ export class ReferralTestVerificationService {
 
       // Calculate total commission
       const totalCommission = referralEntries.reduce((sum, entry) => {
-        console.log(`[VerificationService] - Entry: ₹${entry.amount} at ${entry.createdAt}`);
+        console.log(`[VerificationService] - Entry: ${entry.amount} at ${entry.createdAt}`);
         return sum + entry.amount;
       }, 0);
 
@@ -49,10 +49,10 @@ export class ReferralTestVerificationService {
 
       if (passed) {
         console.log(`[VerificationService] ✅ Referral commission verification PASSED for ${referrer.username}`);
-        console.log(`[VerificationService] Expected: ₹${expectedAmount}, Got: ₹${totalCommission}`);
+        console.log(`[VerificationService] Expected: ${expectedAmount}, Got: ${totalCommission}`);
       } else {
         console.log(`[VerificationService] ❌ Referral commission verification FAILED for ${referrer.username}`);
-        console.log(`[VerificationService] Expected: ₹${expectedAmount}, Got: ₹${totalCommission}`);
+        console.log(`[VerificationService] Expected: ${expectedAmount}, Got: ${totalCommission}`);
         console.log(`[VerificationService] Entries found:`, referralEntries.map(e => ({ amount: e.amount, createdAt: e.createdAt })));
       }
 
@@ -88,7 +88,7 @@ export class ReferralTestVerificationService {
           actualDistribution[role] = 0;
         }
         actualDistribution[role] += entry.amount;
-        console.log(`[VerificationService] - ${role}: ₹${entry.amount} (${entry.description})`);
+        console.log(`[VerificationService] - ${role}: ${entry.amount} (${entry.description})`);
       }
 
       // Compare expected vs actual
@@ -127,7 +127,7 @@ export class ReferralTestVerificationService {
     
     try {
       console.log(`[VerificationService] Verifying SuperAdmin earnings for hierarchy ${hierarchyId}`);
-      console.log(`[VerificationService] Expected earnings: ₹${expectedEarnings}`);
+      console.log(`[VerificationService] Expected earnings: ${expectedEarnings}`);
       
       const earningsRecord = await this.superAdminEarningsRepository.findOne({
         hierarchyId,
@@ -149,10 +149,10 @@ export class ReferralTestVerificationService {
 
       if (passed) {
         console.log(`[VerificationService] ✅ SuperAdmin earnings verification PASSED`);
-        console.log(`[VerificationService] Expected: ₹${expectedEarnings}, Got: ₹${actualEarnings}`);
+        console.log(`[VerificationService] Expected: ${expectedEarnings}, Got: ${actualEarnings}`);
       } else {
         console.log(`[VerificationService] ❌ SuperAdmin earnings verification FAILED`);
-        console.log(`[VerificationService] Expected: ₹${expectedEarnings}, Got: ₹${actualEarnings}`);
+        console.log(`[VerificationService] Expected: ${expectedEarnings}, Got: ${actualEarnings}`);
       }
 
       return verificationResult;
@@ -168,7 +168,7 @@ export class ReferralTestVerificationService {
     
     try {
       console.log(`[VerificationService] Verifying ${walletType} balance for ${user.username}`);
-      console.log(`[VerificationService] Expected balance: ₹${expectedBalance}`);
+      console.log(`[VerificationService] Expected balance: ${expectedBalance}`);
       
       // Get updated user data
       const updatedUser = await this.userRepository.findById(user._id);
@@ -189,10 +189,10 @@ export class ReferralTestVerificationService {
 
       if (passed) {
         console.log(`[VerificationService] ✅ ${walletType} balance verification PASSED for ${user.username}`);
-        console.log(`[VerificationService] Expected: ₹${expectedBalance}, Got: ₹${actualBalance}`);
+        console.log(`[VerificationService] Expected: ${expectedBalance}, Got: ${actualBalance}`);
       } else {
         console.log(`[VerificationService] ❌ ${walletType} balance verification FAILED for ${user.username}`);
-        console.log(`[VerificationService] Expected: ₹${expectedBalance}, Got: ₹${actualBalance}`);
+        console.log(`[VerificationService] Expected: ${expectedBalance}, Got: ${actualBalance}`);
       }
 
       return verificationResult;
@@ -208,7 +208,7 @@ export class ReferralTestVerificationService {
     
     try {
       console.log(`[VerificationService] Verifying ${walletType} balance for admin ${admin.username}`);
-      console.log(`[VerificationService] Expected balance: ₹${expectedBalance}`);
+      console.log(`[VerificationService] Expected balance: ${expectedBalance}`);
       
       // Get updated admin data
       const updatedAdmin = await Admin.findById(admin._id);
@@ -229,10 +229,10 @@ export class ReferralTestVerificationService {
 
       if (passed) {
         console.log(`[VerificationService] ✅ Admin ${walletType} balance verification PASSED for ${admin.username}`);
-        console.log(`[VerificationService] Expected: ₹${expectedBalance}, Got: ₹${actualBalance}`);
+        console.log(`[VerificationService] Expected: ${expectedBalance}, Got: ${actualBalance}`);
       } else {
         console.log(`[VerificationService] ❌ Admin ${walletType} balance verification FAILED for ${admin.username}`);
-        console.log(`[VerificationService] Expected: ₹${expectedBalance}, Got: ₹${actualBalance}`);
+        console.log(`[VerificationService] Expected: ${expectedBalance}, Got: ${actualBalance}`);
       }
 
       return verificationResult;

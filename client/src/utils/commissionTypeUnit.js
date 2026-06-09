@@ -1,26 +1,27 @@
 /**
  * Client-side commission type helpers (must match server/utils/commissionTypeUnit.js).
- * All commission types use ₹ (INR) as the unit.
- * PER_CRORE = ₹ per crore turnover (not percentage).
+ * All commission types use Stockex coins as the unit.
  */
 
-export function requiredUnitForCommissionType(commissionType) {
-  return 'INR';
+import { CURRENCY_SHORT } from './stockexCoins.js';
+
+export function requiredUnitForCommissionType() {
+  return 'COINS';
 }
 
 /** Label for the numeric commission field. */
 export function commissionAmountLabel(commissionType) {
   switch (commissionType) {
     case 'PER_LOT':
-      return 'Brokerage (₹ / lot)';
+      return `Brokerage (${CURRENCY_SHORT} / lot)`;
     case 'PER_CRORE':
-      return 'Brokerage (₹ / crore)';
+      return `Brokerage (${CURRENCY_SHORT} / crore)`;
     case 'PER_TRADE':
-      return 'Brokerage (₹ / trade)';
+      return `Brokerage (${CURRENCY_SHORT} / trade)`;
     case 'PER_QUANTITY':
-      return 'Brokerage (₹ / qty)';
+      return `Brokerage (${CURRENCY_SHORT} / qty)`;
     default:
-      return 'Amount (₹)';
+      return `Amount (${CURRENCY_SHORT})`;
   }
 }
 
@@ -28,17 +29,16 @@ export function commissionHelperText(commissionType) {
   switch (commissionType) {
     case 'PER_LOT':
     case 'PER_QUANTITY':
-      return 'Charge per quantity (₹)';
+      return `Charge per quantity (${CURRENCY_SHORT})`;
     case 'PER_TRADE':
       return 'Flat fee per trade';
     case 'PER_CRORE':
-      return '₹ per crore turnover';
+      return `${CURRENCY_SHORT} per crore turnover`;
     default:
       return '';
   }
 }
 
-/** Read-only options for UX: only INR is valid now. */
-export function unitOptionsForCommissionType(commissionType) {
-  return [{ value: 'INR', label: 'Rupees (₹)' }];
+export function unitOptionsForCommissionType() {
+  return [{ value: 'COINS', label: '◉' }];
 }

@@ -411,7 +411,7 @@ const systemSettingsSchema = new mongoose.Schema({
   // User can use deliveryPledge as margin for trading any instrument
   deliveryPledgeSettings: {
     enabled: { type: Boolean, default: true },
-    // % of buy value added to pledge (e.g., 50 means 50% of ₹100,000 = ₹50,000 pledge)
+    // % of buy value added to pledge (e.g., 50 means 50% of 100,000 = 50,000 pledge)
     buyPledgePercent: { type: Number, default: 50 },
     // % of sell value added to pledge
     sellPledgePercent: { type: Number, default: 50 },
@@ -432,7 +432,7 @@ const systemSettingsSchema = new mongoose.Schema({
       commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
-      /** Commission for PER_CRORE (₹ per crore or % of turnover) - used when commissionType is PER_CRORE */
+      /** Commission for PER_CRORE ( per crore or % of turnover) - used when commissionType is PER_CRORE */
       commission: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },

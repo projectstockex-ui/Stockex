@@ -36,7 +36,7 @@ function round2(n) {
 
 /**
  * Build the hierarchy plan for a single winner from the populated User document.
- * Returns which sub-broker / broker / admin receives what ₹ (percent-of-grossPrize).
+ * Returns which sub-broker / broker / admin receives what  (percent-of-grossPrize).
  * Admins above are looked up by walking `user.admin` (who may themselves have a parent).
  */
 async function resolveHierarchyForUser(userDoc, grossPrize, gc) {
@@ -166,7 +166,7 @@ async function resolveHierarchyForUser(userDoc, grossPrize, gc) {
 }
 
 /**
- * Credit a hierarchy member's main wallet ₹amount (funded from Super Admin pool).
+ * Credit a hierarchy member's main wallet amount (funded from Super Admin pool).
  * Recorded as a WalletLedger CREDIT row on that admin + a matching DEBIT on Super Admin.
  * @param {{ grossPrize: number, role: string }} [ledger] — for Share % in admin wallet ledger (base = user gross prize for this win)
  */
@@ -191,7 +191,7 @@ async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserI
     G > 0 && Number.isFinite(amt) ? parseFloat(((amt / G) * 100).toFixed(2)) : 0;
   const description =
     G > 0
-      ? `${gameLabel} win brokerage — ${roleLabel} (${pctOfGross.toFixed(2)}% of ₹${G.toFixed(2)})`
+      ? `${gameLabel} win brokerage — ${roleLabel} (${pctOfGross.toFixed(2)}% of ${G.toFixed(2)})`
       : `${gameLabel} — hierarchy brokerage`;
 
   const baseMeta = buildGameProfitLedgerMeta(amt, G, 'BTC_JACKPOT_HIERARCHY', 'btcJackpot', null, winnerUserId);
@@ -295,7 +295,7 @@ export async function declareBtcJackpotForDate(date) {
           { relatedUserId: bid.user, profitKind: 'BTC_JACKPOT_PRIZE', rank: rankDisplay }
         );
         if (!payout?.ok) {
-          console.error(`[BTC Jackpot] SA pool debit failed for user ${bid.user} payout ₹${perBidGross}`);
+          console.error(`[BTC Jackpot] SA pool debit failed for user ${bid.user} payout ${perBidGross}`);
         }
 
         const gwAfter = await atomicGamesWalletUpdate(User, bid.user, {

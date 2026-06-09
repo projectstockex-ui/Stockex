@@ -199,10 +199,10 @@ export async function creditReferralPercentOfTotalStake({
     const rankBit = rank != null ? ` (rank ${rank})` : '';
     const baseDesc =
       isUpDown || isNiftyNumberTicketBase
-        ? `${rewardPercent}% of one ticket (₹${referralBaseAmount.toFixed(2)})`
+        ? `${rewardPercent}% of one ticket (${referralBaseAmount.toFixed(2)})`
         : isJackpotPool
-          ? `${rewardPercent}% of prize pool/bank (₹${referralBaseAmount.toFixed(2)})`
-          : `${rewardPercent}% of total stake (₹${stake.toFixed(2)})`;
+          ? `${rewardPercent}% of prize pool/bank (${referralBaseAmount.toFixed(2)})`
+          : `${rewardPercent}% of total stake (${stake.toFixed(2)})`;
     const description = `Referral bonus: ${baseDesc} — ${referredUser.username} in ${gl}${rankBit} · ${day} · ${scope}`;
 
     referrer.wallet = referrer.wallet || {};

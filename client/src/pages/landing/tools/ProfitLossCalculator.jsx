@@ -98,7 +98,7 @@ export default function ProfitLossCalculator() {
             {/* Input Fields */}
             <div className="grid sm:grid-cols-2 gap-6 mb-8">
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">Entry Price (₹)</label>
+                <label className="block text-sm font-medium text-white/70 mb-2">Entry Price ()</label>
                 <input
                   type="number"
                   value={entryPrice}
@@ -108,7 +108,7 @@ export default function ProfitLossCalculator() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">Exit Price (₹)</label>
+                <label className="block text-sm font-medium text-white/70 mb-2">Exit Price ()</label>
                 <input
                   type="number"
                   value={exitPrice}
@@ -156,11 +156,11 @@ export default function ProfitLossCalculator() {
                 <div className="grid sm:grid-cols-2 gap-4 mb-6">
                   <div className="bg-white/5 rounded-xl p-4">
                     <div className="text-white/70 text-sm mb-1">Investment</div>
-                    <div className="text-xl font-bold text-white">₹{results.investment}</div>
+                    <div className="text-xl font-bold text-white">{results.investment}</div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-4">
                     <div className="text-white/70 text-sm mb-1">Current Value</div>
-                    <div className="text-xl font-bold text-white">₹{results.currentValue}</div>
+                    <div className="text-xl font-bold text-white">{results.currentValue}</div>
                   </div>
                 </div>
 
@@ -169,7 +169,7 @@ export default function ProfitLossCalculator() {
                   <div className={`rounded-xl p-6 text-center ${results.isProfit ? "bg-green-500/20" : "bg-red-500/20"}`}>
                     <div className="text-white/70 text-sm mb-2">Profit/Loss</div>
                     <div className={`text-3xl font-bold ${results.isProfit ? "text-green-400" : "text-red-400"}`}>
-                      {results.isProfit ? "+" : ""}₹{results.pnl}
+                      {results.isProfit ? "+" : ""}{results.pnl}
                     </div>
                     <div className={`text-sm mt-1 ${results.isProfit ? "text-green-400/70" : "text-red-400/70"}`}>
                       {results.isProfit ? "+" : ""}{results.percentageReturn}%
@@ -179,7 +179,7 @@ export default function ProfitLossCalculator() {
                     <div className={`rounded-xl p-6 text-center ${results.isProfit ? "bg-green-500/20" : "bg-red-500/20"}`}>
                       <div className="text-white/70 text-sm mb-2">With {leverage}x Leverage</div>
                       <div className={`text-3xl font-bold ${results.isProfit ? "text-green-400" : "text-red-400"}`}>
-                        {results.isProfit ? "+" : ""}₹{results.pnlWithLeverage}
+                        {results.isProfit ? "+" : ""}{results.pnlWithLeverage}
                       </div>
                       <div className={`text-sm mt-1 ${results.isProfit ? "text-green-400/70" : "text-red-400/70"}`}>
                         {results.isProfit ? "+" : ""}{results.percentageWithLeverage}%

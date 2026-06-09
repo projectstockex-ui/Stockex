@@ -10,7 +10,7 @@ const gameConfigSchema = new mongoose.Schema({
   cooldownBetweenRounds: { type: Number, default: 5 }, // seconds
   maxBetsPerRound: { type: Number, default: 100 }, // max bets user can place per round
   displayOrder: { type: Number, default: 0 },
-  // Per-game ticket price (₹ per ticket); user API falls back to global tokenValue if unset
+  // Per-game ticket price ( per ticket); user API falls back to global tokenValue if unset
   ticketPrice: { type: Number },
   profitUserPercent: { type: Number, default: 0 },
   subBrokerShareToBroker: { type: Boolean, default: true },
@@ -35,8 +35,8 @@ const gameSettingsSchema = new mongoose.Schema({
   maintenanceMode: { type: Boolean, default: false },
   maintenanceMessage: { type: String, default: 'Games are under maintenance. Please try again later.' },
   
-  // Token System (1 token = tokenValue in ₹)
-  tokenValue: { type: Number, default: 300 }, // 1 token = ₹300
+  // Token System (1 token = tokenValue in )
+  tokenValue: { type: Number, default: 300 }, // 1 token = 300
   
   // Platform Commission
   platformCommission: { type: Number, default: 5 }, // Global platform fee %
@@ -185,7 +185,7 @@ const gameSettingsSchema = new mongoose.Schema({
       ...gameConfigSchema.obj,
       name: { type: String, default: 'Nifty Bracket' },
       description: { type: String, default: 'Buy/Sell on bracket levels around Nifty price' },
-      /** ₹1,000/ticket stake → ₹1,900 gross at 1.9x */
+      /** 1,000/ticket stake → 1,900 gross at 1.9x */
       ticketPrice: { type: Number, default: 1000 },
       winMultiplier: { type: Number, default: 1.9 },
       roundDuration: { type: Number, default: 300 }, // 5 min max wait
@@ -275,7 +275,7 @@ const gameSettingsSchema = new mongoose.Schema({
       },
       enabled: { type: Boolean, default: true },
 
-      /** ₹ per ticket — fixed stake; user only chooses predicted BTC price */
+      /**  per ticket — fixed stake; user only chooses predicted BTC price */
       ticketPrice: { type: Number, default: 500 },
       minTickets: { type: Number, default: 1 },
       /** 1 = one predicted-price ticket per request (scenario / UX default) */

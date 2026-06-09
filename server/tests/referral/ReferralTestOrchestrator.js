@@ -90,7 +90,7 @@ export class ReferralTestOrchestrator {
   async executePhase1(setupResult) {
     const { users, configuration } = setupResult;
     
-    console.log(`[ReferralTest] Phase 1: Simulating monishit trading with ₹${configuration.monishitAmount}`);
+    console.log(`[ReferralTest] Phase 1: Simulating monishit trading with ${configuration.monishitAmount}`);
     
     // Simulate monishit trading activity
     const monishitTrading = await this.executionService.executeTradingActivity({
@@ -99,10 +99,10 @@ export class ReferralTestOrchestrator {
       segment: 'trading'
     });
     
-    console.log(`[ReferralTest] Phase 1: SuperAdmin earnings from monishit: ₹${monishitTrading.superAdminEarnings}`);
+    console.log(`[ReferralTest] Phase 1: SuperAdmin earnings from monishit: ${monishitTrading.superAdminEarnings}`);
     
-    // Verify monishit gets ₹0 referral commission
-    console.log('[ReferralTest] Phase 1: Verifying monishit gets ₹0 referral commission...');
+    // Verify monishit gets 0 referral commission
+    console.log('[ReferralTest] Phase 1: Verifying monishit gets 0 referral commission...');
     const referralCheck = await this.verificationService.verifyReferralCommission({
       referrer: users.monishit,
       expectedAmount: 0,
@@ -139,7 +139,7 @@ export class ReferralTestOrchestrator {
   async executePhase2(setupResult) {
     const { users, configuration } = setupResult;
     
-    console.log(`[ReferralTest] Phase 2: Simulating hamsa trading with ₹${configuration.hamsaAmount}`);
+    console.log(`[ReferralTest] Phase 2: Simulating hamsa trading with ${configuration.hamsaAmount}`);
     
     // Simulate hamsa trading activity
     const hamsaTrading = await this.executionService.executeTradingActivity({
@@ -148,14 +148,14 @@ export class ReferralTestOrchestrator {
       segment: 'trading'
     });
     
-    console.log(`[ReferralTest] Phase 2: SuperAdmin earnings from hamsa: ₹${hamsaTrading.superAdminEarnings}`);
+    console.log(`[ReferralTest] Phase 2: SuperAdmin earnings from hamsa: ${hamsaTrading.superAdminEarnings}`);
     
     // Total SuperAdmin earnings after both users
     const totalSuperAdminEarnings = setupResult.phase1Result?.superAdminEarnings + hamsaTrading.superAdminEarnings;
-    console.log(`[ReferralTest] Phase 2: Total SuperAdmin earnings: ₹${totalSuperAdminEarnings}`);
+    console.log(`[ReferralTest] Phase 2: Total SuperAdmin earnings: ${totalSuperAdminEarnings}`);
     
-    // Verify monishit gets ₹1000 referral commission (after threshold reached)
-    console.log(`[ReferralTest] Phase 2: Verifying monishit gets ₹${configuration.expectedReferralCommission} referral commission...`);
+    // Verify monishit gets 1000 referral commission (after threshold reached)
+    console.log(`[ReferralTest] Phase 2: Verifying monishit gets ${configuration.expectedReferralCommission} referral commission...`);
     const referralCheck = await this.verificationService.verifyReferralCommission({
       referrer: users.monishit,
       referredUser: users.hamsa,
@@ -224,8 +224,8 @@ export class ReferralTestOrchestrator {
     // Log final results
     if (results.overallPassed) {
       console.log('[ReferralTest] ✅ ALL TESTS PASSED - Referral logic working correctly');
-      console.log('[ReferralTest] Phase 1: monishit got ₹0 referral (SuperAdmin: ₹500)');
-      console.log('[ReferralTest] Phase 2: monishit got ₹1000 referral (SuperAdmin: ₹1000 total)');
+      console.log('[ReferralTest] Phase 1: monishit got 0 referral (SuperAdmin: 500)');
+      console.log('[ReferralTest] Phase 2: monishit got 1000 referral (SuperAdmin: 1000 total)');
     } else {
       console.log('[ReferralTest] ❌ TESTS FAILED - Referral logic needs attention');
       console.log('[ReferralTest] Failures:', results.failures);

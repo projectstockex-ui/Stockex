@@ -53,7 +53,7 @@ export default function SegmentBrokerageFields({
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div>
           <label className={labelCls}>
-            {commType ? commissionAmountLabel(commType) : 'Brokerage amount (₹)'}
+            {commType ? commissionAmountLabel(commType) : 'Brokerage amount'}
           </label>
           <input
             type="number"

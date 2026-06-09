@@ -240,7 +240,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
               {restrictData.officePartnerType === 'INTERNAL' && (
                 <div className="p-4 bg-dark-700 rounded-lg border border-green-600/40 space-y-3">
                   <label className="font-medium flex items-center gap-2 text-green-400">
-                    <DollarSign size={16} /> Monthly Incentive Amount (₹)
+                    <DollarSign size={16} /> Monthly Incentive Amount
                   </label>
                   <input
                     type="number"

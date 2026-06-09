@@ -3,7 +3,7 @@ import { Wallet, Activity, Shield, Monitor, TrendingUp, BarChart3 } from "lucide
 import { Link } from "react-router-dom"
 
 const features = [
-  { icon: Wallet, text: "₹1,00,000 virtual balance" },
+  { icon: Wallet, text: "1,00,000 virtual balance" },
   { icon: Activity, text: "Real-time market simulation" },
   { icon: Shield, text: "Risk-free practice" },
   { icon: Monitor, text: "Full platform access" },
@@ -50,11 +50,11 @@ export function DemoTradingSection() {
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <p className="text-white/60 text-sm">Demo Account Balance</p>
-                  <p className="text-3xl font-bold text-white">₹1,00,000.00</p>
+                  <p className="text-3xl font-bold text-white">1,00,000.00</p>
                 </div>
                 <div className="text-right">
                   <p className="text-white/60 text-sm">Today's P&L</p>
-                  <p className="text-xl font-bold text-profit-green">+₹2,450.00</p>
+                  <p className="text-xl font-bold text-profit-green">+2,450.00</p>
                 </div>
               </div>
 
@@ -77,9 +77,9 @@ export function DemoTradingSection() {
               {/* Sample Positions */}
               <div className="space-y-3">
                 {[
-                  { name: "RELIANCE", qty: 10, pnl: "+₹850", up: true },
-                  { name: "NIFTY 50 FUT", qty: 1, pnl: "+₹1,200", up: true },
-                  { name: "GOLD", qty: 5, pnl: "-₹320", up: false },
+                  { name: "RELIANCE", qty: 10, pnl: "+850", up: true },
+                  { name: "NIFTY 50 FUT", qty: 1, pnl: "+1,200", up: true },
+                  { name: "GOLD", qty: 5, pnl: "-320", up: false },
                 ].map((position, index) => (
                   <div key={index} className="flex items-center justify-between bg-white/5 rounded-xl p-3">
                     <div className="flex items-center gap-3">

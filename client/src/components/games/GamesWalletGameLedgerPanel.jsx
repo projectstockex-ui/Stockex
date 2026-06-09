@@ -229,7 +229,7 @@ export default function GamesWalletGameLedgerPanel({
                         <div className="text-[9px] text-cyan-300/90 mt-0.5 tabular-nums">
                           {row.meta.prediction ? String(row.meta.prediction) : 'Trade'}
                           {row.meta.entryPrice != null && Number.isFinite(Number(row.meta.entryPrice))
-                            ? ` · line ₹${Number(row.meta.entryPrice).toLocaleString('en-IN', {
+                            ? ` · line ${Number(row.meta.entryPrice).toLocaleString('en-IN', {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
                               })}${row.meta.spotAtOrder != null && Number.isFinite(Number(row.meta.spotAtOrder)) ? ` (Nifty ${Number(row.meta.spotAtOrder).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} @ order)` : ''}`
@@ -248,7 +248,7 @@ export default function GamesWalletGameLedgerPanel({
                             Number.isFinite(Number(row.meta.niftyPriceAtBid)) && (
                               <>
                                 {' '}
-                                · predicted NIFTY ₹
+                                · predicted NIFTY 
                                 {Number(row.meta.niftyPriceAtBid).toLocaleString('en-IN', {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
@@ -261,7 +261,7 @@ export default function GamesWalletGameLedgerPanel({
                         row.meta.niftyPriceAtBid != null &&
                         Number.isFinite(Number(row.meta.niftyPriceAtBid)) && (
                           <div className="text-[9px] text-cyan-400/90 mt-0.5 tabular-nums">
-                            Predicted NIFTY ₹
+                            Predicted NIFTY 
                             {Number(row.meta.niftyPriceAtBid).toLocaleString('en-IN', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
@@ -284,10 +284,10 @@ export default function GamesWalletGameLedgerPanel({
                             <span>Games: {row.transactionSlip.gameIds.join(', ')}</span>
                           </div>
                           <div className="flex justify-between text-[7px] mt-0.5">
-                            <span className="text-red-400">-₹{row.transactionSlip.totalDebitAmount.toFixed(2)}</span>
-                            <span className="text-green-400">+₹{row.transactionSlip.totalCreditAmount.toFixed(2)}</span>
+                            <span className="text-red-400">-{row.transactionSlip.totalDebitAmount.toFixed(2)}</span>
+                            <span className="text-green-400">+{row.transactionSlip.totalCreditAmount.toFixed(2)}</span>
                             <span className={`font-semibold ${row.transactionSlip.netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                              {row.transactionSlip.netPnL >= 0 ? '+' : ''}₹{row.transactionSlip.netPnL.toFixed(2)}
+                              {row.transactionSlip.netPnL >= 0 ? '+' : ''}{row.transactionSlip.netPnL.toFixed(2)}
                             </span>
                           </div>
                         </div>
@@ -302,13 +302,13 @@ export default function GamesWalletGameLedgerPanel({
                           row.entryType === 'credit' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'
                         }
                       >
-                        {row.entryType === 'credit' ? '+' : '−'}₹
+                        {row.entryType === 'credit' ? '+' : '−'}
                         {(row.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       </span>
                       <div className="text-[9px] text-gray-600 uppercase mt-0.5">{row.entryType}</div>
                     </td>
                     <td className="px-2 py-1.5 text-right text-gray-300 align-top whitespace-nowrap">
-                      ₹
+                      
                       {(row.balanceAfter ?? 0).toLocaleString('en-IN', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,

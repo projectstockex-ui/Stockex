@@ -163,7 +163,7 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade, marketData, merge
                   
                   <div className="text-right ml-2">
                     <div className={`font-mono text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {currentPrice > 0 ? `₹${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
+                      {currentPrice > 0 ? `${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
                     </div>
                     {changePercent !== 0 && (
                       <div className={`text-xs flex items-center justify-end gap-0.5 ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>

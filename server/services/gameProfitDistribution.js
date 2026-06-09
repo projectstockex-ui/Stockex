@@ -204,7 +204,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
         reason: 'GAME_PROFIT',
         amount: shareAmount,
         balanceAfter: role === 'SUPER_ADMIN' ? admin.wallet.balance : admin.temporaryWallet.balance,
-        description: `${gameName} profit share - ${role} (${((shareAmount / amount) * 100).toFixed(1)}% of ₹${amount.toFixed(2)})${role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : ''}`,
+        description: `${gameName} profit share - ${role} (${((shareAmount / amount) * 100).toFixed(1)}% of ${amount.toFixed(2)})${role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : ''}`,
         reference: refId ? { type: 'Manual', id: null } : undefined,
         meta: gameProfitLedgerMeta(shareAmount, amount, 'USER_LOSS_POOL', gameKey, null, user._id),
       });
@@ -232,7 +232,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
           reason: 'GAME_PROFIT',
           amount: divertedToSuperAdmin,
           balanceAfter: saDoc.wallet.balance,
-          description: `${gameName} profit — diverted from company employees (₹${divertedToSuperAdmin.toFixed(2)})`,
+          description: `${gameName} profit — diverted from company employees (${divertedToSuperAdmin.toFixed(2)})`,
           reference: refId ? { type: 'Manual', id: null } : undefined,
           meta: gameProfitLedgerMeta(divertedToSuperAdmin, amount, 'USER_LOSS_POOL', gameKey, null, user._id),
         });
@@ -242,7 +242,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
 
     // Referrers are not paid from referred users' losses; SA keeps hierarchy share. (Stake/win referral rules only.)
 
-    console.log(`[GameProfit] ${gameName}: Distributed ₹${totalDistributed.toFixed(2)} of ₹${amount.toFixed(2)} for user ${user.userId || user._id} | SA:${distributions.SUPER_ADMIN || 0} AD:${distributions.ADMIN || 0} BR:${distributions.BROKER || 0} SB:${distributions.SUB_BROKER || 0}`);
+    console.log(`[GameProfit] ${gameName}: Distributed ${totalDistributed.toFixed(2)} of ${amount.toFixed(2)} for user ${user.userId || user._id} | SA:${distributions.SUPER_ADMIN || 0} AD:${distributions.ADMIN || 0} BR:${distributions.BROKER || 0} SB:${distributions.SUB_BROKER || 0}`);
 
     return { distributions, totalDistributed };
 
@@ -253,7 +253,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
 }
 
 /**
- * Up/Down wins: split win-side brokerage (₹) using per-game Brokerage Distribution percents.
+ * Up/Down wins: split win-side brokerage () using per-game Brokerage Distribution percents.
  * — profitUserPercent → credited to user's games wallet
  * — profitSubBrokerPercent / profitBrokerPercent / profitAdminPercent + remainder → hierarchy (same cascade as distributeGameProfit)
  * Percents are of total brokerage (sum should be ≤ 100%; remainder → Super Admin share).
@@ -286,11 +286,11 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
           : null;
       const poolOut = await debitBtcUpDownSuperAdminPool(
         T,
-        `${gameName} — release win brokerage for hierarchy / user split (−₹${T.toFixed(2)})`,
+        `${gameName} — release win brokerage for hierarchy / user split (−${T.toFixed(2)})`,
         poolMeta
       );
       if (!poolOut.ok) {
-        console.error(`[WinBrokerage] Super Admin pool could not fund brokerage split (₹${T.toFixed(2)})`);
+        console.error(`[WinBrokerage] Super Admin pool could not fund brokerage split (${T.toFixed(2)})`);
         return { userRebate: 0, distributions: {}, totalDistributed: 0, poolFunded: false };
       }
     }
@@ -319,7 +319,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
       currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' }).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     }
     
-    console.log(`[WinBrokerage] Building hierarchy for user ${user.userId || user._id}, totalBrokerage: ₹${totalBrokerage}`);
+    console.log(`[WinBrokerage] Building hierarchy for user ${user.userId || user._id}, totalBrokerage: ${totalBrokerage}`);
     
     while (currentAdmin) {
       console.log(`[WinBrokerage] Adding to hierarchy: ${currentAdmin.username || currentAdmin.adminCode} (${currentAdmin.role}) - receivesHierarchyBrokerage: ${currentAdmin.receivesHierarchyBrokerage}, status: ${currentAdmin.status}`);
@@ -400,7 +400,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
         }
       }
       console.log(
-        `[WinBrokerage] ${gameName}: user rebate ₹${userAmt.toFixed(2)}, hierarchy ₹${totalDistributed.toFixed(2)} (no chain)`
+        `[WinBrokerage] ${gameName}: user rebate ${userAmt.toFixed(2)}, hierarchy ${totalDistributed.toFixed(2)} (no chain)`
       );
       return {
         userRebate: userAmt,
@@ -416,11 +416,11 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
     let superAdminCreditedInChain = false;
     let divertedWinBrokerageToSuperAdmin = 0;
     
-    console.log(`[WinBrokerage] Distribution breakdown: SUB_BROKER=₹${distributions.SUB_BROKER || 0}, BROKER=₹${distributions.BROKER || 0}, ADMIN=₹${distributions.ADMIN || 0}, SUPER_ADMIN=₹${distributions.SUPER_ADMIN || 0}`);
+    console.log(`[WinBrokerage] Distribution breakdown: SUB_BROKER=${distributions.SUB_BROKER || 0}, BROKER=${distributions.BROKER || 0}, ADMIN=${distributions.ADMIN || 0}, SUPER_ADMIN=${distributions.SUPER_ADMIN || 0}`);
     
     for (const { admin, role } of hierarchyChain) {
       const shareAmount = distributions[role] || 0;
-      console.log(`[WinBrokerage] Processing ${admin.username || admin.adminCode} (${role}): shareAmount=₹${shareAmount}, receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}`);
+      console.log(`[WinBrokerage] Processing ${admin.username || admin.adminCode} (${role}): shareAmount=${shareAmount}, receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}`);
       
       if (shareAmount <= 0) {
         console.log(`[WinBrokerage] Skipping ${admin.username || admin.adminCode} - no share amount`);
@@ -436,7 +436,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
       console.log(`[WinBrokerage] Eligibility check for ${admin.username || admin.adminCode}: ${isEligible}`);
       
       if (!isEligible) {
-        console.log(`[WinBrokerage] Admin ${admin.username || admin.adminCode} (${role}) brokerage diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=₹${shareAmount.toFixed(2)}`);
+        console.log(`[WinBrokerage] Admin ${admin.username || admin.adminCode} (${role}) brokerage diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=${shareAmount.toFixed(2)}`);
         divertedWinBrokerageToSuperAdmin += shareAmount;
         continue;
       }
@@ -444,7 +444,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
       // NOTE: Franchise root logic is not applicable for games
       // Games profit/loss always goes to Super Admin, franchise root only applies to trading
       
-      console.log(`[WinBrokerage] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)} to TEMPORARY WALLET`);
+      console.log(`[WinBrokerage] CREDITING ${admin.username || admin.adminCode} (${role}): ${shareAmount.toFixed(2)} to TEMPORARY WALLET`);
       // Credit to temporary wallet instead of main wallet (except for SUPER_ADMIN)
       if (role === 'SUPER_ADMIN') {
         admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
@@ -462,7 +462,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
         reason: 'GAME_PROFIT',
         amount: shareAmount,
         balanceAfter: role === 'SUPER_ADMIN' ? admin.wallet.balance : admin.temporaryWallet.balance,
-        description: `${gameName} win brokerage — ${role} (₹${shareAmount.toFixed(2)})${role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : ''}`,
+        description: `${gameName} win brokerage — ${role} (${shareAmount.toFixed(2)})${role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : ''}`,
         meta: gameProfitLedgerMeta(shareAmount, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
       });
       totalDistributed += shareAmount;
@@ -490,7 +490,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
           reason: 'GAME_PROFIT',
           amount: divertedWinBrokerageToSuperAdmin,
           balanceAfter: saDoc.wallet.balance,
-          description: `${gameName} win brokerage — diverted from company employees (₹${divertedWinBrokerageToSuperAdmin.toFixed(2)})`,
+          description: `${gameName} win brokerage — diverted from company employees (${divertedWinBrokerageToSuperAdmin.toFixed(2)})`,
           meta: gameProfitLedgerMeta(divertedWinBrokerageToSuperAdmin, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
         });
         totalDistributed += divertedWinBrokerageToSuperAdmin;
@@ -512,7 +512,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
           reason: 'GAME_PROFIT',
           amount: saAmt,
           balanceAfter: saDoc.wallet.balance,
-          description: `${gameName} win brokerage — Super Admin remainder (₹${saAmt.toFixed(2)})`,
+          description: `${gameName} win brokerage — Super Admin remainder (${saAmt.toFixed(2)})`,
           meta: gameProfitLedgerMeta(saAmt, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
         });
         totalDistributed += saAmt;
@@ -548,7 +548,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
             if (!segmentAllowed) {
               console.log(`[ReferralBrokerage] Referral disabled for segment ${segment} for ${referredUser.username}. Skipping.`);
             } else {
-              console.log(`[ReferralBrokerage] User ${referredUser.username} was referred by ${referralClient.username}. Processing referral commission ₹${totalSuperAdminShare.toFixed(2)} for segment ${segment}.`);
+              console.log(`[ReferralBrokerage] User ${referredUser.username} was referred by ${referralClient.username}. Processing referral commission ${totalSuperAdminShare.toFixed(2)} for segment ${segment}.`);
               
               // Track Super Admin earnings from this hierarchy
               try {
@@ -572,7 +572,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
               );
               
               if (payoutResult.success) {
-                console.log(`[ReferralBrokerage] Successfully paid ₹${totalSuperAdminShare.toFixed(2)} referral commission to ${referralClient.username}`);
+                console.log(`[ReferralBrokerage] Successfully paid ${totalSuperAdminShare.toFixed(2)} referral commission to ${referralClient.username}`);
               } else if (payoutResult.held) {
                 console.log(`[ReferralBrokerage] Referral commission held: ${payoutResult.reason}`);
               } else {
@@ -588,7 +588,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
     }
 
     console.log(
-      `[WinBrokerage] ${gameName}: user ₹${userAmt.toFixed(2)} | distributed ₹${totalDistributed.toFixed(2)} of brokerage ₹${T.toFixed(2)}`
+      `[WinBrokerage] ${gameName}: user ${userAmt.toFixed(2)} | distributed ${totalDistributed.toFixed(2)} of brokerage ${T.toFixed(2)}`
     );
     return { userRebate: userAmt, distributions, totalDistributed };
   } catch (error) {
@@ -709,11 +709,11 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
     };
     const poolOut = await debitBtcUpDownSuperAdminPool(
       T,
-      `${gameLabel} — gross prize hierarchy share (−₹${T.toFixed(2)})`,
+      `${gameLabel} — gross prize hierarchy share (−${T.toFixed(2)})`,
       poolMeta
     );
     if (!poolOut.ok) {
-      console.error(`[${logTag}] Super Admin pool debit failed (₹${T.toFixed(2)})`);
+      console.error(`[${logTag}] Super Admin pool debit failed (${T.toFixed(2)})`);
       return { poolOk: false, totalDistributed: 0 };
     }
 
@@ -744,7 +744,7 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
             reason: 'GAME_PROFIT',
             amount: lumpNoChain,
             balanceAfter: saDoc.wallet.balance,
-            description: `${gameLabel} win brokerage — Super Admin remainder (no hierarchy, ₹${lumpNoChain.toFixed(2)})`,
+            description: `${gameLabel} win brokerage — Super Admin remainder (no hierarchy, ${lumpNoChain.toFixed(2)})`,
             meta: gameProfitLedgerMeta(lumpNoChain, T, 'JACKPOT_GROSS_FEE', gameKey, null, userId),
           });
           totalDistributed += lumpNoChain;
@@ -757,11 +757,11 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
     let superAdminCreditedInChain = false;
     let divertedGrossHierarchyToSuperAdmin = 0;
     
-    console.log(`[${logTag}] Processing gross hierarchy for ${hierarchyChain.length} admins, total: ₹${T}`);
+    console.log(`[${logTag}] Processing gross hierarchy for ${hierarchyChain.length} admins, total: ${T}`);
     
     for (const { admin, role } of hierarchyChain) {
       const shareAmount = distributions[role] || 0;
-      console.log(`[${logTag}] Processing ${admin.username || admin.adminCode} (${role}): shareAmount=₹${shareAmount}, receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}`);
+      console.log(`[${logTag}] Processing ${admin.username || admin.adminCode} (${role}): shareAmount=${shareAmount}, receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}`);
       
       if (shareAmount <= 0) continue;
       if (creditedGrossRoles.has(role)) continue;
@@ -769,12 +769,12 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
       
       // Check if admin is eligible to receive brokerage
       if (!adminReceivesHierarchyBrokerage(admin, 'games')) {
-        console.log(`[${logTag}] Admin ${admin.username || admin.adminCode} (${role}) gross hierarchy diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=₹${shareAmount.toFixed(2)}`);
+        console.log(`[${logTag}] Admin ${admin.username || admin.adminCode} (${role}) gross hierarchy diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=${shareAmount.toFixed(2)}`);
         divertedGrossHierarchyToSuperAdmin += shareAmount;
         continue;
       }
       
-      console.log(`[${logTag}] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)} to ${role === 'SUPER_ADMIN' ? 'MAIN' : 'TEMPORARY'} WALLET`);
+      console.log(`[${logTag}] CREDITING ${admin.username || admin.adminCode} (${role}): ${shareAmount.toFixed(2)} to ${role === 'SUPER_ADMIN' ? 'MAIN' : 'TEMPORARY'} WALLET`);
       // Credit to temporary wallet instead of main wallet (except for SUPER_ADMIN)
       if (role === 'SUPER_ADMIN') {
         admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
@@ -798,8 +798,8 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
             const gp = breakdown.grossPrize;
             const tempWalletTag = role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : '';
             return pct > 0 && gp > 0
-              ? `${gameLabel} win brokerage — ${role} (${pct.toFixed(1)}% of ₹${gp.toFixed(2)} = ₹${shareAmount.toFixed(2)})${tempWalletTag}`
-              : `${gameLabel} win brokerage — ${role} (₹${shareAmount.toFixed(2)})${tempWalletTag}`;
+              ? `${gameLabel} win brokerage — ${role} (${pct.toFixed(1)}% of ${gp.toFixed(2)} = ${shareAmount.toFixed(2)})${tempWalletTag}`
+              : `${gameLabel} win brokerage — ${role} (${shareAmount.toFixed(2)})${tempWalletTag}`;
           })(),
         meta: gameProfitLedgerMeta(shareAmount, Number(breakdown.grossPrize) || 0, 'JACKPOT_GROSS_FEE', gameKey, null, userId),
       });
@@ -812,7 +812,7 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
     if (totalSuperAdminAmount > 0 && !superAdminCreditedInChain) {
       const saDoc = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
       if (saDoc) {
-        console.log(`[${logTag}] CREDITING Super Admin: ₹${totalSuperAdminAmount.toFixed(2)} (remainder: ₹${breakdown.saAmt || 0}, diverted: ₹${divertedGrossHierarchyToSuperAdmin})`);
+        console.log(`[${logTag}] CREDITING Super Admin: ${totalSuperAdminAmount.toFixed(2)} (remainder: ${breakdown.saAmt || 0}, diverted: ${divertedGrossHierarchyToSuperAdmin})`);
         saDoc.wallet.balance = (saDoc.wallet.balance || 0) + totalSuperAdminAmount;
         saDoc.stats.totalBrokerage = (saDoc.stats.totalBrokerage || 0) + totalSuperAdminAmount;
         await saDoc.save();
@@ -825,8 +825,8 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
           amount: totalSuperAdminAmount,
           balanceAfter: saDoc.wallet.balance,
           description: divertedGrossHierarchyToSuperAdmin > 0 
-            ? `${gameLabel} gross prize fee — Super Admin (₹${(breakdown.saAmt || 0).toFixed(2)} remainder + ₹${divertedGrossHierarchyToSuperAdmin.toFixed(2)} diverted from disabled admins)`
-            : `${gameLabel} gross prize fee — Super Admin remainder (₹${totalSuperAdminAmount.toFixed(2)})`,
+            ? `${gameLabel} gross prize fee — Super Admin (${(breakdown.saAmt || 0).toFixed(2)} remainder + ${divertedGrossHierarchyToSuperAdmin.toFixed(2)} diverted from disabled admins)`
+            : `${gameLabel} gross prize fee — Super Admin remainder (${totalSuperAdminAmount.toFixed(2)})`,
           meta: gameProfitLedgerMeta(
             totalSuperAdminAmount,
             Number(breakdown.grossPrize) || 0,
@@ -841,7 +841,7 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
     }
 
     console.log(
-      `[${logTag}] user ${user.userId || userId}: distributed ₹${totalDistributed.toFixed(2)} of gross fee ₹${T.toFixed(2)}`
+      `[${logTag}] user ${user.userId || userId}: distributed ${totalDistributed.toFixed(2)} of gross fee ${T.toFixed(2)}`
     );
     return { poolOk: true, totalDistributed };
   } catch (error) {

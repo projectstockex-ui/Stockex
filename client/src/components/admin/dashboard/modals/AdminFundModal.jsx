@@ -43,10 +43,10 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
         <div className="bg-dark-700 rounded p-4 mb-4">
           <div className="text-sm text-gray-400">{targetAdmin.name || targetAdmin.username}</div>
           <div className="text-xs text-purple-400 font-mono">{targetAdmin.adminCode}</div>
-          <div className="text-2xl font-bold text-green-400 mt-2">₹{targetAdmin.wallet?.balance?.toLocaleString() || '0'}</div>
+          <div className="text-2xl font-bold text-green-400 mt-2">{targetAdmin.wallet?.balance?.toLocaleString() || '0'}</div>
         </div>
         {error && <div className="bg-red-500/20 text-red-400 p-2 rounded mb-4">{error}</div>}
-        <input type="number" placeholder="Amount (₹)" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-3" />
+        <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-3" />
         <input type="text" placeholder="Description (optional)" value={description} onChange={e => setDescription(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-4" />
         <div className="flex gap-3">
           <button onClick={() => handleFund('add')} disabled={loading} className="flex-1 bg-green-600 hover:bg-green-700 py-2 rounded flex items-center justify-center gap-2">

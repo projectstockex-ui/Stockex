@@ -33,6 +33,7 @@ import Markets from './pages/landing/markets/Markets';
 import Accounts from './pages/landing/accounts/Accounts';
 import UserAccount from './pages/landing/accounts/UserAccount';
 import DemoAccount from './pages/landing/accounts/DemoAccount';
+import AccountVlogPage from './pages/landing/accounts/AccountVlogPage';
 import DemoTrading from './pages/landing/demo-trading/DemoTrading';
 import BrokerProgram from './pages/landing/broker-program/BrokerProgram';
 import StocksMarket from './pages/landing/markets/stocks/Stocks';
@@ -139,6 +140,7 @@ function App() {
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/accounts/user" element={<UserAccount />} />
             <Route path="/accounts/demo" element={<DemoAccount />} />
+            <Route path="/accounts/:slug" element={<AccountVlogPage />} />
             <Route path="/demo-trading" element={<DemoTrading />} />
             <Route path="/broker-program" element={<BrokerProgram />} />
             <Route path="/features/games" element={<GamesPage />} />

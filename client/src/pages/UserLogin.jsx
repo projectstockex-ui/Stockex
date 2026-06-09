@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2, CheckCircle, Star, MapPin, Briefcase } from 'lucide-react';
+import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2, CheckCircle, MapPin } from 'lucide-react';
 import axios from 'axios';
 import { StockExLogo } from '../components/StockExLogo';
 
@@ -119,9 +119,9 @@ const UserLogin = () => {
   const filteredBrokers = allBrokers.filter(b => {
     const searchLower = brokerSearch.toLowerCase();
     return (
-      (b.name || '').toLowerCase().includes(searchLower) ||
-      (b.username || '').toLowerCase().includes(searchLower) ||
-      (b.adminCode || '').toLowerCase().includes(searchLower)
+      (b.adminCode || '').toLowerCase().includes(searchLower) ||
+      (b.cityCode || '').toLowerCase().includes(searchLower) ||
+      (b.cityName || '').toLowerCase().includes(searchLower)
     );
   });
   
@@ -612,7 +612,14 @@ const UserLogin = () => {
                 <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center justify-between">
                   <div>
                     <div className="text-xs text-gray-400">Registering under</div>
-                    <div className="text-green-400 font-medium">{selectedBroker.name || selectedBroker.username} ({selectedBroker.adminCode})</div>
+                    <div className="text-green-400 font-mono font-medium">{selectedBroker.adminCode}</div>
+                    {(selectedBroker.cityCode || selectedBroker.cityName) && (
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {selectedBroker.cityCode}
+                        {selectedBroker.cityCode && selectedBroker.cityName ? ' · ' : ''}
+                        {selectedBroker.cityName}
+                      </div>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -650,7 +657,7 @@ const UserLogin = () => {
               )}
               {isRegister && (
                 <p className="text-center text-xs text-gray-500 mt-2">
-                  Demo account: 7 days • ₹1,00,000 virtual balance • No broker required
+                  Demo account: 7 days • 1,00,000 virtual balance • No broker required
                 </p>
               )}
 
@@ -769,7 +776,7 @@ const UserLogin = () => {
                   type="text"
                   value={brokerSearch}
                   onChange={(e) => setBrokerSearch(e.target.value)}
-                  placeholder="Search by name or code..."
+                  placeholder="Search by code or area..."
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:border-green-500 transition"
                   autoFocus
                 />
@@ -790,47 +797,29 @@ const UserLogin = () => {
                       onClick={() => handleSelectBroker(broker)}
                       className="w-full p-4 bg-dark-700 hover:bg-dark-600 rounded-lg text-left transition border border-transparent hover:border-green-500/30"
                     >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="font-medium text-white mb-1">
-                            {broker.name || broker.username}
-                          </div>
-                          <div className="text-sm text-gray-400 mb-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-mono font-semibold text-green-400 text-lg mb-1.5">
                             {broker.adminCode}
                           </div>
-                          
-                          {/* Rating, City, Experience */}
-                          <div className="flex items-center gap-3 text-xs">
-                            {/* Rating in stars */}
-                            <div className="flex items-center gap-1">
-                              {[...Array(5)].map((_, i) => (
-                                <Star
-                                  key={i}
-                                  size={12}
-                                  className={i < (broker.certificate?.rating || 5) ? 'text-yellow-400 fill-yellow-400' : 'text-gray-600'}
-                                />
-                              ))}
-                              <span className="text-gray-400 ml-1">({broker.certificate?.rating || 5})</span>
+                          {(broker.cityCode || broker.cityName) ? (
+                            <div className="flex items-center gap-1.5 text-sm text-gray-300">
+                              <MapPin size={14} className="text-blue-400 shrink-0" />
+                              <span className="truncate">
+                                {broker.cityCode && (
+                                  <span className="text-blue-400 font-medium">{broker.cityCode}</span>
+                                )}
+                                {broker.cityCode && broker.cityName && (
+                                  <span className="text-gray-500"> · </span>
+                                )}
+                                {broker.cityName && <span>{broker.cityName}</span>}
+                              </span>
                             </div>
-                            
-                            {/* City Code */}
-                            {broker.cityCode && (
-                              <div className="flex items-center gap-1 text-blue-400">
-                                <MapPin size={12} />
-                                <span>{broker.cityCode} {broker.cityName ? `- ${broker.cityName}` : ''}</span>
-                              </div>
-                            )}
-                            
-                            {/* Experience */}
-                            {broker.certificate?.yearsOfExperience > 0 && (
-                              <div className="flex items-center gap-1 text-green-400">
-                                <Briefcase size={12} />
-                                <span>{broker.certificate.yearsOfExperience} yrs</span>
-                              </div>
-                            )}
-                          </div>
+                          ) : (
+                            <div className="text-xs text-gray-500">Area not set</div>
+                          )}
                         </div>
-                        <div className="text-green-400">
+                        <div className="text-green-400 shrink-0">
                           <Users size={20} />
                         </div>
                       </div>

@@ -153,7 +153,7 @@ async function processImmediatePayout(referredUserId, amount, segment, metadata 
       { $inc: { earnings: amount } }
     );
 
-    console.log(`[ReferralPayout] Paid ₹${amount} referral commission to ${referrer.username} for ${referredUser.username} (${segment})`);
+    console.log(`[ReferralPayout] Paid ${amount} referral commission to ${referrer.username} for ${referredUser.username} (${segment})`);
 
     return {
       success: true,
@@ -191,9 +191,9 @@ async function holdReferralCommission(referredUserId, amount, segment, metadata 
     
     // TODO: Implement actual holding mechanism (database table)
     // For now, we'll just log the hold and return the hold information
-    console.log(`[ReferralPayout] Holding ₹${amount} referral commission for user ${referredUserId} in ${segment} segment`);
+    console.log(`[ReferralPayout] Holding ${amount} referral commission for user ${referredUserId} in ${segment} segment`);
     console.log(`[ReferralPayout] Hold reason: Super Admin earnings below threshold`);
-    console.log(`[ReferralPayout] Current earnings: ₹${currentEarnings}, Required: ${settings.thresholdAmount} ${settings.thresholdUnit}`);
+    console.log(`[ReferralPayout] Current earnings: ${currentEarnings}, Required: ${settings.thresholdAmount} ${settings.thresholdUnit}`);
     
     return {
       success: false,

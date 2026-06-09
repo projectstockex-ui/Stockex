@@ -6,7 +6,7 @@
 
 console.log('🚀 Starting Referral Brokerage Test...');
 console.log('Test Scenario: monishit -> hamsa referral');
-console.log('Expected: monishit gets ₹1000 referral after SuperAdmin earns ₹1000 from both users');
+console.log('Expected: monishit gets 1000 referral after SuperAdmin earns 1000 from both users');
 
 try {
   // Import required modules
@@ -82,10 +82,10 @@ try {
     hamsaAmount: 2000,
     
     brokeragePercentages: {
-      superAdmin: 25,  // ₹125 from ₹500 brokerage (₹2000 * 5%)
-      admin: 15,       // ₹75 from ₹500 brokerage
-      broker: 35,      // ₹175 from ₹500 brokerage
-      subBroker: 25    // ₹125 from ₹500 brokerage
+      superAdmin: 25,  // 125 from 500 brokerage (2000 * 5%)
+      admin: 15,       // 75 from 500 brokerage
+      broker: 35,      // 175 from 500 brokerage
+      subBroker: 25    // 125 from 500 brokerage
     },
     
     superAdminThreshold: 1000,
@@ -122,8 +122,8 @@ try {
       
       if (result.overallPassed) {
         console.log('✅ ALL TESTS PASSED - Referral logic working correctly');
-        console.log('✅ Phase 1: monishit got ₹0 referral (SuperAdmin: ₹500)');
-        console.log('✅ Phase 2: monishit got ₹1000 referral (SuperAdmin: ₹1000 total)');
+        console.log('✅ Phase 1: monishit got 0 referral (SuperAdmin: 500)');
+        console.log('✅ Phase 2: monishit got 1000 referral (SuperAdmin: 1000 total)');
       } else {
         console.log('❌ TESTS FAILED - Referral logic needs attention');
         console.log('❌ Failures:', result.failures);

@@ -192,7 +192,7 @@ const TradeModal = ({
             <div>
               <div className="text-xs text-gray-400">Live Price {priceLoading && <RefreshCw size={10} className="inline animate-spin ml-1" />}</div>
               <div className={`text-xl font-bold ${livePrice > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-                {livePrice > 0 ? `₹${livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : 'Not Available'}
+                {livePrice > 0 ? `${livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : 'Not Available'}
               </div>
               {livePrice === 0 && !priceLoading && (
                 <div className="text-xs text-yellow-500">Use Manual mode to enter price</div>
@@ -397,7 +397,7 @@ const TradeModal = ({
             </label>
             {priceMode === 'MARKET' ? (
               <div className="w-full bg-dark-600 border border-blue-500/50 rounded px-3 py-2 text-green-400 font-medium">
-                ₹{livePrice > 0 ? livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '0.00'}
+                {livePrice > 0 ? livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '0.00'}
               </div>
             ) : (
               <input
@@ -412,7 +412,7 @@ const TradeModal = ({
             )}
             {priceMode === 'LIMIT' && livePrice > 0 && (
               <div className="text-xs text-gray-500 mt-1">
-                Current market: ₹{livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                Current market: {livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             )}
           </div>

@@ -1200,9 +1200,9 @@ static _SEGMENT_MERGE_FALLBACK = {
   }
 
   /**
-   * Extra commission from instrument.additionalCharges (per trade / per lot / per crore, ₹ or %).
+   * Extra commission from instrument.additionalCharges (per trade / per lot / per crore,  or %).
    * Applied after script/segment brokerage.
-   * Legacy: if per*Enabled flags are absent, any positive numeric field applies (INR), same as before.
+   * Legacy: if per*Enabled flags are absent, any positive numeric field applies (Stockex coins), same as before.
    */
   static instrumentAdditionalCommission(instrument, lots = 1, tradeValueInr = 0) {
     const inst = instrument && typeof instrument.toObject === 'function' ? instrument.toObject() : instrument;
@@ -1378,7 +1378,7 @@ static _SEGMENT_MERGE_FALLBACK = {
 
     /**
      * @param {'PER_LOT'|'PER_QUANTITY'|'PER_TRADE'|'PER_CRORE'} commType
-     * @param {number} commission — always in ₹ (per lot/qty, per trade, or per crore turnover)
+     * @param {number} commission — always in  (per lot/qty, per trade, or per crore turnover)
      */
     const calcBrokerage = (commType, commission) => {
       commissionType = commType; // Store for cap enforcement
@@ -2074,7 +2074,7 @@ static _SEGMENT_MERGE_FALLBACK = {
       amount,
       balanceAfter: adminDoc.wallet.balance,
       reference: { type: 'Trade', id: trade._id },
-      description: `Patti ${pctLabel} ${roleWord} (₹${amount.toFixed(2)}) on ${kindLabel} — ${trade.symbol} ${trade.side} [${segKey}] (${userLabel})`,
+      description: `Patti ${pctLabel} ${roleWord} (${amount.toFixed(2)}) on ${kindLabel} — ${trade.symbol} ${trade.side} [${segKey}] (${userLabel})`,
       meta: {
         relatedUserId: user?._id || trade.user,
         userName: user?.username || user?.fullName || '',
@@ -2583,7 +2583,7 @@ static _SEGMENT_MERGE_FALLBACK = {
   }
 
   /**
-   * Franchise subtree: cascade ₹/crore from user + admin franchise fields (no SA diversion).
+   * Franchise subtree: cascade /crore from user + admin franchise fields (no SA diversion).
    */
   static async distributeFranchiseBrokerage(trade, totalBrokerage, directAdmin, user, franchiseCtx, leg, turnover) {
     let { hierarchyChain, franchiseRoot } = franchiseCtx;
@@ -2637,7 +2637,7 @@ static _SEGMENT_MERGE_FALLBACK = {
     }
 
     if ((adminInrs[0] || 0) <= 0 && hierarchyChain.length > 1) {
-      console.error('[distributeFranchiseBrokerage] Direct admin has no franchise ₹/crore rate — set restrictMode.brokerageChargePerCrore on:', {
+      console.error('[distributeFranchiseBrokerage] Direct admin has no franchise /crore rate — set restrictMode.brokerageChargePerCrore on:', {
         directAdmin: hierarchyChain[0]?.admin?.name,
         directAdminRole: hierarchyChain[0]?.role,
       });
@@ -2700,8 +2700,8 @@ static _SEGMENT_MERGE_FALLBACK = {
         role,
         amount,
         label === 'direct'
-          ? `Franchise direct share (₹${amount.toFixed(2)})`
-          : `Franchise ${role} share (₹${amount.toFixed(2)})`,
+          ? `Franchise direct share (${amount.toFixed(2)})`
+          : `Franchise ${role} share (${amount.toFixed(2)})`,
         admin.isFranchiseRoot === true
       );
     }
@@ -2715,7 +2715,7 @@ static _SEGMENT_MERGE_FALLBACK = {
           sa,
           finalRemainder,
           trade,
-          `Franchise Super Admin remainder (₹${finalRemainder.toFixed(2)})`,
+          `Franchise Super Admin remainder (${finalRemainder.toFixed(2)})`,
           user,
           leg,
           false,
@@ -2747,8 +2747,8 @@ static _SEGMENT_MERGE_FALLBACK = {
     });
   }
 
-  // Distribute brokerage through MLM hierarchy using cascading ₹ amounts.
-  // Each admin keeps the difference between their calculated ₹ brokerage and the next parent's.
+  // Distribute brokerage through MLM hierarchy using cascading  amounts.
+  // Each admin keeps the difference between their calculated  brokerage and the next parent's.
   // The user's rate is the true "bottom" — the full totalBrokerage is based on it.
   static async distributeBrokerage(trade, totalBrokerage, directAdmin, user, leg = null) {
     if (user?.isDemo) {
@@ -2792,7 +2792,7 @@ static _SEGMENT_MERGE_FALLBACK = {
         return;
       }
 
-      // Trade parameters needed to convert any commission type → ₹ amount
+      // Trade parameters needed to convert any commission type →  amount
       const segment = String(trade.segment || '').toUpperCase();
       const segmentKey = TradeService.resolveMarketWatchSegmentKey(segment, trade.instrumentType);
       const lots = trade.lots || trade.quantity || 1;
@@ -2822,7 +2822,7 @@ static _SEGMENT_MERGE_FALLBACK = {
         return;
       }
 
-      // MLM ₹/crore cascade — full chain through Super Admin (required for patti ADMIN↔SA slice)
+      // MLM /crore cascade — full chain through Super Admin (required for patti ADMIN↔SA slice)
       let hierarchyChain = await buildAdminHierarchyChain(directAdmin);
       hierarchyChain = await ensureSuperAdminInChain(hierarchyChain);
       hierarchyChain = await refreshFranchiseHierarchyChain(hierarchyChain);
@@ -2931,7 +2931,7 @@ static _SEGMENT_MERGE_FALLBACK = {
         }))
       });
 
-      console.log('[distributeBrokerage] Hierarchy ₹ amounts:', {
+      console.log('[distributeBrokerage] Hierarchy  amounts:', {
         userRate: { ...userComm, brokerageInr: userBrokerageInr },
         chain: hierarchyChain.map(h => ({
           name: h.admin.name,
@@ -2950,7 +2950,7 @@ static _SEGMENT_MERGE_FALLBACK = {
         console.log('[distributeBrokerage] User rate is 0, crediting full amount to direct admin');
         await this.creditBrokerageToAdmin(
           directAdmin, totalBrokerage, trade,
-          `Full brokerage (₹${totalBrokerage.toFixed(2)}) — no user segment rate configured`,
+          `Full brokerage (${totalBrokerage.toFixed(2)}) — no user segment rate configured`,
           user,
           leg,
           directAdmin.isFranchiseRoot
@@ -3044,7 +3044,7 @@ static _SEGMENT_MERGE_FALLBACK = {
               radhaAdmin,
               child,
               trade,
-              `Patti ${pattiCtx.childPct}% (₹${child.toFixed(2)})`,
+              `Patti ${pattiCtx.childPct}% (${child.toFixed(2)})`,
               user,
               leg,
               false,
@@ -3057,7 +3057,7 @@ static _SEGMENT_MERGE_FALLBACK = {
               saAdmin,
               saPattiAmount,
               trade,
-              `Patti parent (₹${saPattiAmount.toFixed(2)})`,
+              `Patti parent (${saPattiAmount.toFixed(2)})`,
               user,
               leg,
               false,
@@ -3083,7 +3083,7 @@ static _SEGMENT_MERGE_FALLBACK = {
             adm,
             c.amount,
             trade,
-            `Patti ${c.childPct}% (₹${Math.abs(c.amount).toFixed(2)}) [${segKey || pattiCtx.segKey}]`,
+            `Patti ${c.childPct}% (${Math.abs(c.amount).toFixed(2)}) [${segKey || pattiCtx.segKey}]`,
             user,
             leg,
             !!adm.isFranchiseRoot,
@@ -3176,7 +3176,7 @@ static _SEGMENT_MERGE_FALLBACK = {
         });
         await this.creditBrokerageToAdmin(
           admin, amount, trade,
-          `${role} share (₹${amount.toFixed(2)})`,
+          `${role} share (${amount.toFixed(2)})`,
           user,
           leg,
           !!franchiseRoot,
@@ -3202,7 +3202,7 @@ static _SEGMENT_MERGE_FALLBACK = {
             pattiPoolAccum += remainder;
             await creditPattiAdminSaPool();
           } else {
-            await this.creditBrokerageToAdmin(topAdmin, remainder, trade, `Rounding remainder (₹${remainder.toFixed(2)})`, user, leg, !!franchiseRoot);
+            await this.creditBrokerageToAdmin(topAdmin, remainder, trade, `Rounding remainder (${remainder.toFixed(2)})`, user, leg, !!franchiseRoot);
             totalDistributed += remainder;
           }
         }
@@ -3258,7 +3258,7 @@ static _SEGMENT_MERGE_FALLBACK = {
             reason: 'BROKERAGE(INDEPENDENT)',
             amount: franchiseAmount,
             balanceAfter: franchiseRoot.temporaryWallet.balance,
-            description: `Trading brokerage — franchise root (₹${franchiseAmount.toFixed(2)}) [Temporary Wallet]`,
+            description: `Trading brokerage — franchise root (${franchiseAmount.toFixed(2)}) [Temporary Wallet]`,
             meta: { franchiseRootDiversion: true, tradeId: trade?._id, platformChargesDeducted: platformCharges },
           });
         }
@@ -3276,7 +3276,7 @@ static _SEGMENT_MERGE_FALLBACK = {
           }
           await this.creditBrokerageToAdmin(
             saSink, divertedToSuperAdmin, trade,
-            `Super Admin — diverted from restricted admins (₹${divertedToSuperAdmin.toFixed(2)})`,
+            `Super Admin — diverted from restricted admins (${divertedToSuperAdmin.toFixed(2)})`,
             user
           );
         } else {

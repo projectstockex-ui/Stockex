@@ -17,10 +17,10 @@ const btcJackpotBidSchema = new mongoose.Schema(
       default: null,
     },
 
-    /** ₹ staked for this ticket (usually 1 × ticketPrice; supports multi-ticket if config opens it later) */
+    /**  staked for this ticket (usually 1 × ticketPrice; supports multi-ticket if config opens it later) */
     amount: { type: Number, required: true, min: 1 },
     ticketCount: { type: Number, default: 1, min: 1 },
-    ticketPrice: { type: Number, required: true }, // ₹/ticket at bid time (audit)
+    ticketPrice: { type: Number, required: true }, // /ticket at bid time (audit)
 
     /** User's predicted BTC USD spot for this ticket — ranking key */
     predictedBtc: { type: Number, required: true, min: 1 },

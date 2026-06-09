@@ -154,8 +154,8 @@ export async function assertLtpBracketOrderAllowed(user, instrument, orderData) 
   if (enrolled && !inBracket) {
     const bounds = computeLtpBracketBounds(ltp, instCfg.percentUp, instCfg.percentDown);
     throw new Error(
-      `Order price must stay within LTP bracket ₹${bounds.lower} – ₹${bounds.upper} ` +
-        `(LTP ₹${ltp}, −${instCfg.percentDown}% / +${instCfg.percentUp}%). Only users who traded in this bracket see this limit.`
+      `Order price must stay within LTP bracket ${bounds.lower} – ${bounds.upper} ` +
+        `(LTP ${ltp}, −${instCfg.percentDown}% / +${instCfg.percentUp}%). Only users who traded in this bracket see this limit.`
     );
   }
 }

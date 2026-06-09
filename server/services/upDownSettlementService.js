@@ -262,7 +262,7 @@ export async function settleUpDownUserWindowFromLedger(
   if (isBtcManual && totalBalanceInc > 0) {
     const poolDebit = await debitBtcUpDownSuperAdminPool(
       totalBalanceInc,
-      `BTC Up/Down — win payout from pool [auto] (−₹${totalBalanceInc.toFixed(2)})`
+      `BTC Up/Down — win payout from pool [auto] (−${totalBalanceInc.toFixed(2)})`
     );
     if (!poolDebit.ok) {
       await UpDownWindowSettlement.deleteOne({ user: uid, gameId, windowNumber: wn, settlementDay: dayKey });

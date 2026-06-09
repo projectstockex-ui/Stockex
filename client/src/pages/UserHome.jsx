@@ -116,7 +116,7 @@ const PnLCalendar = ({ trades = [] }) => {
                 ${isToday(day) ? 'bg-purple-600 text-white' : 
                   hasData ? (pnl > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400') : 
                   'hover:bg-dark-700'}`}
-              title={hasData ? `₹${pnl.toLocaleString()}` : ''}
+              title={hasData ? `${pnl.toLocaleString()}` : ''}
             >
               {day}
             </div>
@@ -133,7 +133,7 @@ const PnLCalendar = ({ trades = [] }) => {
           <div>
             <div className="text-xs text-gray-500">Day's P&L</div>
             <div className={`text-lg font-bold ${todayPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {todayPnL >= 0 ? '+' : ''}₹{todayPnL.toLocaleString()}
+              {todayPnL >= 0 ? '+' : ''}{todayPnL.toLocaleString()}
             </div>
           </div>
           <div>
@@ -178,11 +178,11 @@ const QuickStats = ({ trades = [], walletData }) => {
         </div>
         <div className="flex justify-between items-center">
           <span className="text-gray-400 text-sm">Avg. Profit</span>
-          <span className="font-medium text-green-400">+₹{avgProfit.toLocaleString()}</span>
+          <span className="font-medium text-green-400">+{avgProfit.toLocaleString()}</span>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-gray-400 text-sm">Avg. Loss</span>
-          <span className="font-medium text-red-400">₹{avgLoss.toLocaleString()}</span>
+          <span className="font-medium text-red-400">{avgLoss.toLocaleString()}</span>
         </div>
       </div>
     </div>
@@ -498,7 +498,7 @@ const UserHome = () => {
               <div>
                 <h3 className="text-yellow-400 font-bold">Demo Account</h3>
                 <p className="text-gray-400 text-sm">
-                  Virtual balance: ₹{formatInrMainWallet(mainWalletBalance)} • Practice trading without risk
+                  Virtual balance: {formatInrMainWallet(mainWalletBalance)} • Practice trading without risk
                 </p>
               </div>
             </div>
@@ -560,7 +560,7 @@ const UserHome = () => {
             </div>
           </div>
           <div className="text-sm text-white/70">Main Wallet</div>
-          <div className="text-2xl font-bold">₹{formatInrMainWallet(mainWalletBalance)}</div>
+          <div className="text-2xl font-bold">{formatInrMainWallet(mainWalletBalance)}</div>
         </div>
 
         {/* Today's P&L */}
@@ -577,7 +577,7 @@ const UserHome = () => {
             </div>
           </div>
           <div className="text-sm text-white/70">Today's P&L</div>
-          <div className="text-2xl font-bold">{todayPnL >= 0 ? '+' : ''}₹{todayPnL.toLocaleString()}</div>
+          <div className="text-2xl font-bold">{todayPnL >= 0 ? '+' : ''}{todayPnL.toLocaleString()}</div>
         </div>
 
         {/* Weekly P&L */}
@@ -594,7 +594,7 @@ const UserHome = () => {
             </div>
           </div>
           <div className="text-sm text-white/70">Weekly P&L</div>
-          <div className="text-2xl font-bold">{weeklyPnL >= 0 ? '+' : ''}₹{weeklyPnL.toLocaleString()}</div>
+          <div className="text-2xl font-bold">{weeklyPnL >= 0 ? '+' : ''}{weeklyPnL.toLocaleString()}</div>
         </div>
 
         {/* Monthly P&L */}
@@ -611,7 +611,7 @@ const UserHome = () => {
             </div>
           </div>
           <div className="text-sm text-white/70">Monthly P&L</div>
-          <div className="text-2xl font-bold">{monthlyPnL >= 0 ? '+' : ''}₹{monthlyPnL.toLocaleString()}</div>
+          <div className="text-2xl font-bold">{monthlyPnL >= 0 ? '+' : ''}{monthlyPnL.toLocaleString()}</div>
         </div>
       </div>
 

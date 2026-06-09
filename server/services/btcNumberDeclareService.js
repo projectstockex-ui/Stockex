@@ -109,7 +109,7 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
           `BTC Number — pay winner gross prize (bet ${bet._id})`
         );
         if (!poolPay.ok) {
-          console.error(`[BTC Number] SA pool debit failed for user ${bet.user} gross ₹${userCredit}`);
+          console.error(`[BTC Number] SA pool debit failed for user ${bet.user} gross ${userCredit}`);
         }
 
         const roundPnL = parseFloat((grossPrize - bet.amount).toFixed(2));

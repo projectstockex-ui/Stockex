@@ -66,7 +66,7 @@ async function main() {
   }
 
   if (gamesBal < amount * 2) {
-    console.error(`Need games wallet ≥ ₹${amount * 2} for two bets (using ₹${amount} each).`);
+    console.error(`Need games wallet ≥ ${amount * 2} for two bets (using ${amount} each).`);
     process.exit(1);
   }
 
@@ -91,7 +91,7 @@ async function main() {
       process.exit(1);
     }
 
-    console.log(`Place ${prediction}: OK — newBalance ₹${res.data?.newBalance}`, res.data?.message || '');
+    console.log(`Place ${prediction}: OK — newBalance ${res.data?.newBalance}`, res.data?.message || '');
   }
 
   console.log('PASS: 1× UP and 1× DOWN placed successfully.');

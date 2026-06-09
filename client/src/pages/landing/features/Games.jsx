@@ -198,7 +198,7 @@ export default function GamesPage() {
 
           <div className="grid md:grid-cols-3 gap-8">
             {[
-              { step: "1", title: "Create Account", desc: "Sign up and fund your Games Wallet with tickets. 1 Ticket = ₹300.", icon: Shield },
+              { step: "1", title: "Create Account", desc: "Sign up and fund your Games Wallet with tickets. 1 Ticket = 300.", icon: Shield },
               { step: "2", title: "Choose a Game", desc: "Pick any of the 7 games, read the rules, and place your bet or bid.", icon: Gamepad2 },
               { step: "3", title: "Win Rewards", desc: "Get multiplied returns, fixed profits, or jackpot prizes based on the game!", icon: Trophy },
             ].map((s, idx) => (
@@ -273,8 +273,8 @@ export default function GamesPage() {
                   <Li>No gap between windows — next window starts immediately.</Li>
                 </Section>
                 <Section title="Bet Limits" icon={Coins} color="text-purple-500">
-                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (₹300)</Li>
-                  <Li>Maximum: <B color="text-purple-600">500 Tickets</B> (₹1,50,000)</Li>
+                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (300)</Li>
+                  <Li>Maximum: <B color="text-purple-600">500 Tickets</B> (1,50,000)</Li>
                 </Section>
                 <HighlightBox title="How You Win" icon={Crown}>
                   <Li>At window end, the <B color="text-blue-600">LTP (Last Traded Price)</B> is captured.</Li>
@@ -308,8 +308,8 @@ export default function GamesPage() {
                   <Li>The app shows <B color="text-green-600">UP</B> or <B color="text-red-500">DOWN</B> from that result — pick the right side to win.</Li>
                 </Section>
                 <Section title="Bet Limits" icon={Coins} color="text-purple-500">
-                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (₹300)</Li>
-                  <Li>Maximum: <B color="text-purple-600">500 Tickets</B> (₹1,50,000)</Li>
+                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (300)</Li>
+                  <Li>Maximum: <B color="text-purple-600">500 Tickets</B> (1,50,000)</Li>
                 </Section>
                 <HighlightBox title="How You Win" icon={Crown}>
                   <Li>Place your bet (UP or DOWN) during the <B color="text-green-600">15-minute window</B>.</Li>
@@ -332,7 +332,7 @@ export default function GamesPage() {
                 <Section title="Game Overview" icon={Star} color="text-yellow-500">
                   <Li>Pick the <B color="text-purple-600">last 2 decimal digits</B> (.00 to .99) of the Nifty 50 closing price.</Li>
                   <Li>If Nifty closes at 24,850<B color="text-yellow-600">.75</B>, the winning number is <B color="text-yellow-600">75</B>.</Li>
-                  <Li>Correct guess wins a <B color="text-green-600">fixed profit of ₹4,000</B>.</Li>
+                  <Li>Correct guess wins a <B color="text-green-600">fixed profit of 4,000</B>.</Li>
                   <Li>You can place up to <B color="text-blue-600">10 bets per day</B> on different numbers.</Li>
                 </Section>
                 <Section title="Timing" icon={Timer} color="text-blue-500">
@@ -348,12 +348,12 @@ export default function GamesPage() {
                 <HighlightBox title="How You Win" icon={Crown}>
                   <Li>Pick any number from <B color="text-yellow-600">00 to 99</B> from the grid.</Li>
                   <Li>At market close, the last 2 decimals of Nifty closing price are checked.</Li>
-                  <Li>If your number matches → <B color="text-green-600">You WIN ₹4,000 fixed profit!</B></Li>
+                  <Li>If your number matches → <B color="text-green-600">You WIN 4,000 fixed profit!</B></Li>
                   <Li>If not → <B color="text-red-500">You lose your bet amount.</B></Li>
                 </HighlightBox>
                 <Example
                   text="You bet 2 Tickets on number 75. Nifty closes at 24,850.75."
-                  result="WIN! You get ₹4,000 profit (minus 10% brokerage)"
+                  result="WIN! You get 4,000 profit (minus 10% brokerage)"
                 />
                 <TipsBox>
                   <Li>There are 100 possible numbers (00-99), each has ~1% chance.</Li>
@@ -410,8 +410,8 @@ export default function GamesPage() {
                   <Li>Results declared at <B color="text-green-600">15:30 IST</B>.</Li>
                 </Section>
                 <Section title="Bid Limits" icon={Coins} color="text-purple-500">
-                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (₹300)</Li>
-                  <Li>Maximum: <B color="text-purple-600">500 Tickets</B> (₹1,50,000)</Li>
+                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (300)</Li>
+                  <Li>Maximum: <B color="text-purple-600">500 Tickets</B> (1,50,000)</Li>
                 </Section>
                 <HighlightBox title="Ranking Logic (How You Get 1st or 2nd)" icon={Crown}>
                   <Li>Users are ranked by <B color="text-yellow-600">Bid Amount (highest first)</B>.</Li>
@@ -460,7 +460,7 @@ export default function GamesPage() {
                   <Li>Tie on distance → <B color="text-blue-600">earlier bid</B> ranks higher on the live board.</Li>
                 </Section>
                 <Section title="Bid Limits" icon={Coins} color="text-purple-500">
-                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (₹300)</Li>
+                  <Li>Minimum: <B color="text-purple-600">1 Ticket</B> (300)</Li>
                   <Li>Maximum per ticket set by admin (often up to <B color="text-purple-600">5000 Tickets</B>)</Li>
                 </Section>
                 <HighlightBox title="How You Win" icon={Crown}>

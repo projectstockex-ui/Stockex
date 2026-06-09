@@ -24,7 +24,7 @@ export class ReferralTestExecutionService {
     const { user, amount, segment } = params;
     
     try {
-      console.log(`[ExecutionService] Executing trading activity for ${user.username} with amount ₹${amount}`);
+      console.log(`[ExecutionService] Executing trading activity for ${user.username} with amount ${amount}`);
       
       // Create mock trade
       const trade = await this.createMockTrade(user, amount);
@@ -35,7 +35,7 @@ export class ReferralTestExecutionService {
       // Calculate brokerage amount (5% of trade amount)
       const brokerageAmount = amount * 0.05;
       
-      console.log(`[ExecutionService] Created trade with brokerage amount: ₹${brokerageAmount}`);
+      console.log(`[ExecutionService] Created trade with brokerage amount: ${brokerageAmount}`);
       
       // Distribute brokerage
       const distributionResult = await this.brokerageDistributionService.distributeBrokerage(
@@ -70,8 +70,8 @@ export class ReferralTestExecutionService {
       };
       
       console.log(`[ExecutionService] Trading activity execution completed for ${user.username}`);
-      console.log(`[ExecutionService] - SuperAdmin earnings: ₹${superAdminEarnings}`);
-      console.log(`[ExecutionService] - Referral commission: ₹${referralResult.commissionPaid || 0}`);
+      console.log(`[ExecutionService] - SuperAdmin earnings: ${superAdminEarnings}`);
+      console.log(`[ExecutionService] - Referral commission: ${referralResult.commissionPaid || 0}`);
       
       return result;
       
@@ -146,12 +146,12 @@ export class ReferralTestExecutionService {
         return { commissionPaid: 0, held: false, reason: 'No SuperAdmin share' };
       }
       
-      console.log(`[ExecutionService] Processing referral commission for ${user.username} (SuperAdmin share: ₹${superAdminShare})`);
+      console.log(`[ExecutionService] Processing referral commission for ${user.username} (SuperAdmin share: ${superAdminShare})`);
       
       // Track SuperAdmin earnings
       try {
         await this.trackHierarchyEarnings(user.admin, superAdminShare, segment);
-        console.log(`[ExecutionService] Tracked SuperAdmin earnings: ₹${superAdminShare}`);
+        console.log(`[ExecutionService] Tracked SuperAdmin earnings: ${superAdminShare}`);
       } catch (trackingError) {
         console.error('[ExecutionService] Error tracking SuperAdmin earnings:', trackingError);
         // Continue with referral processing even if tracking fails
@@ -187,7 +187,7 @@ export class ReferralTestExecutionService {
         return null;
       }
       
-      console.log(`[ExecutionService] Tracking hierarchy earnings: adminId=${adminId}, amount=₹${amount}, segment=${segment}`);
+      console.log(`[ExecutionService] Tracking hierarchy earnings: adminId=${adminId}, amount=${amount}, segment=${segment}`);
       
       const result = await this.superAdminEarningsService.trackHierarchyEarnings(
         adminId,
@@ -206,7 +206,7 @@ export class ReferralTestExecutionService {
   extractSuperAdminEarnings(distributionResult) {
     try {
       const superAdminEarnings = distributionResult.distributions?.SUPER_ADMIN || 0;
-      console.log(`[ExecutionService] Extracted SuperAdmin earnings: ₹${superAdminEarnings}`);
+      console.log(`[ExecutionService] Extracted SuperAdmin earnings: ${superAdminEarnings}`);
       return superAdminEarnings;
       
     } catch (error) {
@@ -217,7 +217,7 @@ export class ReferralTestExecutionService {
 
   async simulateUserActivity(user, amount, activityType = 'trading') {
     try {
-      console.log(`[ExecutionService] Simulating ${activityType} activity for ${user.username} with amount ₹${amount}`);
+      console.log(`[ExecutionService] Simulating ${activityType} activity for ${user.username} with amount ${amount}`);
       
       switch (activityType) {
         case 'trading':
@@ -248,7 +248,7 @@ export class ReferralTestExecutionService {
     const { user, amount, segment } = params;
     
     try {
-      console.log(`[ExecutionService] Executing gaming activity for ${user.username} with amount ₹${amount}`);
+      console.log(`[ExecutionService] Executing gaming activity for ${user.username} with amount ${amount}`);
       
       // Create mock game bet
       const gameBet = await this.createMockGameBet(user, amount);

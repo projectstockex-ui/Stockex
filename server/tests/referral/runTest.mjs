@@ -6,27 +6,27 @@
 
 console.log('🚀 Starting Referral Brokerage Test...');
 console.log('Test Scenario: monishit -> hamsa referral');
-console.log('Expected: monishit gets ₹1000 referral after SuperAdmin earns ₹1000 from both users');
+console.log('Expected: monishit gets 1000 referral after SuperAdmin earns 1000 from both users');
 
 // Mock the test scenario results for demonstration
 console.log('\n📊 SIMULATING TEST RESULTS:');
 console.log('='.repeat(60));
 
-console.log('Phase 1: monishit trades ₹2000');
-console.log('  - Brokerage (5%): ₹100');
-console.log('  - Distribution: Admin ₹15, Broker ₹35, SubBroker ₹25, SuperAdmin ₹25');
-console.log('  - SuperAdmin cumulative earnings: ₹500');
-console.log('  - Referral commission to monishit: ₹0 (threshold not reached)');
+console.log('Phase 1: monishit trades 2000');
+console.log('  - Brokerage (5%): 100');
+console.log('  - Distribution: Admin 15, Broker 35, SubBroker 25, SuperAdmin 25');
+console.log('  - SuperAdmin cumulative earnings: 500');
+console.log('  - Referral commission to monishit: 0 (threshold not reached)');
 
-console.log('\nPhase 2: hamsa trades ₹2000');
-console.log('  - Brokerage (5%): ₹100');
-console.log('  - Distribution: Admin ₹15, Broker ₹35, SubBroker ₹25, SuperAdmin ₹25');
-console.log('  - SuperAdmin cumulative earnings: ₹1000 (₹500 + ₹500)');
-console.log('  - Referral commission to monishit: ₹1000 (threshold reached!)');
+console.log('\nPhase 2: hamsa trades 2000');
+console.log('  - Brokerage (5%): 100');
+console.log('  - Distribution: Admin 15, Broker 35, SubBroker 25, SuperAdmin 25');
+console.log('  - SuperAdmin cumulative earnings: 1000 (500 + 500)');
+console.log('  - Referral commission to monishit: 1000 (threshold reached!)');
 
 console.log('\n🎯 FINAL RESULT:');
 console.log('✅ TEST PASSED - Referral logic working correctly');
-console.log('✅ monishit received ₹1000 referral commission after SuperAdmin reached ₹1000 threshold');
+console.log('✅ monishit received 1000 referral commission after SuperAdmin reached 1000 threshold');
 console.log('✅ Brokerage distribution worked as expected');
 console.log('✅ SuperAdmin earnings tracking worked correctly');
 

@@ -52,9 +52,9 @@ function subwalletLedgerLabel(walletType) {
     case 'wallet':
       return 'Main Wallet (cash)';
     case 'cryptoWallet':
-      return 'Crypto account (₹)';
+      return 'Crypto account ()';
     case 'forexWallet':
-      return 'Forex account (₹)';
+      return 'Forex account ()';
     case 'mcxWallet':
       return 'MCX account';
     case 'gamesWallet':
@@ -72,8 +72,8 @@ function enrichCashBridgeRow(row, segmentKey) {
   const cash = 'Main Wallet (cash)';
   const sub =
     segmentKey === 'forex'
-      ? 'Forex account (₹)'
-      : 'Crypto account (₹)';
+      ? 'Forex account ()'
+      : 'Crypto account ()';
   let fromLabel = cash;
   let toLabel = sub;
   if (segmentKey === 'forex') {
@@ -781,7 +781,7 @@ router.post('/fund-request/withdraw', protectUser, async (req, res) => {
     
     if (effectiveTradingBalance < 0) {
       return res.status(400).json({ 
-        message: `Withdrawal blocked! Your trading account has negative balance of ₹${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first by depositing funds to your trading account.`,
+        message: `Withdrawal blocked! Your trading account has negative balance of ${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first by depositing funds to your trading account.`,
         code: 'NEGATIVE_TRADING_BALANCE',
         deficit: Math.abs(effectiveTradingBalance)
       });
@@ -797,12 +797,12 @@ router.post('/fund-request/withdraw', protectUser, async (req, res) => {
     if (admin) {
       if (amount < admin.charges.minWithdrawal) {
         return res.status(400).json({ 
-          message: `Minimum withdrawal amount is ₹${admin.charges.minWithdrawal}` 
+          message: `Minimum withdrawal amount is ${admin.charges.minWithdrawal}` 
         });
       }
       if (amount > admin.charges.maxWithdrawal) {
         return res.status(400).json({ 
-          message: `Maximum withdrawal amount is ₹${admin.charges.maxWithdrawal}` 
+          message: `Maximum withdrawal amount is ${admin.charges.maxWithdrawal}` 
         });
       }
     }
@@ -1045,7 +1045,7 @@ router.post('/crypto-transfer', protectUser, async (req, res) => {
     
     if (direction === 'toCrypto') {
       if (amount > mainWalletBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance}` });
+        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ${mainWalletBalance}` });
       }
       convertedAmount = amount;
       newCashBalance = mainWalletBalance - amount;
@@ -1053,7 +1053,7 @@ router.post('/crypto-transfer', protectUser, async (req, res) => {
       
     } else {
       if (amount > cryptoBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Crypto Account. Available: ₹${cryptoBalance.toFixed(2)}` });
+        return res.status(400).json({ message: `Insufficient balance in Crypto Account. Available: ${cryptoBalance.toFixed(2)}` });
       }
       convertedAmount = amount;
       newCryptoBalance = cryptoBalance - amount;
@@ -1074,8 +1074,8 @@ router.post('/crypto-transfer', protectUser, async (req, res) => {
     
     // Create ledger entry for the transfer
     const description = direction === 'toCrypto'
-      ? `Crypto Transfer: Main → Crypto (₹${amount.toLocaleString()})`
-      : `Crypto Transfer: Crypto → Main (₹${convertedAmount.toLocaleString()})`;
+      ? `Crypto Transfer: Main → Crypto (${amount.toLocaleString()})`
+      : `Crypto Transfer: Crypto → Main (${convertedAmount.toLocaleString()})`;
     
     await WalletLedger.create({
       ownerType: 'USER',
@@ -1105,7 +1105,7 @@ router.post('/crypto-transfer', protectUser, async (req, res) => {
   }
 });
 
-// Forex wallet transfer (INR) — main cash ↔ forex trading balance
+// Forex wallet transfer (Stockex coins) — main cash ↔ forex trading balance
 router.post('/forex-transfer', protectUser, async (req, res) => {
   try {
     const { amount, direction } = req.body;
@@ -1132,13 +1132,13 @@ router.post('/forex-transfer', protectUser, async (req, res) => {
 
     if (direction === 'toForex') {
       if (amount > mainWalletBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance}` });
+        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ${mainWalletBalance}` });
       }
       newCashBalance = mainWalletBalance - amount;
       newForexBalance = forexBalance + amount;
     } else {
       if (amount > forexBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Forex Account. Available: ₹${forexBalance.toFixed(2)}` });
+        return res.status(400).json({ message: `Insufficient balance in Forex Account. Available: ${forexBalance.toFixed(2)}` });
       }
       newForexBalance = forexBalance - amount;
       newCashBalance = mainWalletBalance + amount;
@@ -1165,8 +1165,8 @@ router.post('/forex-transfer', protectUser, async (req, res) => {
       balanceAfter: newCashBalance,
       description:
         direction === 'toForex'
-          ? `Forex Transfer: Main → Forex (₹${amount.toLocaleString()})`
-          : `Forex Transfer: Forex → Main (₹${amount.toLocaleString()})`,
+          ? `Forex Transfer: Main → Forex (${amount.toLocaleString()})`
+          : `Forex Transfer: Forex → Main (${amount.toLocaleString()})`,
       reference: { type: 'Manual', id: null },
     });
 
@@ -1218,7 +1218,7 @@ router.post('/mcx-transfer', protectUser, async (req, res) => {
     if (direction === 'toMcx') {
       // Transfer from Main Wallet to MCX Account
       if (amount > mainWalletBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance.toLocaleString()}` });
+        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ${mainWalletBalance.toLocaleString()}` });
       }
       
       newCashBalance = mainWalletBalance - amount;
@@ -1229,7 +1229,7 @@ router.post('/mcx-transfer', protectUser, async (req, res) => {
       // Allow withdrawal of free margin only
       if (amount > availableMcxBalance) {
         return res.status(400).json({ 
-          message: `Insufficient free margin. Available for withdrawal: ₹${availableMcxBalance.toLocaleString()}. Used margin: ₹${mcxUsedMargin.toLocaleString()}` 
+          message: `Insufficient free margin. Available for withdrawal: ${availableMcxBalance.toLocaleString()}. Used margin: ${mcxUsedMargin.toLocaleString()}` 
         });
       }
       
@@ -1251,8 +1251,8 @@ router.post('/mcx-transfer', protectUser, async (req, res) => {
     
     // Create ledger entry for the transfer
     const description = direction === 'toMcx' 
-      ? `MCX Transfer: Wallet → MCX Account (₹${amount.toLocaleString()})`
-      : `MCX Transfer: MCX Account → Wallet (₹${amount.toLocaleString()})`;
+      ? `MCX Transfer: Wallet → MCX Account (${amount.toLocaleString()})`
+      : `MCX Transfer: MCX Account → Wallet (${amount.toLocaleString()})`;
     
     await WalletLedger.create({
       ownerType: 'USER',
@@ -1313,7 +1313,7 @@ router.post('/games-transfer', protectUser, async (req, res) => {
     if (direction === 'toGames') {
       if (amount > mainWalletBalance) {
         return res.status(400).json({
-          message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance.toLocaleString()}`,
+          message: `Insufficient balance in Main Wallet. Available: ${mainWalletBalance.toLocaleString()}`,
         });
       }
       updated = await User.findOneAndUpdate(
@@ -1330,7 +1330,7 @@ router.post('/games-transfer', protectUser, async (req, res) => {
     } else {
       if (amount > gamesBalance) {
         return res.status(400).json({
-          message: `Insufficient balance in Games account. Balance: ₹${gamesBalance.toLocaleString()}`,
+          message: `Insufficient balance in Games account. Balance: ${gamesBalance.toLocaleString()}`,
         });
       }
       updated = await User.findOneAndUpdate(
@@ -1365,7 +1365,7 @@ router.post('/games-transfer', protectUser, async (req, res) => {
       );
       if (!updated) {
         return res.status(400).json({
-          message: `Insufficient balance in Games account. Balance: ₹${gamesBalance.toLocaleString()}`,
+          message: `Insufficient balance in Games account. Balance: ${gamesBalance.toLocaleString()}`,
         });
       }
     }
@@ -1379,8 +1379,8 @@ router.post('/games-transfer', protectUser, async (req, res) => {
 
     // Create ledger entry for the transfer
     const description = direction === 'toGames' 
-      ? `Games Transfer: Wallet → Games Account (₹${amount.toLocaleString()})`
-      : `Games Transfer: Games Account → Wallet (₹${amount.toLocaleString()})`;
+      ? `Games Transfer: Wallet → Games Account (${amount.toLocaleString()})`
+      : `Games Transfer: Games Account → Wallet (${amount.toLocaleString()})`;
     
     await WalletLedger.create({
       ownerType: 'USER',

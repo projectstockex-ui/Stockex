@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import axios from 'axios';
 import { RefreshCw, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { formatCoins } from '../../../utils/stockexCoins.js';
 
 const SubordinateFundRequests = () => {
   const { admin } = useAuth();
@@ -78,7 +79,7 @@ const SubordinateFundRequests = () => {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">{getTitle()}</h1>
         <div className="text-sm text-gray-400">
-          Your Wallet: <span className="text-green-400 font-bold">₹{(admin?.wallet?.balance || 0).toLocaleString()}</span>
+          Your Wallet: <span className="text-green-400 font-bold">{formatCoins(admin?.wallet?.balance || 0)}</span>
         </div>
       </div>
       
@@ -121,14 +122,14 @@ const SubordinateFundRequests = () => {
                   </div>
                   <div className="text-sm text-gray-400 mt-1">{req.admin?.email}</div>
                   <div className="text-sm text-gray-500 mt-1">
-                    Their Current Balance: ₹{(req.admin?.wallet?.balance || 0).toLocaleString()}
+                    Their Current Balance: {formatCoins(req.admin?.wallet?.balance || 0)}
                   </div>
                   {req.reason && <div className="text-sm mt-2 text-gray-300">Reason: {req.reason}</div>}
                   <div className="text-xs text-gray-500 mt-1">{new Date(req.createdAt).toLocaleString()}</div>
                 </div>
                 <div className="text-center">
                   <div className="text-sm text-gray-400">Requested Amount</div>
-                  <div className="text-2xl font-bold text-green-400">₹{req.amount.toLocaleString()}</div>
+                  <div className="text-2xl font-bold text-green-400">{formatCoins(req.amount)}</div>
                   {filter === 'PENDING' && admin?.wallet?.balance < req.amount && (
                     <div className="text-xs text-red-400 mt-1">Insufficient balance</div>
                   )}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
 import { Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Play, Timer, X, Building2 } from 'lucide-react';
@@ -27,6 +27,14 @@ const BrokerLogin = () => {
   const [demoError, setDemoError] = useState('');
   const { loginAdmin, setAdmin } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // Open broker signup form when linked from Join Stockex brokerage card
+  useEffect(() => {
+    if (searchParams.get('register') === 'true') {
+      setShowDemoForm(true);
+    }
+  }, [searchParams]);
   
   // Fetch parent admin info when email changes
   const fetchParentAdminInfo = useCallback(async (email) => {
@@ -382,7 +390,7 @@ const BrokerLogin = () => {
 
               <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
                 <p className="text-xs text-green-400">
-                  ✓ Demo Balance: ₹1,00,000<br/>
+                  ✓ Demo Balance: 1,00,000<br/>
                   ✓ Valid for 7 days<br/>
                   ✓ Full broker features access
                 </p>
@@ -444,7 +452,7 @@ const BrokerLogin = () => {
               <div className="flex gap-4">
                 <div>
                   <div className="text-xs text-gray-400">Demo Balance</div>
-                  <div className="font-bold text-green-400">₹{demoCredentials.wallet?.balance?.toLocaleString()}</div>
+                  <div className="font-bold text-green-400">{demoCredentials.wallet?.balance?.toLocaleString()}</div>
                 </div>
                 <div>
                   <div className="text-xs text-gray-400">Expires In</div>

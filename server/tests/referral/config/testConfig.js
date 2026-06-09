@@ -59,10 +59,10 @@ export const referralTestConfig = {
   // Brokerage distribution percentages (of brokerage amount, not total amount)
   // Assuming 5% brokerage on total amount
   brokeragePercentages: {
-    superAdmin: 25,  // 25% of brokerage = ₹125 from ₹500 brokerage (₹2000 * 5%)
-    admin: 15,       // 15% of brokerage = ₹75 from ₹500 brokerage
-    broker: 35,      // 35% of brokerage = ₹175 from ₹500 brokerage
-    subBroker: 25    // 25% of brokerage = ₹125 from ₹500 brokerage
+    superAdmin: 25,  // 25% of brokerage = 125 from 500 brokerage (2000 * 5%)
+    admin: 15,       // 15% of brokerage = 75 from 500 brokerage
+    broker: 35,      // 35% of brokerage = 175 from 500 brokerage
+    subBroker: 25    // 25% of brokerage = 125 from 500 brokerage
   },
   
   // SuperAdmin earnings threshold for referral commission
@@ -87,10 +87,10 @@ export const expectedResults = {
       tradingAmount: 2000,
       brokerageAmount: 100,  // 5% of 2000
       distribution: {
-        admin: 15,      // ₹15
-        broker: 35,     // ₹35
-        subBroker: 25,  // ₹25
-        superAdmin: 25  // ₹25
+        admin: 15,      // 15
+        broker: 35,     // 35
+        subBroker: 25,  // 25
+        superAdmin: 25  // 25
       },
       referralCommission: 0,  // No commission yet
       superAdminCumulative: 25
@@ -101,10 +101,10 @@ export const expectedResults = {
       tradingAmount: 2000,
       brokerageAmount: 100,  // 5% of 2000
       distribution: {
-        admin: 15,      // ₹15
-        broker: 35,     // ₹35
-        subBroker: 25,  // ₹25
-        superAdmin: 25  // ₹25
+        admin: 15,      // 15
+        broker: 35,     // 35
+        subBroker: 25,  // 25
+        superAdmin: 25  // 25
       },
       referralCommission: 1000,  // Commission paid to monishit
       superAdminCumulative: 50  // Total: 25 + 25
@@ -122,7 +122,7 @@ export const testScenarios = {
   // Standard scenario (as described by user)
   standard: {
     ...referralTestConfig,
-    description: 'Standard monishit -> hamsa referral scenario with ₹2000 trading amounts'
+    description: 'Standard monishit -> hamsa referral scenario with 2000 trading amounts'
   },
   
   // Low threshold scenario

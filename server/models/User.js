@@ -341,14 +341,14 @@ const userSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     },
-    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    /** Baseline for ledger % autosquare (e.g. 1L → floor 10k at 90% loss) */
     ledgerReferenceBalance: { type: Number, default: 0 },
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
     profitBlocked: { type: Boolean, default: false },
   },
 
-  // Synthetic forex wallet (INR) — same economics pattern as cryptoWallet
+  // Synthetic forex wallet (Stockex coins) — same economics pattern as cryptoWallet
   forexWallet: {
     balance: { type: Number, default: 0 },
     equity: { type: Number, default: 0 },
@@ -365,7 +365,7 @@ const userSchema = new mongoose.Schema({
     unrealizedPnL: { type: Number, default: 0 },
     todayRealizedPnL: { type: Number, default: 0 },
     lastUpdatedAt: { type: Date, default: Date.now },
-    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    /** Baseline for ledger % autosquare (e.g. 1L → floor 10k at 90% loss) */
     ledgerReferenceBalance: { type: Number, default: 0 },
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
@@ -489,7 +489,7 @@ const userSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     },
-    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    /** Baseline for ledger % autosquare (e.g. 1L → floor 10k at 90% loss) */
     ledgerReferenceBalance: { type: Number, default: 0 },
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
@@ -506,7 +506,7 @@ const userSchema = new mongoose.Schema({
     todayUnrealizedPnL: { type: Number, default: 0 },
     depositTotal: { type: Number, default: 0 },
     withdrawalTotal: { type: Number, default: 0 },
-    /** Baseline for ledger % autosquare (e.g. ₹1L → floor ₹10k at 90% loss) */
+    /** Baseline for ledger % autosquare (e.g. 1L → floor 10k at 90% loss) */
     ledgerReferenceBalance: { type: Number, default: 0 },
     ledgerAutosquareActive: { type: Boolean, default: false },
     ledgerAutosquaredAt: { type: Date, default: null },
@@ -670,7 +670,7 @@ const userSchema = new mongoose.Schema({
       commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
-      /** Commission for PER_CRORE (₹ per crore or % of turnover) - used when commissionType is PER_CRORE */
+      /** Commission for PER_CRORE ( per crore or % of turnover) - used when commissionType is PER_CRORE */
       commission: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },

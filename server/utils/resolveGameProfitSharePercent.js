@@ -59,7 +59,7 @@ export function resolveGameProfitSharePercent(doc) {
   const desc = String(doc.description || '');
   const tests = [
     /\((\d+\.?\d*)\s*%\s*of/,
-    /(\d+\.?\d*)\s*%\s*of\s*[\u20B9₹]/i,
+    /(\d+\.?\d*)\s*%\s*of\s*[\u20B9]/i,
     /(\d+\.?\d*)\s*%\s*of/i,
   ];
   for (const re of tests) {

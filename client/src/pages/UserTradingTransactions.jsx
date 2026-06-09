@@ -126,20 +126,20 @@ const UserTradingTransactions = () => {
                 </div>
                 <div>
                   <div className="text-gray-400 mb-1">Entry Price</div>
-                  <div className="font-medium">₹{trade.entryPrice?.toFixed(2) || '-'}</div>
+                  <div className="font-medium">{trade.entryPrice?.toFixed(2) || '-'}</div>
                 </div>
                 <div>
                   <div className="text-gray-400 mb-1">Exit Price</div>
-                  <div className="font-medium">₹{trade.exitPrice?.toFixed(2) || '-'}</div>
+                  <div className="font-medium">{trade.exitPrice?.toFixed(2) || '-'}</div>
                 </div>
                 <div>
                   <div className="text-gray-400 mb-1">Brokerage</div>
-                  <div className="font-medium">₹{trade.brokerage?.toFixed(2) || '0.00'}</div>
+                  <div className="font-medium">{trade.brokerage?.toFixed(2) || '0.00'}</div>
                 </div>
                 <div>
                   <div className="text-gray-400 mb-1">P&L</div>
                   <div className={`font-medium ${trade.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    ₹{trade.pnl?.toFixed(2) || '0.00'}
+                    {trade.pnl?.toFixed(2) || '0.00'}
                   </div>
                 </div>
                 <div className="col-span-2 md:col-span-2">

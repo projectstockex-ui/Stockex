@@ -193,15 +193,15 @@ const AdminWallet = () => {
       {/* Wallet Balance Card */}
       <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl p-6 mb-6">
         <div className="text-white/80 text-sm mb-1">Available Balance</div>
-        <div className="text-4xl font-bold text-white mb-4">₹{(walletData?.wallet?.balance || 0).toLocaleString()}</div>
+        <div className="text-4xl font-bold text-white mb-4">{(walletData?.wallet?.balance || 0).toLocaleString()}</div>
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <div className="text-white/60">Total Deposited</div>
-            <div className="text-white font-semibold">₹{(walletData?.wallet?.totalDeposited || 0).toLocaleString()}</div>
+            <div className="text-white font-semibold">{(walletData?.wallet?.totalDeposited || 0).toLocaleString()}</div>
           </div>
           <div>
             <div className="text-white/60">Total Withdrawn</div>
-            <div className="text-white font-semibold">₹{(walletData?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+            <div className="text-white font-semibold">{(walletData?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
           </div>
         </div>
       </div>
@@ -214,15 +214,15 @@ const AdminWallet = () => {
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">User Deposits</div>
-          <div className="text-2xl font-bold text-green-400">₹{(walletData?.summary?.totalUserDeposits || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-green-400">{(walletData?.summary?.totalUserDeposits || 0).toLocaleString()}</div>
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">User Withdrawals</div>
-          <div className="text-2xl font-bold text-red-400">₹{(walletData?.summary?.totalUserWithdrawals || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-red-400">{(walletData?.summary?.totalUserWithdrawals || 0).toLocaleString()}</div>
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Distributed to Users</div>
-          <div className="text-2xl font-bold text-blue-400">₹{(walletData?.summary?.distributedToUsers || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-blue-400">{(walletData?.summary?.distributedToUsers || 0).toLocaleString()}</div>
         </div>
       </div>
 
@@ -230,11 +230,11 @@ const AdminWallet = () => {
       <div className="grid grid-cols-2 gap-4 mb-6">
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total User Profits</div>
-          <div className="text-2xl font-bold text-green-400">₹{(walletData?.summary?.totalUserProfits || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-green-400">{(walletData?.summary?.totalUserProfits || 0).toLocaleString()}</div>
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total User Losses</div>
-          <div className="text-2xl font-bold text-red-400">₹{(walletData?.summary?.totalUserLosses || 0).toLocaleString()}</div>
+          <div className="text-2xl font-bold text-red-400">{(walletData?.summary?.totalUserLosses || 0).toLocaleString()}</div>
         </div>
       </div>
 
@@ -258,7 +258,7 @@ const AdminWallet = () => {
             {fundRequests.map(req => (
               <div key={req._id} className="flex items-center justify-between bg-dark-700 rounded p-3">
                 <div>
-                  <div className="font-medium">₹{req.amount.toLocaleString()}</div>
+                  <div className="font-medium">{req.amount.toLocaleString()}</div>
                   <div className="text-xs text-gray-400">{req.reason || 'No reason'}</div>
                   <div className="text-xs text-gray-500">{new Date(req.createdAt).toLocaleString()}</div>
                 </div>
@@ -336,11 +336,11 @@ const AdminWallet = () => {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className={entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
-                        {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
+                        {entry.type === 'CREDIT' ? '+' : '-'}{entry.amount.toLocaleString()}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right text-xs text-gray-400">
-                      ₹{entry.balanceAfter.toLocaleString()}
+                      {entry.balanceAfter.toLocaleString()}
                     </td>
                   </tr>
                 ))}
@@ -360,11 +360,11 @@ const AdminWallet = () => {
             </div>
             <p className="text-gray-400 text-sm mb-4">
               Request funds from your {admin?.role === 'ADMIN' ? 'Super Admin' : admin?.role === 'BROKER' ? 'Admin' : admin?.role === 'SUB_BROKER' ? 'Broker' : 'Superior'}. 
-              Your current balance is ₹{(walletData?.wallet?.balance || 0).toLocaleString()}
+              Your current balance is {(walletData?.wallet?.balance || 0).toLocaleString()}
             </p>
             <form onSubmit={handleRequestFund} className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount</label>
                 <input
                   type="number"
                   value={requestAmount}
@@ -407,7 +407,7 @@ const AdminWallet = () => {
               <button onClick={() => setShowTransferModal(false)}><X size={24} /></button>
             </div>
             <p className="text-gray-400 text-sm mb-4">
-              Transfer funds from your wallet to another admin. Your balance: ₹{(walletData?.wallet?.balance || 0).toLocaleString()}
+              Transfer funds from your wallet to another admin. Your balance: {(walletData?.wallet?.balance || 0).toLocaleString()}
             </p>
             <form onSubmit={handleTransfer} className="space-y-4">
               <div>
@@ -421,13 +421,13 @@ const AdminWallet = () => {
                   <option value="">-- Select Admin --</option>
                   {transferTargets.map(t => (
                     <option key={t._id} value={t._id}>
-                      {t.name || t.username} ({t.role}) - ₹{(t.wallet?.balance || 0).toLocaleString()}
+                      {t.name || t.username} ({t.role}) - {(t.wallet?.balance || 0).toLocaleString()}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+                <label className="block text-sm text-gray-400 mb-1">Amount</label>
                 <input
                   type="number"
                   value={transferData.amount}

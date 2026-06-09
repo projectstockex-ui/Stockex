@@ -354,7 +354,7 @@ class MarginMonitorService {
       });
     }
     
-    console.log(`CIRCUIT HIT: ${instrument.symbol} hit ${type} circuit at ₹${price}`);
+    console.log(`CIRCUIT HIT: ${instrument.symbol} hit ${type} circuit at ${price}`);
   }
   
   /**
@@ -374,8 +374,8 @@ class MarginMonitorService {
         title: 'Low Margin Warning',
         subject: `⚠️ Available margin low (notify at ${notificationPercent}% cushion used)`,
         description:
-          `Available margin is ₹${Number(snapshot.availableMargin).toLocaleString('en-IN')}. ` +
-          `All positions will be auto-squared when available margin reaches ₹0.`,
+          `Available margin is ${Number(snapshot.availableMargin).toLocaleString('en-IN')}. ` +
+          `All positions will be auto-squared when available margin reaches 0.`,
         senderType: 'SYSTEM',
         targetType: 'SINGLE_USER',
         targetUserId: userId,
@@ -588,7 +588,7 @@ class MarginMonitorService {
       const totalDayLoss = todayRealizedPnL + totalUnrealizedPnL;
       
       if (totalDayLoss <= -maxLossPerDay) {
-        console.log(`DAILY LOSS LIMIT: User ${user.userId} exceeded limit. Loss: ₹${Math.abs(totalDayLoss)}`);
+        console.log(`DAILY LOSS LIMIT: User ${user.userId} exceeded limit. Loss: ${Math.abs(totalDayLoss)}`);
         return true;
       }
       

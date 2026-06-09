@@ -612,7 +612,7 @@ const UserOrders = () => {
           <div className="flex-shrink-0 bg-[#2c2c2e] rounded-2xl px-4 py-3 min-w-[120px]">
             <div className="text-gray-400 text-xs mb-1">Total P&L</div>
             <div className={`font-bold text-lg ${stats.totalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {stats.totalPnL >= 0 ? '+' : ''}₹{stats.totalPnL.toLocaleString()}
+              {stats.totalPnL >= 0 ? '+' : ''}{stats.totalPnL.toLocaleString()}
             </div>
           </div>
           <div className="flex-shrink-0 bg-[#2c2c2e] rounded-2xl px-4 py-3 min-w-[100px]">
@@ -766,7 +766,7 @@ const UserOrders = () => {
                     </div>
                     <div className="text-right">
                       <div className={`font-bold text-lg ${isProfitable ? 'text-green-500' : 'text-red-500'}`}>
-                        {isProfitable ? '+' : ''}₹{pnl.toLocaleString()}
+                        {isProfitable ? '+' : ''}{pnl.toLocaleString()}
                       </div>
                       <div className="text-xs text-gray-500">
                         P&L
@@ -845,7 +845,7 @@ const UserOrders = () => {
                             </td>
                           )}
                           <td className="py-2 text-right align-top">
-                            <div>₹{(item.entryPrice || item.price || 0).toLocaleString()}</div>
+                            <div>{(item.entryPrice || item.price || 0).toLocaleString()}</div>
                             {activeTab === 'closed' && formatTradeEntryTime(item) ? (
                               <div className="text-[10px] text-gray-500 mt-0.5">
                                 Entry @ {formatTradeEntryTime(item)}
@@ -855,7 +855,7 @@ const UserOrders = () => {
                           {activeTab === 'autosquare' && (
                             <td className="py-2 text-right">
                               {item.autoSquareLtp && item.autoSquareLtp > 0 ? (
-                                <div>₹{item.autoSquareLtp.toLocaleString()}</div>
+                                <div>{item.autoSquareLtp.toLocaleString()}</div>
                               ) : (
                                 <div className="text-red-400">LTP not captured</div>
                               )}
@@ -875,7 +875,7 @@ const UserOrders = () => {
                           )}
                           {activeTab === 'closed' && (
                             <td className="py-2 text-right align-top">
-                              <div>₹{(item.exitPrice || 0).toLocaleString()}</div>
+                              <div>{(item.exitPrice || 0).toLocaleString()}</div>
                               {formatTradeExitTime(item) ? (
                                 <div className="text-[10px] text-gray-500 mt-0.5">
                                   Exit @ {formatTradeExitTime(item)}

@@ -50,7 +50,7 @@ function formatPrice(label, price) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
-  return label === "USDINR" ? formatted : `₹${formatted}`
+  return label === "USDINR" ? formatted : `${formatted}`
 }
 
 function formatChange(changePercent, isUp) {

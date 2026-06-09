@@ -26,8 +26,9 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
     pin: '',
     role: allowedRoles[0] || 'ADMIN',
     parentAdminId: '', // For assigning broker/sub-broker under specific parent
-    cityCode: '', // City code for broker location (e.g., DEL, MUM, BLR)
-    cityName: '', // City name for broker location (e.g., Delhi, Mumbai, Bangalore)
+    cityCode: '', // Pincode area — shown in Choose Your Broker
+    cityName: '', // Area name — shown in Choose Your Broker
+    refundableSecurityAmount: '',
     autosquare: 0, // Auto square position at percentage loss
     breakupQuantity: 0, // Breakup quantity per order
     maxLotQuantity: 0 // Max lot quantity per order
@@ -227,8 +228,49 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
           <input type="text" placeholder="Full Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
           <input type="email" placeholder="Email *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" required />
           <input type="text" placeholder="Phone" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-          <input type="text" placeholder="City Code (e.g., DEL, MUM, BLR)" value={formData.cityCode} onChange={e => setFormData({...formData, cityCode: e.target.value.toUpperCase()})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-          <input type="text" placeholder="City Name (e.g., Delhi, Mumbai, Bangalore)" value={formData.cityName} onChange={e => setFormData({...formData, cityName: e.target.value})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
+
+          {['BROKER', 'SUB_BROKER'].includes(formData.role) && (
+            <div className="bg-dark-700/50 rounded-lg p-4 border border-cyan-500/20 space-y-3">
+              <h4 className="text-sm font-semibold text-cyan-400">Broker area (shown in Choose Your Broker)</h4>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Pincode Area *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 110001, DEL, MUM"
+                  value={formData.cityCode}
+                  onChange={e => setFormData({ ...formData, cityCode: e.target.value.toUpperCase() })}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Area Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Delhi, Mumbai, Bangalore"
+                  value={formData.cityName}
+                  onChange={e => setFormData({ ...formData, cityName: e.target.value })}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Refundable Security Amount *</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  placeholder="Initial security deposit"
+                  value={formData.refundableSecurityAmount}
+                  onChange={e => setFormData({ ...formData, refundableSecurityAmount: e.target.value })}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  required
+                />
+                <p className="text-[10px] text-gray-500 mt-1">Shown in Super Admin → All Transactions → Refundable Security</p>
+              </div>
+            </div>
+          )}
+
           <input type="password" placeholder="Password *" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" required />
           <input
             type="text"

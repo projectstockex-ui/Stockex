@@ -31,7 +31,7 @@ const WalletTransferModal = ({ admin: targetAdmin, token, onClose, onSuccess }) 
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess(`Successfully transferred ₹${Number(amount).toLocaleString()} from ${getWalletDisplayName(sourceWallet)} to ${getWalletDisplayName(targetWallet)}`);
+      setSuccess(`Successfully transferred ${Number(amount).toLocaleString()} from ${getWalletDisplayName(sourceWallet)} to ${getWalletDisplayName(targetWallet)}`);
       setAmount('');
       setRemarks('');
       setTimeout(() => {
@@ -110,7 +110,7 @@ const WalletTransferModal = ({ admin: targetAdmin, token, onClose, onSuccess }) 
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-xs text-gray-400 mb-1">Amount</label>
             <input 
               type="number" 
               placeholder="Enter amount" 

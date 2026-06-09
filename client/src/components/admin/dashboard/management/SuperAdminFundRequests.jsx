@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
 import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
+import { formatCoins } from '../../../../utils/stockexCoins.js';
 
 const SuperAdminFundRequests = () => {
   const { admin } = useAuth();
@@ -68,11 +69,11 @@ const SuperAdminFundRequests = () => {
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total Deposits</div>
-          <div className="text-xl font-bold text-green-400">₹{stats.totalDeposits?.toLocaleString() || 0}</div>
+          <div className="text-xl font-bold text-green-400">{formatCoins(stats.totalDeposits || 0)}</div>
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total Withdrawals</div>
-          <div className="text-xl font-bold text-red-400">₹{stats.totalWithdrawals?.toLocaleString() || 0}</div>
+          <div className="text-xl font-bold text-red-400">{formatCoins(stats.totalWithdrawals || 0)}</div>
         </div>
       </div>
 
@@ -139,7 +140,7 @@ const SuperAdminFundRequests = () => {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right font-mono font-bold">
-                    ₹{req.amount?.toLocaleString()}
+                    {formatCoins(req.amount || 0)}
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">
                     {req.referenceId || '-'}

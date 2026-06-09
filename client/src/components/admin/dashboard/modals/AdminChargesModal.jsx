@@ -680,7 +680,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           <div className="mb-4">
                             <h4 className="text-xs font-semibold text-orange-300 mb-2">Client spread (Binance crypto)</h4>
                             <p className="text-[11px] text-gray-500 mb-2">
-                              Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy ₹ total width per coin applies (half bid / half ask). 0 / 0 = exchange prices.
+                              Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy  total width per coin applies (half bid / half ask). 0 / 0 = exchange prices.
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
                               <div>
@@ -701,7 +701,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 />
                               </div>
                               <div>
-                                <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin, legacy)</label>
+                                <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
                                 <input
                                   type="number"
                                   min={0}

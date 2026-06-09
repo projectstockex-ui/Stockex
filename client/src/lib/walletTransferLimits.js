@@ -1,14 +1,13 @@
-/** Round to 2 decimals (paise) for transfer comparisons */
+import { formatCoins } from '../utils/stockexCoins.js';
+
+/** Round to 2 decimals for transfer comparisons */
 export function roundTransferAmount(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
-/** Format INR for transfer UI/errors */
+/** Format Stockex coins for transfer UI/errors */
 export function fmtTransferInr(n) {
-  return `₹${Number(n || 0).toLocaleString('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatCoins(n);
 }
 
 /** Client-side error when amount exceeds transferable (matches server wording). */

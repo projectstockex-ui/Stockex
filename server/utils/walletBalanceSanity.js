@@ -1,6 +1,6 @@
 /** Reject corrupted wallet amounts (bad MTM / autosquare writes). */
 
-export const MAX_SANE_SUBWALLET_INR = 1_000_000_000; // ₹100 crore — above this is always a bug
+export const MAX_SANE_SUBWALLET_INR = 1_000_000_000; // 100 crore — above this is always a bug
 
 export function isAbsurdWalletInr(value) {
   const n = Number(value);

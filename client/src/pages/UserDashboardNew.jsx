@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { resolveMainWalletBalance } from '../utils/resolveMainWalletBalance';
+import { formatCoins } from '../utils/stockexCoins.js';
 import {
   Home, Wallet, Users, FileText, Copy, BarChart2, User, HelpCircle,
   LogOut, Menu, X, ChevronDown, Settings, Bell, Sun, Moon,
@@ -72,7 +73,7 @@ const UserOrders = () => {
               </div>
               <div className="text-right">
                 <div className={order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>
-                  {order.side} @ ₹{order.price}
+                  {order.side} @ {order.price}
                 </div>
                 <div className="text-xs text-gray-500">{new Date(order.createdAt).toLocaleString()}</div>
               </div>
@@ -166,7 +167,7 @@ const UserWalletPage = () => {
         <div>
           <div className="text-white/70 text-sm mb-1">Main Wallet</div>
           <div className="text-3xl font-bold text-white">
-            ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            {formatCoins(mainWalletBalance)}
           </div>
         </div>
         {!user?.isDemo && (
@@ -196,16 +197,16 @@ const UserWalletPage = () => {
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total Deposited</div>
-          <div className="text-xl font-bold text-green-400">₹{(walletData?.wallet?.totalDeposited || 0).toLocaleString()}</div>
+          <div className="text-xl font-bold text-green-400">{formatCoins(walletData?.wallet?.totalDeposited || 0)}</div>
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total Withdrawn</div>
-          <div className="text-xl font-bold text-red-400">₹{(walletData?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+          <div className="text-xl font-bold text-red-400">{formatCoins(walletData?.wallet?.totalWithdrawn || 0)}</div>
         </div>
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total P&L</div>
           <div className={`text-xl font-bold ${(walletData?.wallet?.totalPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            ₹{(walletData?.wallet?.totalPnL || 0).toLocaleString()}
+            {formatCoins(walletData?.wallet?.totalPnL || 0)}
           </div>
         </div>
       </div>
@@ -229,7 +230,7 @@ const UserWalletPage = () => {
                 : tab}
             {tab === 'referrals' && (referralEarnings.total > 0 || referralEarnings.count > 0) && (
               <span className="text-[10px] bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded normal-case">
-                ₹{Number(referralEarnings.total || 0).toLocaleString('en-IN')}
+                {Number(referralEarnings.total || 0).toLocaleString('en-IN')}
               </span>
             )}
           </button>
@@ -257,14 +258,14 @@ const UserWalletPage = () => {
                         const signed = isCredit ? Math.abs(tx.amount || 0) : -Math.abs(tx.amount || 0);
                         const walletHint =
                           tx.meta?.targetWallet === 'nseBse' || String(tx.description || '').includes('NSE & BSE Wallet')
-                            ? `NSE & BSE: ₹${Number(tx.meta?.nseBseBalanceAfter ?? tx.balanceAfter ?? 0).toLocaleString('en-IN')}`
+                            ? `NSE & BSE: ${Number(tx.meta?.nseBseBalanceAfter ?? tx.balanceAfter ?? 0).toLocaleString('en-IN')}`
                             : tx.meta?.targetWallet === 'main' || String(tx.description || '').includes('Main Wallet')
-                              ? `Main: ₹${Number(tx.meta?.mainBalanceAfter ?? tx.balanceAfter ?? 0).toLocaleString('en-IN')}`
-                              : `Bal: ₹${Number(tx.balanceAfter || 0).toLocaleString('en-IN')}`;
+                              ? `Main: ${Number(tx.meta?.mainBalanceAfter ?? tx.balanceAfter ?? 0).toLocaleString('en-IN')}`
+                              : `Bal: ${Number(tx.balanceAfter || 0).toLocaleString('en-IN')}`;
                         return (
                           <>
                             <div className={signed >= 0 ? 'text-green-400' : 'text-red-400'}>
-                              {signed >= 0 ? '+' : ''}₹{Math.abs(signed).toLocaleString('en-IN')}
+                              {signed >= 0 ? '+' : ''}{Math.abs(signed).toLocaleString('en-IN')}
                             </div>
                             <div className="text-xs text-gray-500">{walletHint}</div>
                           </>
@@ -302,7 +303,7 @@ const UserWalletPage = () => {
                         {req.status}
                       </span>
                     </div>
-                    <div className="text-2xl font-bold">₹{(req.amount || 0).toLocaleString()}</div>
+                    <div className="text-2xl font-bold">{formatCoins(req.amount || 0)}</div>
                     <div className="text-xs text-gray-500 mt-1">
                       {new Date(req.createdAt).toLocaleString()}
                     </div>
@@ -379,14 +380,14 @@ const UserWalletPage = () => {
               <div className="text-sm text-gray-400">
                 Total:{' '}
                 <span className="text-green-400 font-bold">
-                  ₹{Number(referralEarnings.total || 0).toLocaleString('en-IN', {
+                  {Number(referralEarnings.total || 0).toLocaleString('en-IN', {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
                   })}
                 </span>
                 {Number(referralEarnings.totalLifetime || 0) > Number(referralEarnings.total || 0) && (
                   <span className="ml-3 text-xs text-gray-500">
-                    (Lifetime: ₹{Number(referralEarnings.totalLifetime || 0).toLocaleString('en-IN', {
+                    (Lifetime: {Number(referralEarnings.totalLifetime || 0).toLocaleString('en-IN', {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })})
@@ -427,12 +428,12 @@ const UserWalletPage = () => {
                           <span className="text-gray-400">{segmentText}</span>
                         </div>
                         <div className="text-xs text-gray-500">
-                          ₹{amtStr} credited on {dateStr}
+                          {amtStr} credited on {dateStr}
                           {timeStr ? ` at ${timeStr}` : ''}
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-green-400 font-semibold">+₹{amtStr}</div>
+                        <div className="text-green-400 font-semibold">+{amtStr}</div>
                         <div className="text-[10px] text-gray-500 uppercase tracking-wide">credit</div>
                       </div>
                     </div>
@@ -548,7 +549,7 @@ const DepositModal = ({ user, bankAccounts, onClose, onSuccess }) => {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}
@@ -740,11 +741,11 @@ const WithdrawModal = ({ user, balance, adminInfo, onClose, onSuccess }) => {
       return;
     }
     if (amt < minWithdrawal) {
-      setError(`Minimum withdrawal is ₹${minWithdrawal}`);
+      setError(`Minimum withdrawal is ${formatCoins(minWithdrawal)}`);
       return;
     }
     if (amt > maxWithdrawal) {
-      setError(`Maximum withdrawal is ₹${maxWithdrawal}`);
+      setError(`Maximum withdrawal is ${formatCoins(maxWithdrawal)}`);
       return;
     }
 
@@ -782,9 +783,9 @@ const WithdrawModal = ({ user, balance, adminInfo, onClose, onSuccess }) => {
 
         <div className="bg-dark-700 rounded-lg p-3 mb-4">
           <div className="text-xs text-gray-400">Available Balance</div>
-          <div className="text-xl font-bold text-green-400">₹{balance.toLocaleString()}</div>
+          <div className="text-xl font-bold text-green-400">{formatCoins(balance)}</div>
           <div className="text-xs text-gray-500 mt-1">
-            Min: ₹{minWithdrawal} | Max: ₹{maxWithdrawal}
+            Min: {formatCoins(minWithdrawal)} | Max: {formatCoins(maxWithdrawal)}
           </div>
         </div>
 
@@ -796,7 +797,7 @@ const WithdrawModal = ({ user, balance, adminInfo, onClose, onSuccess }) => {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}
@@ -1622,7 +1623,7 @@ const UserReferral = () => {
             </div>
             <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
               <div className="text-sm text-gray-400 mb-1">Total Earnings</div>
-              <div className="text-2xl font-bold text-green-400">₹{(referralStats.totalEarnings || 0).toLocaleString()}</div>
+              <div className="text-2xl font-bold text-green-400">{(referralStats.totalEarnings || 0).toLocaleString()}</div>
             </div>
             <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
               <div className="text-sm text-gray-400 mb-1">Active Referrals</div>
@@ -1646,7 +1647,7 @@ const UserReferral = () => {
             </div>
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 bg-purple-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                <span className="text-purple-400 font-bold">₹</span>
+                <span className="text-purple-400 font-bold"></span>
               </div>
               <div>
                 <div className="font-medium text-white">Trading Brokerage</div>
@@ -2025,7 +2026,7 @@ const UserDashboardNew = () => {
                   <div>
                     <span className="text-yellow-400 font-medium">Demo Account</span>
                     <span className="text-gray-400 text-sm ml-2">
-                      {demoInfo.daysRemaining} days remaining • ₹{(demoInfo.demoBalance || 0).toLocaleString()} virtual balance
+                      {demoInfo.daysRemaining} days remaining • {(demoInfo.demoBalance || 0).toLocaleString()} virtual balance
                     </span>
                   </div>
                 </div>
@@ -2264,7 +2265,7 @@ const UserDashboardNew = () => {
               <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4">
                 <p className="text-yellow-400 text-sm font-medium mb-2">⚠️ Important Notice</p>
                 <ul className="text-sm text-gray-400 space-y-1">
-                  <li>• Your demo balance (₹{(demoInfo?.demoBalance || 0).toLocaleString()}) will be reset to ₹0</li>
+                  <li>• Your demo balance ({(demoInfo?.demoBalance || 0).toLocaleString()}) will be reset to 0</li>
                   <li>• All trading history and positions will be deleted</li>
                   <li>• You will need to deposit real funds to trade</li>
                   <li>• This action cannot be undone</li>

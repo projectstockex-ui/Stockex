@@ -122,7 +122,7 @@ const AdminFundTransfer = () => {
             </div>
             <div>
               <div className="text-sm text-gray-400">Your Wallet Balance</div>
-              <div className="text-2xl font-bold text-green-400">₹{currentWallet.balance.toLocaleString()}</div>
+              <div className="text-2xl font-bold text-green-400">{currentWallet.balance.toLocaleString()}</div>
             </div>
           </div>
         </div>
@@ -171,7 +171,7 @@ const AdminFundTransfer = () => {
                         </div>
                       </div>
                       <div className="text-green-400 font-medium">
-                        ₹{adminItem.wallet?.balance?.toLocaleString() || 0}
+                        {adminItem.wallet?.balance?.toLocaleString() || 0}
                       </div>
                     </div>
                   </div>
@@ -182,7 +182,7 @@ const AdminFundTransfer = () => {
 
           {/* Amount */}
           <div className="mb-4">
-            <label className="block text-sm text-gray-400 mb-2">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-2">Amount</label>
             <input
               type="number"
               value={amount}

@@ -334,7 +334,7 @@ const adminSchema = new mongoose.Schema({
   // Charge Settings - Spread and Commission
   chargeSettings: {
     spread: { type: Number, default: 0 }, // Points added to buy, subtracted from sell
-    commission: { type: Number, default: 0 }, // ₹ per lot
+    commission: { type: Number, default: 0 }, //  per lot
     commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
     perTradeCharge: { type: Number, default: 0 }, // Fixed charge per trade
     perCroreCharge: { type: Number, default: 0 }, // Charge per crore turnover
@@ -663,10 +663,10 @@ const adminSchema = new mongoose.Schema({
     of: {
       enabled: { type: Boolean, default: false },
       commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
-      /** INR for PER_LOT/PER_TRADE; PER_CRORE uses PERCENT (% of notional) or legacy INR (₹ per crore). */
+      /** INR for PER_LOT/PER_TRADE; PER_CRORE uses PERCENT (% of notional) or legacy INR ( per crore). */
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
-      /** Commission for PER_CRORE (₹ per crore or % of turnover) - used when commissionType is PER_CRORE */
+      /** Commission for PER_CRORE ( per crore or % of turnover) - used when commissionType is PER_CRORE */
       commission: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },
@@ -711,7 +711,7 @@ const adminSchema = new mongoose.Schema({
       intradayOnlyLeverage: { type: Number },
       intradayOnlyMaxQty: { type: Number },
       allowLimitPendingOrders: { type: Boolean, default: true },
-      // Crypto (USD spot): total client bid–ask width in ₹ per coin (half applied to bid, half to ask vs exchange mid)
+      // Crypto (USD spot): total client bid–ask width in  per coin (half applied to bid, half to ask vs exchange mid)
       cryptoSpreadInr: { type: Number },
       /** Binance USD spot: $ widened per side on client quotes (bid − n, ask + n). Unset = no spread until configured. */
       cryptoSpreadUsdPerSide: { type: Number },
@@ -812,13 +812,13 @@ const adminSchema = new mongoose.Schema({
   // Trading Restrictions - Set by parent admin (SuperAdmin for Admin, Admin for Broker, Broker for SubBroker)
   // Child admin cannot set restrictions that are less restrictive than parent's restrictions
   restrictions: {
-    intradayLimit: { type: Number, default: 0 }, // Maximum intraday position value (₹)
-    carryforwardLimit: { type: Number, default: 0 }, // Maximum carryforward position value (₹)
+    intradayLimit: { type: Number, default: 0 }, // Maximum intraday position value ()
+    carryforwardLimit: { type: Number, default: 0 }, // Maximum carryforward position value ()
     maxLot: { type: Number, default: 0 }, // Maximum lot size per order
     minLot: { type: Number, default: 0 }, // Minimum lot size per order
     breakupQuantity: { type: Number, default: 0 }, // Maximum breakup quantity per order
-    maxPositionValue: { type: Number, default: 0 }, // Maximum total position value (₹)
-    maxExposure: { type: Number, default: 0 }, // Maximum exposure (₹)
+    maxPositionValue: { type: Number, default: 0 }, // Maximum total position value ()
+    maxExposure: { type: Number, default: 0 }, // Maximum exposure ()
     // Trading permissions
     allowIntraday: { type: Boolean, default: true },
     allowCarryforward: { type: Boolean, default: true },

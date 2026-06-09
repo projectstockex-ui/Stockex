@@ -108,7 +108,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
       const { data } = await axios.post(`/api/admin/manage/users/${user._id}/reset-margin`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess(`Margin reset: ₹${data.oldUsedMargin} → ₹0`);
+      setSuccess(`Margin reset: ${data.oldUsedMargin} → 0`);
       onSuccess();
     } catch (err) {
       setError(err.response?.data?.message || 'Error resetting margin');
@@ -125,7 +125,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
       const { data } = await axios.post(`/api/admin/manage/users/${user._id}/reconcile-margin`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess(`Margin reconciled: ₹${data.oldUsedMargin} → ₹${data.newUsedMargin} (${data.openPositionsCount} open positions)`);
+      setSuccess(`Margin reconciled: ${data.oldUsedMargin} → ${data.newUsedMargin} (${data.openPositionsCount} open positions)`);
       onSuccess();
     } catch (err) {
       setError(err.response?.data?.message || 'Error reconciling margin');
@@ -144,10 +144,10 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
         <div className="mb-4 p-3 bg-dark-700 rounded-lg">
           <div className="text-sm text-gray-400">User</div>
           <div className="font-medium">{user.fullName || user.username}</div>
-          <div className="text-lg font-bold text-green-400 mt-1">₹{user.wallet?.cashBalance?.toLocaleString() || '0'}</div>
+          <div className="text-lg font-bold text-green-400 mt-1">{user.wallet?.cashBalance?.toLocaleString() || '0'}</div>
           <div className="flex justify-between text-sm text-gray-400 mt-1">
-            <span>Trading: ₹{(user.wallet?.tradingBalance || 0).toLocaleString()}</span>
-            <span className="text-yellow-400">Margin Used: ₹{(user.wallet?.usedMargin || 0).toLocaleString()}</span>
+            <span>Trading: {(user.wallet?.tradingBalance || 0).toLocaleString()}</span>
+            <span className="text-yellow-400">Margin Used: {(user.wallet?.usedMargin || 0).toLocaleString()}</span>
           </div>
         </div>
 
@@ -244,7 +244,7 @@ const SuperAdminWalletModal = ({ user, onClose, onSuccess, token }) => {
           )}
 
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}

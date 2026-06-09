@@ -128,7 +128,7 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
     try {
       const { data } = await axios.post('/api/admin/btc-jackpot/declare', { date }, { headers });
       setSuccess(
-        `Declared ${data?.summary?.winnersCount || 0}W / ${data?.summary?.losersCount || 0}L. Paid ₹${inr(
+        `Declared ${data?.summary?.winnersCount || 0}W / ${data?.summary?.losersCount || 0}L. Paid ${inr(
           data?.summary?.totalPaidOut,
           2
         )}.`
@@ -274,7 +274,7 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
             <div className="text-xs text-gray-400">Total Bids Today</div>
             <div className="text-lg font-bold">{bids.length}</div>
             <div className="text-[11px] text-gray-500">
-              Bank ₹{inr(bank?.bank?.totalStake || 0, 2)} · Paid ₹{inr(bank?.bank?.totalPaidOut || 0, 2)}
+              Bank {inr(bank?.bank?.totalStake || 0, 2)} · Paid {inr(bank?.bank?.totalPaidOut || 0, 2)}
             </div>
           </div>
           <div>
@@ -385,7 +385,7 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
                   <td className="py-1 pr-2 text-cyan-300/90 tabular-nums">
                     {b.distance != null && Number.isFinite(Number(b.distance)) ? `$${usd(b.distance, 2)}` : '—'}
                   </td>
-                  <td className="py-1 pr-2">₹{inr(b.amount, 2)}</td>
+                  <td className="py-1 pr-2">{inr(b.amount, 2)}</td>
                   <td className="py-1 pr-2">
                     <span
                       className={`text-[10px] uppercase px-2 py-0.5 rounded ${
@@ -400,7 +400,7 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
                     </span>
                   </td>
                   <td className="py-1 pr-2">{b.rank ?? '—'}</td>
-                  <td className="py-1 pr-2">{b.prize ? `₹${inr(b.prize, 2)}` : '—'}</td>
+                  <td className="py-1 pr-2">{b.prize ? `${inr(b.prize, 2)}` : '—'}</td>
                   <td className="py-1 pr-2 text-[11px] text-gray-400">{b.placedAtIst || ''}</td>
                 </tr>
               ))}
@@ -436,7 +436,7 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
               </select>
             </label>
             <label className="block">
-              <span className="text-xs text-gray-400">Ticket Price (₹)</span>
+              <span className="text-xs text-gray-400">Ticket Price ()</span>
               <input
                 type="number"
                 value={settingsDraft.ticketPrice}

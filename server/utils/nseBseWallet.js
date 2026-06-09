@@ -153,7 +153,7 @@ export async function applyMainNseBseTransfer(userId, amount, direction) {
   if (direction === 'toAccount') {
     if (amt > before.mainBalance) {
       throw new Error(
-        `Insufficient balance in Main Wallet. Available: ₹${before.mainBalance.toLocaleString('en-IN')}`
+        `Insufficient balance in Main Wallet. Available: ${before.mainBalance.toLocaleString('en-IN')}`
       );
     }
     const result = await User.findOneAndUpdate(
@@ -169,7 +169,7 @@ export async function applyMainNseBseTransfer(userId, amount, direction) {
       { new: true }
     );
     if (!result) {
-      throw new Error(`Insufficient balance in Main Wallet. Available: ₹${before.mainBalance.toLocaleString('en-IN')}`);
+      throw new Error(`Insufficient balance in Main Wallet. Available: ${before.mainBalance.toLocaleString('en-IN')}`);
     }
     const afterIn = await readNseBseWalletFromDb(userId);
     const { bumpWalletLedgerReferenceOnCredit } = await import('../services/ledgerAutosquareService.js');
@@ -178,7 +178,7 @@ export async function applyMainNseBseTransfer(userId, amount, direction) {
     const available = before.balance - before.usedMargin;
     if (amt > available) {
       throw new Error(
-        `Insufficient free balance in NSE & BSE Wallet. Available: ₹${available.toLocaleString('en-IN')}`
+        `Insufficient free balance in NSE & BSE Wallet. Available: ${available.toLocaleString('en-IN')}`
       );
     }
     const result = await User.findOneAndUpdate(
@@ -195,7 +195,7 @@ export async function applyMainNseBseTransfer(userId, amount, direction) {
     );
     if (!result) {
       throw new Error(
-        `Insufficient free balance in NSE & BSE Wallet. Available: ₹${available.toLocaleString('en-IN')}`
+        `Insufficient free balance in NSE & BSE Wallet. Available: ${available.toLocaleString('en-IN')}`
       );
     }
   }

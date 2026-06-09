@@ -190,7 +190,7 @@ export async function btcJackpotAutoTick() {
       try {
         const out = await declareBtcJackpotForDate(today);
         console.log(
-          `[btcJackpot] declared ${today}: ${out.summary.winnersCount}W / ${out.summary.losersCount}L, paid ₹${out.summary.totalPaidOut.toFixed(2)}`
+          `[btcJackpot] declared ${today}: ${out.summary.winnersCount}W / ${out.summary.losersCount}L, paid ${out.summary.totalPaidOut.toFixed(2)}`
         );
       } catch (e) {
         if (!String(e?.message || '').includes('No pending') && !String(e?.message || '').includes('already declared')) {

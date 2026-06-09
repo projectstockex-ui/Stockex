@@ -73,7 +73,7 @@ export default function PeerTransferPanel({
       return;
     }
     if (amt > mainBalance + 0.01) {
-      setError(`Insufficient balance (₹${mainBalance.toLocaleString('en-IN')})`);
+      setError(`Insufficient balance (${mainBalance.toLocaleString('en-IN')})`);
       return;
     }
 
@@ -91,7 +91,7 @@ export default function PeerTransferPanel({
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setSuccess(
-        `Sent ₹${amt.toLocaleString('en-IN')} to ${data.recipient?.displayName || selected.displayName}`
+        `Sent ${amt.toLocaleString('en-IN')} to ${data.recipient?.displayName || selected.displayName}`
       );
       setAmount('');
       setRemarks('');
@@ -109,7 +109,7 @@ export default function PeerTransferPanel({
       <div className="rounded-lg bg-dark-700/80 p-3 text-sm">
         <div className="text-gray-400 text-xs">Available in Main Wallet</div>
         <div className="text-lg font-bold text-blue-400 tabular-nums">
-          ₹{mainBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          {mainBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
           Same hierarchy — all clients under your Admin tree can receive funds. Pick by{' '}
@@ -211,7 +211,7 @@ export default function PeerTransferPanel({
       )}
 
       <div>
-        <label className="text-xs text-gray-400 block mb-1">Amount (₹)</label>
+        <label className="text-xs text-gray-400 block mb-1">Amount</label>
         <input
           type="number"
           min="1"

@@ -497,7 +497,7 @@ export async function executeLedgerAutosquareNil(userId, walletField, { reason =
 
   console.log(
     `[LedgerAutosquare] ${walletLabel(wf)} user ${user.userId}: closed ${closed}/${positions.length}, ` +
-      `balance=₹${finalBal}, reason=${reason}, loss=${snapshot?.lossPercent}%, threshold=${snapshot?.autosquarePercent}%`
+      `balance=${finalBal}, reason=${reason}, loss=${snapshot?.lossPercent}%, threshold=${snapshot?.autosquarePercent}%`
   );
   return { success: true, closed, finalBalance: finalBal, errors };
 }
@@ -544,7 +544,7 @@ export async function checkAndRunLedgerAutosquare(
   console.log(
     `[LedgerAutosquare] TRIGGER user=${userId} ${walletLabel(wf)}: ` +
       `loss=${snapshot.lossPercent}% threshold=${snapshot.autosquarePercent}% ` +
-      `basis=₹${snapshot.equityBasis} equity=₹${snapshot.realBalance} mtm=₹${snapshot.totalMtm} reason=${reason}`
+      `basis=${snapshot.equityBasis} equity=${snapshot.realBalance} mtm=${snapshot.totalMtm} reason=${reason}`
   );
 
   const result = await executeLedgerAutosquareNil(userId, wf, {

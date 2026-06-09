@@ -375,7 +375,7 @@ router.get('/today', protectUser, async (req, res) => {
 /**
  * GET /api/user/btc-jackpot/leaderboard?limit=5
  * Top-N projected winners based on live BTC spot (point 5). Visible to all users.
- * Returns masked usernames + distance from spot + projected prize ₹.
+ * Returns masked usernames + distance from spot + projected prize .
  */
 router.get('/leaderboard', protectUser, async (req, res) => {
   try {

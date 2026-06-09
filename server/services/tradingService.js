@@ -251,7 +251,7 @@ const checkMarginWarning = async (user, newUsedMargin, tradingBalance) => {
         await Notification.create({
           title: 'Margin Warning',
           subject: `⚠️ High Margin Usage Alert - ${marginUsagePercent.toFixed(1)}%`,
-          description: `Your margin usage is at ${marginUsagePercent.toFixed(1)}% (₹${newUsedMargin.toLocaleString()} used out of ₹${totalMarginAvailable.toLocaleString()}). Consider closing some positions to reduce risk. If margin usage reaches 100%, you may not be able to place new trades.`,
+          description: `Your margin usage is at ${marginUsagePercent.toFixed(1)}% (${newUsedMargin.toLocaleString()} used out of ${totalMarginAvailable.toLocaleString()}). Consider closing some positions to reduce risk. If margin usage reaches 100%, you may not be able to place new trades.`,
           senderType: 'SYSTEM',
           targetType: 'SINGLE_USER',
           targetUserId: user._id
@@ -1490,7 +1490,7 @@ class TradingService {
 
       // CRITICAL: Check if wallet balance is 0 or negative - reject trade immediately
       if (walletBalance <= 0) {
-        throw new Error(`Cannot place trade. Your trading balance is ₹0. Please add funds to your trading account.`);
+        throw new Error(`Cannot place trade. Your trading balance is 0. Please add funds to your trading account.`);
       }
       
       // NEW DELIVERY PLEDGE LOGIC:
@@ -1740,8 +1740,8 @@ class TradingService {
       trade.brokerageReservedInMargin = false;
       if (!trade.walletBrokerageDebited) trade.walletBrokerageDebited = false;
       console.log(
-        `MCX trade: Locking ₹${marginRequired.toLocaleString()} margin; brokerage ₹${totalCommission.toLocaleString()} ` +
-          `${willOpenNow ? 'debited from balance on open' : 'deferred until fill'}. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`
+        `MCX trade: Locking ${marginRequired.toLocaleString()} margin; brokerage ${totalCommission.toLocaleString()} ` +
+          `${willOpenNow ? 'debited from balance on open' : 'deferred until fill'}. Balance: ${newMcxBalance.toLocaleString()}, UsedMargin: ${newMcxUsedMargin.toLocaleString()}`
       );
     } else {
       // NSE/BSE: margin in usedMargin; round-trip brokerage debited from balance on open
@@ -1775,7 +1775,7 @@ class TradingService {
         if (usablePledge > 0) {
           marginFromPledge = Math.min(marginRequired, usablePledge);
           marginFromWallet = Math.max(0, marginRequired - marginFromPledge);
-          console.log(`NFO Trade: Using ₹${marginFromPledge.toLocaleString()} from pledge (FIRST) + ₹${marginFromWallet.toLocaleString()} from wallet`);
+          console.log(`NFO Trade: Using ${marginFromPledge.toLocaleString()} from pledge (FIRST) + ${marginFromWallet.toLocaleString()} from wallet`);
         } else {
           // No pledge available, use wallet only
           marginFromWallet = marginRequired;
@@ -1794,7 +1794,7 @@ class TradingService {
         newTradingBalance = Math.max(0, walletBalance - totalCommission);
         trade.walletBrokerageDebited = true;
         console.log(
-          `NSE/BSE trade: Locking ₹${marginFromWallet.toLocaleString()} margin; brokerage ₹${totalCommission.toLocaleString()} debited from balance on open`
+          `NSE/BSE trade: Locking ${marginFromWallet.toLocaleString()} margin; brokerage ${totalCommission.toLocaleString()} debited from balance on open`
         );
       } else {
         trade.walletBrokerageDebited = false;
@@ -2011,7 +2011,7 @@ class TradingService {
                 $set: { 'deliveryPledge.lastUpdated': new Date() }
               }
             );
-            console.log(`Delivery Pledge: Added ₹${finalPledgeAmount.toLocaleString()} to user ${user.userId} (${pledgeSettings.buyPledgePercent}% of ₹${tradeValue.toLocaleString()})`);
+            console.log(`Delivery Pledge: Added ${finalPledgeAmount.toLocaleString()} to user ${user.userId} (${pledgeSettings.buyPledgePercent}% of ${tradeValue.toLocaleString()})`);
           }
         }
       } catch (pledgeErr) {
@@ -2093,7 +2093,7 @@ class TradingService {
 
         if (commissionDue > freeBalance) {
           console.warn(
-            `[executePendingOrder] Cannot open ${trade.symbol}: insufficient available margin for brokerage ₹${commissionDue.toFixed(2)}`
+            `[executePendingOrder] Cannot open ${trade.symbol}: insufficient available margin for brokerage ${commissionDue.toFixed(2)}`
           );
           return null;
         }
@@ -2392,7 +2392,7 @@ class TradingService {
       const currentPledgeUsedMargin = user.deliveryPledge?.usedMargin || 0;
       updateFields['deliveryPledge.usedMargin'] = Math.max(0, currentPledgeUsedMargin - pledgeMarginUsed);
       updateFields['deliveryPledge.lastUpdated'] = new Date();
-      console.log(`NFO Trade Close: Released ₹${pledgeMarginUsed.toLocaleString()} pledge margin. P&L: ₹${netPnL.toLocaleString()} (from wallet)`);
+      console.log(`NFO Trade Close: Released ${pledgeMarginUsed.toLocaleString()} pledge margin. P&L: ${netPnL.toLocaleString()} (from wallet)`);
     }
     
     // Dynamic Quantity Adjustment based on P&L
@@ -2563,7 +2563,7 @@ class TradingService {
                 }
               }
             );
-            console.log(`Delivery Pledge (Sell): Added ₹${finalPledgeAmount.toLocaleString()} to user ${user.userId} (${pledgeSettings.sellPledgePercent}% of ₹${tradeValue.toLocaleString()})`);
+            console.log(`Delivery Pledge (Sell): Added ${finalPledgeAmount.toLocaleString()} to user ${user.userId} (${pledgeSettings.sellPledgePercent}% of ${tradeValue.toLocaleString()})`);
           }
         }
       } catch (pledgeErr) {
@@ -2607,7 +2607,7 @@ class TradingService {
         );
         if (referralResult.credited) {
           console.log(
-            `[Referral] Credited ₹${referralResult.amount} to referrer for ${user.userId}'s first winning trade (${trade.symbol})`
+            `[Referral] Credited ${referralResult.amount} to referrer for ${user.userId}'s first winning trade (${trade.symbol})`
           );
         }
       }
@@ -2989,14 +2989,14 @@ class TradingService {
       newTradingBalance = getNseBseBalance(user);
       newCryptoUsedMargin = Math.max(0, (user.cryptoWallet?.usedMargin || 0) - (trade.marginUsed || 0));  // Release usedMargin
       newCryptoBalance = user.cryptoWallet?.balance || 0;  // Balance unchanged
-      console.log(`Crypto order cancelled: Releasing ₹${(trade.marginUsed || 0).toFixed(2)} from usedMargin. Balance: ${newCryptoBalance.toFixed(2)}, UsedMargin: ${newCryptoUsedMargin.toFixed(2)}`);
+      console.log(`Crypto order cancelled: Releasing ${(trade.marginUsed || 0).toFixed(2)} from usedMargin. Balance: ${newCryptoBalance.toFixed(2)}, UsedMargin: ${newCryptoUsedMargin.toFixed(2)}`);
     } else if (trade.isForex) {
       newUsedMargin = getNseBseUsedMargin(user);
       newBlocked = user.wallet.blocked || 0;
       newTradingBalance = getNseBseBalance(user);
       const refund = (trade.marginUsed || 0) + (trade.commission || 0);
       newForexBalance = (user.forexWallet?.balance || 0) + refund;
-      console.log(`Forex order cancelled: Refunding ₹${refund.toFixed(2)} to forex wallet`);
+      console.log(`Forex order cancelled: Refunding ${refund.toFixed(2)} to forex wallet`);
     } else {
       // Regular trades: Release margin
       newUsedMargin = Math.max(0, (getNseBseUsedMargin(user)) - trade.marginUsed);

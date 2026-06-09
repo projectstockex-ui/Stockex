@@ -52,7 +52,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
         <div className="grid grid-cols-4 gap-4 p-4 border-b border-dark-600">
           <div className="text-center">
             <div className="text-xs text-gray-400">Wallet Balance</div>
-            <div className="text-lg font-bold text-green-400">₹{(targetAdmin.wallet?.balance || 0).toLocaleString()}</div>
+            <div className="text-lg font-bold text-green-400">{(targetAdmin.wallet?.balance || 0).toLocaleString()}</div>
           </div>
           <div className="text-center">
             <div className="text-xs text-gray-400">Total Users</div>
@@ -60,7 +60,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
           </div>
           <div className="text-center">
             <div className="text-xs text-gray-400">Brokerage</div>
-            <div className="text-lg font-bold">₹{targetAdmin.charges?.brokerage || 20}</div>
+            <div className="text-lg font-bold">{targetAdmin.charges?.brokerage || 20}</div>
           </div>
           <div className="text-center">
             <div className="text-xs text-gray-400">Leverage</div>
@@ -97,8 +97,8 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
                       <div className="text-xs text-gray-400">{user.email} • {user.userId}</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-green-400 font-bold">₹{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
-                      <div className="text-xs text-blue-400">Trading: ₹{(user.wallet?.tradingBalance || 0).toLocaleString()}</div>
+                      <div className="text-green-400 font-bold">{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                      <div className="text-xs text-blue-400">Trading: {(user.wallet?.tradingBalance || 0).toLocaleString()}</div>
                       <div className={`text-xs ${user.isActive ? 'text-green-400' : 'text-red-400'}`}>
                         {user.isActive ? 'Active' : 'Inactive'}
                       </div>
@@ -120,9 +120,9 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
                     </div>
                     <div className="text-right">
                       <div className={entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}>
-                        {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount?.toLocaleString()}
+                        {entry.type === 'CREDIT' ? '+' : '-'}{entry.amount?.toLocaleString()}
                       </div>
-                      <div className="text-xs text-gray-400">Bal: ₹{entry.balanceAfter?.toLocaleString()}</div>
+                      <div className="text-xs text-gray-400">Bal: {entry.balanceAfter?.toLocaleString()}</div>
                     </div>
                   </div>
                 ))}
@@ -132,7 +132,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-dark-700 rounded p-3">
                 <div className="text-xs text-gray-400">Brokerage</div>
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.brokerage || 20}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.brokerage || 20}</div>
               </div>
               <div className="bg-dark-700 rounded p-3">
                 <div className="text-xs text-gray-400">Intraday Leverage</div>
@@ -148,7 +148,7 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
               </div>
               <div className="bg-dark-700 rounded p-3">
                 <div className="text-xs text-gray-400">Withdrawal Fee</div>
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.withdrawalFee || 0}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.withdrawalFee || 0}</div>
               </div>
               <div className="bg-dark-700 rounded p-3">
                 <div className="text-xs text-gray-400">Profit Share</div>
@@ -156,11 +156,11 @@ const AdminDetailModal = ({ admin: targetAdmin, token, onClose }) => {
               </div>
               <div className="bg-dark-700 rounded p-3">
                 <div className="text-xs text-gray-400">Min Withdrawal</div>
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.minWithdrawal || 100}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.minWithdrawal || 100}</div>
               </div>
               <div className="bg-dark-700 rounded p-3">
                 <div className="text-xs text-gray-400">Max Withdrawal</div>
-                <div className="text-lg font-bold">₹{targetAdmin.charges?.maxWithdrawal || 100000}</div>
+                <div className="text-lg font-bold">{targetAdmin.charges?.maxWithdrawal || 100000}</div>
               </div>
             </div>
           )}

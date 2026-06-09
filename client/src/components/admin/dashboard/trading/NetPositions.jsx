@@ -106,7 +106,7 @@ const NetPositions = () => {
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Unrealized P&L</div>
           <div className={`text-2xl font-bold ${(summary.totalUnrealizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            ₹{(summary.totalUnrealizedPnL || 0).toLocaleString()}
+            {(summary.totalUnrealizedPnL || 0).toLocaleString()}
           </div>
         </div>
       </div>
@@ -180,10 +180,10 @@ const NetPositions = () => {
                     <td className={`px-4 py-3 text-right font-bold ${pos.netQty >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {pos.netQty > 0 ? '+' : ''}{pos.netQty.toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 text-right">₹{pos.avgBuyPrice?.toLocaleString() || '-'}</td>
-                    <td className="px-4 py-3 text-right">₹{pos.avgSellPrice?.toLocaleString() || '-'}</td>
+                    <td className="px-4 py-3 text-right">{pos.avgBuyPrice?.toLocaleString() || '-'}</td>
+                    <td className="px-4 py-3 text-right">{pos.avgSellPrice?.toLocaleString() || '-'}</td>
                     <td className={`px-4 py-3 text-right font-medium ${pos.totalUnrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      ₹{pos.totalUnrealizedPnL?.toLocaleString() || 0}
+                      {pos.totalUnrealizedPnL?.toLocaleString() || 0}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className="px-2 py-1 bg-dark-600 rounded">{pos.userCount}</span>
@@ -240,7 +240,7 @@ const NetPositions = () => {
                           {item.netQty > 0 ? '+' : ''}{item.netQty.toLocaleString()}
                         </td>
                         <td className={`px-4 py-3 text-right ${item.unrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          ₹{item.unrealizedPnL?.toLocaleString() || 0}
+                          {item.unrealizedPnL?.toLocaleString() || 0}
                         </td>
                       </tr>
                     ))}

@@ -49,10 +49,10 @@ export class ReferralTestConfigurationService {
       };
 
       console.log('[ConfigurationService] Configuration loaded:');
-      console.log(`[ConfigurationService] - monishitAmount: ₹${configuration.monishitAmount}`);
-      console.log(`[ConfigurationService] - hamsaAmount: ₹${configuration.hamsaAmount}`);
-      console.log(`[ConfigurationService] - SuperAdmin threshold: ₹${referralSettings.thresholdAmount}`);
-      console.log(`[ConfigurationService] - Expected referral commission: ₹${referralSettings.referralCommission}`);
+      console.log(`[ConfigurationService] - monishitAmount: ${configuration.monishitAmount}`);
+      console.log(`[ConfigurationService] - hamsaAmount: ${configuration.hamsaAmount}`);
+      console.log(`[ConfigurationService] - SuperAdmin threshold: ${referralSettings.thresholdAmount}`);
+      console.log(`[ConfigurationService] - Expected referral commission: ${referralSettings.referralCommission}`);
       console.log(`[ConfigurationService] - Brokerage distribution:`, brokerageDistribution);
 
       return configuration;
@@ -86,7 +86,7 @@ export class ReferralTestConfigurationService {
       console.log('[ConfigurationService] Expected distribution calculated:');
       console.log(`[ConfigurationService] - monishit:`, monishitDistribution);
       console.log(`[ConfigurationService] - hamsa:`, hamsaDistribution);
-      console.log(`[ConfigurationService] - Total SuperAdmin earnings: ₹${result.total.superAdmin}`);
+      console.log(`[ConfigurationService] - Total SuperAdmin earnings: ${result.total.superAdmin}`);
 
       return result;
       

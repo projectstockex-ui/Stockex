@@ -125,7 +125,7 @@ const WalletModal = ({ user, onClose, onSuccess, token, isDirectClient = true })
           <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 mb-4">
             <div className="flex justify-between items-center">
               <span className="text-sm text-purple-400">Your Wallet Balance</span>
-              <span className="text-lg font-bold text-purple-400">₹{adminBalance.toLocaleString()}</span>
+              <span className="text-lg font-bold text-purple-400">{adminBalance.toLocaleString()}</span>
             </div>
             <p className="text-xs text-gray-400 mt-1">Funds will be deducted from your wallet when depositing to user</p>
           </div>
@@ -135,15 +135,15 @@ const WalletModal = ({ user, onClose, onSuccess, token, isDirectClient = true })
         <div className="bg-dark-700 rounded-lg p-4 mb-4">
           <p className="text-gray-400 text-sm">User: {user.fullName || user.username}</p>
           <p className="text-2xl font-bold text-green-400 mt-1">
-            ₹{(walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0).toLocaleString()}
+            {(walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0).toLocaleString()}
           </p>
           <div className="flex justify-between text-sm text-gray-400 mt-1">
-            <span>Cash Balance: ₹{(walletData?.wallet?.cashBalance || 0).toLocaleString()}</span>
-            <span>Trading: ₹{(walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
+            <span>Cash Balance: {(walletData?.wallet?.cashBalance || 0).toLocaleString()}</span>
+            <span>Trading: {(walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
           </div>
           <div className="flex justify-between text-sm mt-1">
-            <span className="text-yellow-400">Margin Used: ₹{(walletData?.wallet?.usedMargin || 0).toLocaleString()}</span>
-            <span className="text-gray-400">Available: ₹{((walletData?.wallet?.tradingBalance || 0) - (walletData?.wallet?.usedMargin || 0)).toLocaleString()}</span>
+            <span className="text-yellow-400">Margin Used: {(walletData?.wallet?.usedMargin || 0).toLocaleString()}</span>
+            <span className="text-gray-400">Available: {((walletData?.wallet?.tradingBalance || 0) - (walletData?.wallet?.usedMargin || 0)).toLocaleString()}</span>
           </div>
         </div>
 
@@ -206,7 +206,7 @@ const WalletModal = ({ user, onClose, onSuccess, token, isDirectClient = true })
           </div>
 
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <label className="block text-sm text-gray-400 mb-1">Amount</label>
             <input
               type="number"
               value={amount}
@@ -261,7 +261,7 @@ const WalletModal = ({ user, onClose, onSuccess, token, isDirectClient = true })
                     <span className="text-gray-400 ml-2">{tx.description}</span>
                   </div>
                   <span className={tx.type === 'deposit' || tx.type === 'credit' ? 'text-green-400' : 'text-red-400'}>
-                    {tx.type === 'deposit' || tx.type === 'credit' ? '+' : '-'}₹{tx.amount}
+                    {tx.type === 'deposit' || tx.type === 'credit' ? '+' : '-'}{tx.amount}
                   </span>
                 </div>
               ))}

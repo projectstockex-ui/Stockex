@@ -36,6 +36,8 @@ import Admin from '../models/Admin.js';
 
 import User from '../models/User.js';
 
+import RefundableSecurityDeposit from '../models/RefundableSecurityDeposit.js';
+
 import adminSegmentSettingsController from '../controllers/adminSegmentSettingsController.js';
 
 import userSegmentSettingsController from '../controllers/userSegmentSettingsController.js';
@@ -395,7 +397,7 @@ async function takeBrokerageFromAdminMainWallet(targetAdmin, superAdmin, amount,
   const mainBal = Number(targetAdmin.wallet?.balance) || 0;
   if (mainBal < amt) {
     const err = new Error(
-      `Insufficient main wallet balance. Available: ₹${mainBal.toLocaleString('en-IN')} (temporary wallet is not used for this charge)`
+      `Insufficient main wallet balance. Available: ${mainBal.toLocaleString('en-IN')} (temporary wallet is not used for this charge)`
     );
     err.statusCode = 400;
     throw err;
@@ -717,7 +719,7 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
   try {
 
-    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, cityCode, cityName, autosquare, breakupQuantity, maxLotQuantity } = req.body;
+    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, cityCode, cityName, refundableSecurityAmount, autosquare, breakupQuantity, maxLotQuantity } = req.body;
 
     
 
@@ -754,6 +756,28 @@ router.post('/admins', protectAdmin, async (req, res) => {
     if (!/^\d{4,6}$/.test(normalizedPin)) {
 
       return res.status(400).json({ message: 'PIN must be a 4-6 digit number' });
+
+    }
+
+    const normalizedCityCode = String(cityCode || '').trim().toUpperCase();
+
+    const normalizedCityName = String(cityName || '').trim();
+
+    const normalizedSecurityAmount = Number(refundableSecurityAmount);
+
+    if (['BROKER', 'SUB_BROKER'].includes(roleToCreate)) {
+
+      if (!normalizedCityCode || !normalizedCityName) {
+
+        return res.status(400).json({ message: 'Pincode area and area name are required for broker/sub-broker' });
+
+      }
+
+      if (!Number.isFinite(normalizedSecurityAmount) || normalizedSecurityAmount <= 0) {
+
+        return res.status(400).json({ message: 'Refundable security amount is required for broker/sub-broker' });
+
+      }
 
     }
 
@@ -1066,9 +1090,9 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
       leverageSettings,
 
-      cityCode: cityCode || '', // City code for broker location (e.g., DEL, MUM, BLR)
+      cityCode: normalizedCityCode,
 
-      cityName: cityName || '', // City name for broker location (e.g., Delhi, Mumbai, Bangalore)
+      cityName: normalizedCityName,
 
       createdBy: req.admin._id,
 
@@ -1079,6 +1103,30 @@ router.post('/admins', protectAdmin, async (req, res) => {
       hierarchyLevel: HIERARCHY_LEVELS[roleToCreate]
 
     });
+
+    if (['BROKER', 'SUB_BROKER'].includes(roleToCreate)) {
+
+      await RefundableSecurityDeposit.create({
+
+        adminId: admin._id,
+
+        adminCode: admin.adminCode,
+
+        brokerName: name || username || '',
+
+        role: roleToCreate,
+
+        cityCode: normalizedCityCode,
+
+        cityName: normalizedCityName,
+
+        amount: normalizedSecurityAmount,
+
+        createdBy: req.admin._id,
+
+      });
+
+    }
 
     
 
@@ -1109,6 +1157,348 @@ router.post('/admins', protectAdmin, async (req, res) => {
     });
 
   } catch (error) {
+
+    res.status(500).json({ message: error.message });
+
+  }
+
+});
+
+
+
+/** Super Admin — refundable security deposits from new brokers/sub-brokers */
+
+router.get('/refundable-security-feed', protectAdmin, superAdminOnly, async (req, res) => {
+
+  try {
+
+    const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
+
+    const filter = {};
+
+    if (req.query.dateFrom) {
+
+      const from = new Date(req.query.dateFrom);
+
+      if (!Number.isNaN(from.getTime())) filter.createdAt = { ...(filter.createdAt || {}), $gte: from };
+
+    }
+
+    if (req.query.dateTo) {
+
+      const to = new Date(req.query.dateTo);
+
+      if (!Number.isNaN(to.getTime())) {
+
+        to.setHours(23, 59, 59, 999);
+
+        filter.createdAt = { ...(filter.createdAt || {}), $lte: to };
+
+      }
+
+    }
+
+    const search = String(req.query.search || '').trim();
+
+    if (search) {
+
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+      filter.$or = [
+
+        { brokerName: re },
+
+        { adminCode: re },
+
+        { cityCode: re },
+
+        { cityName: re },
+
+      ];
+
+    }
+
+    const deposits = await RefundableSecurityDeposit.find(filter)
+
+      .sort({ createdAt: -1 })
+
+      .limit(lim)
+
+      .lean();
+
+    const totalAmount = deposits.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+
+    res.json({
+
+      deposits,
+
+      summary: { count: deposits.length, totalAmount },
+
+    });
+
+  } catch (error) {
+
+    console.error('refundable-security-feed:', error);
+
+    res.status(500).json({ message: error.message });
+
+  }
+
+});
+
+
+
+/** Super Admin — cash distributed to admins and amounts returned */
+
+router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, res) => {
+
+  try {
+
+    const superAdmins = await Admin.find({ role: 'SUPER_ADMIN' }).select('_id').lean();
+
+    const superAdminIds = superAdmins.map((a) => a._id);
+
+    if (!superAdminIds.length) {
+
+      return res.json({ rows: [], summary: { adminCount: 0, totalGiven: 0, totalReturned: 0, netOutstanding: 0 } });
+
+    }
+
+
+
+    const dateFilter = {};
+
+    if (req.query.dateFrom) {
+
+      const from = new Date(req.query.dateFrom);
+
+      if (!Number.isNaN(from.getTime())) dateFilter.$gte = from;
+
+    }
+
+    if (req.query.dateTo) {
+
+      const to = new Date(req.query.dateTo);
+
+      if (!Number.isNaN(to.getTime())) {
+
+        to.setHours(23, 59, 59, 999);
+
+        dateFilter.$lte = to;
+
+      }
+
+    }
+
+
+
+    const ledgerFilter = {
+
+      ownerType: 'ADMIN',
+
+      performedBy: { $in: superAdminIds },
+
+      ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
+
+    };
+
+
+
+    const [deposits, withdrawals] = await Promise.all([
+
+      WalletLedger.find({ ...ledgerFilter, reason: 'ADMIN_DEPOSIT', type: 'CREDIT' }).lean(),
+
+      WalletLedger.find({ ...ledgerFilter, reason: 'ADMIN_WITHDRAW', type: 'DEBIT' }).lean(),
+
+    ]);
+
+
+
+    const byAdmin = new Map();
+
+
+
+    const ensureRow = (ownerId) => {
+
+      const key = String(ownerId);
+
+      if (!byAdmin.has(key)) {
+
+        byAdmin.set(key, {
+
+          adminId: key,
+
+          totalGiven: 0,
+
+          totalReturned: 0,
+
+          lastGivenAt: null,
+
+          lastReturnedAt: null,
+
+          givenCount: 0,
+
+          returnCount: 0,
+
+        });
+
+      }
+
+      return byAdmin.get(key);
+
+    };
+
+
+
+    for (const entry of deposits) {
+
+      const row = ensureRow(entry.ownerId);
+
+      row.totalGiven += Number(entry.amount) || 0;
+
+      row.givenCount += 1;
+
+      const at = entry.createdAt ? new Date(entry.createdAt) : null;
+
+      if (at && (!row.lastGivenAt || at > row.lastGivenAt)) row.lastGivenAt = at;
+
+    }
+
+
+
+    for (const entry of withdrawals) {
+
+      const row = ensureRow(entry.ownerId);
+
+      row.totalReturned += Number(entry.amount) || 0;
+
+      row.returnCount += 1;
+
+      const at = entry.createdAt ? new Date(entry.createdAt) : null;
+
+      if (at && (!row.lastReturnedAt || at > row.lastReturnedAt)) row.lastReturnedAt = at;
+
+    }
+
+
+
+    const adminIds = [...byAdmin.keys()];
+
+    const admins = adminIds.length
+
+      ? await Admin.find({ _id: { $in: adminIds }, role: { $ne: 'SUPER_ADMIN' } })
+
+        .select('name username adminCode role')
+
+        .lean()
+
+      : [];
+
+
+
+    const adminMap = new Map(admins.map((a) => [String(a._id), a]));
+
+
+
+    const search = String(req.query.search || '').trim().toLowerCase();
+
+
+
+    let rows = adminIds
+
+      .map((id) => {
+
+        const agg = byAdmin.get(id);
+
+        const adm = adminMap.get(id);
+
+        if (!adm) return null;
+
+        return {
+
+          adminId: id,
+
+          adminName: adm.name || adm.username || '—',
+
+          adminCode: adm.adminCode || '',
+
+          role: adm.role || '',
+
+          totalGiven: parseFloat((agg.totalGiven || 0).toFixed(2)),
+
+          totalReturned: parseFloat((agg.totalReturned || 0).toFixed(2)),
+
+          netOutstanding: parseFloat(((agg.totalGiven || 0) - (agg.totalReturned || 0)).toFixed(2)),
+
+          lastGivenAt: agg.lastGivenAt,
+
+          lastReturnedAt: agg.lastReturnedAt,
+
+          givenCount: agg.givenCount,
+
+          returnCount: agg.returnCount,
+
+        };
+
+      })
+
+      .filter(Boolean);
+
+
+
+    if (search) {
+
+      rows = rows.filter((row) => {
+
+        const blob = [row.adminName, row.adminCode, row.role].filter(Boolean).join(' ').toLowerCase();
+
+        return blob.includes(search);
+
+      });
+
+    }
+
+
+
+    rows.sort((a, b) => {
+
+      const aT = a.lastGivenAt ? new Date(a.lastGivenAt).getTime() : 0;
+
+      const bT = b.lastGivenAt ? new Date(b.lastGivenAt).getTime() : 0;
+
+      return bT - aT;
+
+    });
+
+
+
+    const totalGiven = rows.reduce((s, r) => s + (r.totalGiven || 0), 0);
+
+    const totalReturned = rows.reduce((s, r) => s + (r.totalReturned || 0), 0);
+
+
+
+    res.json({
+
+      rows,
+
+      summary: {
+
+        adminCount: rows.length,
+
+        totalGiven: parseFloat(totalGiven.toFixed(2)),
+
+        totalReturned: parseFloat(totalReturned.toFixed(2)),
+
+        netOutstanding: parseFloat((totalGiven - totalReturned).toFixed(2)),
+
+      },
+
+    });
+
+  } catch (error) {
+
+    console.error('distributed-cash-feed:', error);
 
     res.status(500).json({ message: error.message });
 
@@ -3095,7 +3485,7 @@ router.post('/users/:userId/delivery-pledge', protectAdmin, superAdminOnly, asyn
 
       balanceAfter: newBalance,
 
-      description: `Delivery Pledge ${action}: ₹${parseFloat(amount).toLocaleString()} by Admin`,
+      description: `Delivery Pledge ${action}: ${parseFloat(amount).toLocaleString()} by Admin`,
 
       performedBy: req.admin._id
 
@@ -3409,7 +3799,7 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
 
       if (req.admin.wallet.balance < amount) {
 
-        return res.status(400).json({ message: `Insufficient balance. You have ₹${req.admin.wallet.balance.toLocaleString()}` });
+        return res.status(400).json({ message: `Insufficient balance. You have ${req.admin.wallet.balance.toLocaleString()}` });
 
       }
 
@@ -3489,7 +3879,7 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
 
     
 
-    console.log(`[Add Funds] Created ledger entry for ${targetAdmin.adminCode}: ₹${amount}, ID: ${ledgerEntry._id}`);
+    console.log(`[Add Funds] Created ledger entry for ${targetAdmin.adminCode}: ${amount}, ID: ${ledgerEntry._id}`);
 
     
 
@@ -5153,7 +5543,7 @@ router.post('/users/:id/add-funds', protectAdmin, async (req, res) => {
 
         return res.status(400).json({ 
 
-          message: `Insufficient balance in admin ${userAdmin.name || userAdmin.username}'s wallet. Available: ₹${userAdmin.wallet.balance}` 
+          message: `Insufficient balance in admin ${userAdmin.name || userAdmin.username}'s wallet. Available: ${userAdmin.wallet.balance}` 
 
         });
 
@@ -5489,7 +5879,7 @@ router.post('/users/:id/add-trading-funds', protectAdmin, async (req, res) => {
 
         return res.status(400).json({ 
 
-          message: `Insufficient balance in admin ${userAdmin.name || userAdmin.username}'s wallet. Available: ₹${userAdmin.wallet.balance}` 
+          message: `Insufficient balance in admin ${userAdmin.name || userAdmin.username}'s wallet. Available: ${userAdmin.wallet.balance}` 
 
         });
 
@@ -5649,7 +6039,7 @@ router.post('/users/:id/deduct-trading-funds', protectAdmin, async (req, res) =>
 
       return res.status(400).json({ 
 
-        message: `Insufficient trading balance. Available: ₹${availableBalance.toLocaleString()} (Total: ₹${currentTradingBalance.toLocaleString()}, Margin Used: ₹${usedMargin.toLocaleString()})` 
+        message: `Insufficient trading balance. Available: ${availableBalance.toLocaleString()} (Total: ${currentTradingBalance.toLocaleString()}, Margin Used: ${usedMargin.toLocaleString()})` 
 
       });
 
@@ -8969,9 +9359,9 @@ router.get('/franchise-earnings-wallet', protectAdmin, superAdminOnly, async (re
       let why = row.description || '';
       if (pct != null && base != null) {
         if (chargeKind === 'BROKERAGE') {
-          why = `${pct}% platform charge on ₹${base.toLocaleString('en-IN')} diverted brokerage from ${franchiseName}`;
+          why = `${pct}% platform charge on ${base.toLocaleString('en-IN')} diverted brokerage from ${franchiseName}`;
         } else {
-          why = `${pct}% platform charge on ₹${base.toLocaleString('en-IN')} franchise book P&L`;
+          why = `${pct}% platform charge on ${base.toLocaleString('en-IN')} franchise book P&L`;
         }
       }
       return {
@@ -9917,7 +10307,7 @@ router.put('/admins/:id/franchise-charge', protectAdmin, async (req, res) => {
     await target.save();
 
     res.json({
-      message: `Franchise charge ₹${brokerageChargePerCrore.toLocaleString('en-IN')}/crore set for ${target.name || target.username}`,
+      message: `Franchise charge ${brokerageChargePerCrore.toLocaleString('en-IN')}/crore set for ${target.name || target.username}`,
       admin: {
         _id: target._id,
         username: target.username,
@@ -9984,7 +10374,7 @@ router.put('/users/:id/franchise-charge', protectAdmin, async (req, res) => {
     await user.save();
 
     res.json({
-      message: `Franchise charge ₹${franchiseChargePerCrore.toLocaleString('en-IN')}/crore set for ${user.fullName || user.username}`,
+      message: `Franchise charge ${franchiseChargePerCrore.toLocaleString('en-IN')}/crore set for ${user.fullName || user.username}`,
       user: {
         _id: user._id,
         username: user.username,
@@ -10239,7 +10629,7 @@ router.post('/admin-transfer', protectAdmin, async (req, res) => {
 
     res.json({
 
-      message: `Successfully transferred ₹${amount} to ${targetAdmin.name || targetAdmin.username}`,
+      message: `Successfully transferred ${amount} to ${targetAdmin.name || targetAdmin.username}`,
 
       senderBalance: req.admin.wallet.balance,
 
@@ -10587,7 +10977,7 @@ router.put('/admin-fund-requests/:id', protectAdmin, async (req, res) => {
 
         return res.status(400).json({ 
 
-          message: `Insufficient balance. You have ₹${req.admin.wallet.balance.toLocaleString()}, but request is for ₹${fundRequest.amount.toLocaleString()}` 
+          message: `Insufficient balance. You have ${req.admin.wallet.balance.toLocaleString()}, but request is for ${fundRequest.amount.toLocaleString()}` 
 
         });
 
@@ -11213,7 +11603,7 @@ router.post('/all-fund-requests/:id/approve', protectAdmin, superAdminOnly, asyn
 
           return res.status(400).json({ 
 
-            message: `Insufficient balance in ${debitAdmin.name || debitAdmin.username}'s wallet. Available: ₹${debitAdmin.wallet.balance.toLocaleString()}, Required: ₹${request.amount.toLocaleString()}` 
+            message: `Insufficient balance in ${debitAdmin.name || debitAdmin.username}'s wallet. Available: ${debitAdmin.wallet.balance.toLocaleString()}, Required: ${request.amount.toLocaleString()}` 
 
           });
 
@@ -11982,7 +12372,7 @@ router.post('/broker-change-requests/:id/approve', protectAdmin, async (req, res
 
           return res.status(400).json({ 
 
-            message: `Current ${currentAdmin.role === 'BROKER' ? 'Broker' : currentAdmin.role === 'SUB_BROKER' ? 'Sub Broker' : 'Admin'} (${currentAdmin.adminCode}) does not have sufficient funds (₹${currentAdminBalance.toLocaleString()}) to transfer user's balance (₹${userWalletBalance.toLocaleString()}). Please ask them to add funds first.`
+            message: `Current ${currentAdmin.role === 'BROKER' ? 'Broker' : currentAdmin.role === 'SUB_BROKER' ? 'Sub Broker' : 'Admin'} (${currentAdmin.adminCode}) does not have sufficient funds (${currentAdminBalance.toLocaleString()}) to transfer user's balance (${userWalletBalance.toLocaleString()}). Please ask them to add funds first.`
 
           });
 
@@ -12116,7 +12506,7 @@ router.post('/broker-change-requests/:id/approve', protectAdmin, async (req, res
 
     res.json({ 
 
-      message: `User ${user.username} transferred from ${oldAdminCode} to ${newAdmin.adminCode}${userWalletBalance > 0 ? `. Wallet balance ₹${userWalletBalance.toLocaleString()} transferred.` : ''}`,
+      message: `User ${user.username} transferred from ${oldAdminCode} to ${newAdmin.adminCode}${userWalletBalance > 0 ? `. Wallet balance ${userWalletBalance.toLocaleString()} transferred.` : ''}`,
 
       request,
 
@@ -14936,31 +15326,31 @@ router.delete('/admins/:id', protectAdmin, async (req, res) => {
 
       if (u.wallet?.usedMargin > 0) {
 
-        positions.push(`Main Wallet: ₹${u.wallet.usedMargin.toLocaleString()} used margin`);
+        positions.push(`Main Wallet: ${u.wallet.usedMargin.toLocaleString()} used margin`);
 
       }
 
       if (u.gamesWallet?.usedMargin > 0) {
 
-        positions.push(`Games Wallet: ₹${u.gamesWallet.usedMargin.toLocaleString()} used margin`);
+        positions.push(`Games Wallet: ${u.gamesWallet.usedMargin.toLocaleString()} used margin`);
 
       }
 
       if (u.mcxWallet?.usedMargin > 0) {
 
-        positions.push(`MCX Wallet: ₹${u.mcxWallet.usedMargin.toLocaleString()} used margin`);
+        positions.push(`MCX Wallet: ${u.mcxWallet.usedMargin.toLocaleString()} used margin`);
 
       }
 
       if (u.cryptoWallet?.usedMargin > 0) {
 
-        positions.push(`Crypto Wallet: ₹${u.cryptoWallet.usedMargin.toLocaleString()} used margin`);
+        positions.push(`Crypto Wallet: ${u.cryptoWallet.usedMargin.toLocaleString()} used margin`);
 
       }
 
       if (u.forexWallet?.usedMargin > 0) {
 
-        positions.push(`Forex Wallet: ₹${u.forexWallet.usedMargin.toLocaleString()} used margin`);
+        positions.push(`Forex Wallet: ${u.forexWallet.usedMargin.toLocaleString()} used margin`);
 
       }
 
@@ -15110,31 +15500,31 @@ router.delete('/users/:id', protectAdmin, async (req, res) => {
 
     if (user.wallet?.usedMargin > 0) {
 
-      openPositions.push(`Main Wallet: ₹${user.wallet.usedMargin.toLocaleString()} used margin`);
+      openPositions.push(`Main Wallet: ${user.wallet.usedMargin.toLocaleString()} used margin`);
 
     }
 
     if (user.gamesWallet?.usedMargin > 0) {
 
-      openPositions.push(`Games Wallet: ₹${user.gamesWallet.usedMargin.toLocaleString()} used margin`);
+      openPositions.push(`Games Wallet: ${user.gamesWallet.usedMargin.toLocaleString()} used margin`);
 
     }
 
     if (user.mcxWallet?.usedMargin > 0) {
 
-      openPositions.push(`MCX Wallet: ₹${user.mcxWallet.usedMargin.toLocaleString()} used margin`);
+      openPositions.push(`MCX Wallet: ${user.mcxWallet.usedMargin.toLocaleString()} used margin`);
 
     }
 
     if (user.cryptoWallet?.usedMargin > 0) {
 
-      openPositions.push(`Crypto Wallet: ₹${user.cryptoWallet.usedMargin.toLocaleString()} used margin`);
+      openPositions.push(`Crypto Wallet: ${user.cryptoWallet.usedMargin.toLocaleString()} used margin`);
 
     }
 
     if (user.forexWallet?.usedMargin > 0) {
 
-      openPositions.push(`Forex Wallet: ₹${user.forexWallet.usedMargin.toLocaleString()} used margin`);
+      openPositions.push(`Forex Wallet: ${user.forexWallet.usedMargin.toLocaleString()} used margin`);
 
     }
 
@@ -15644,7 +16034,7 @@ router.post('/admins/:id/take-brokerage', protectAdmin, superAdminOnly, async (r
 
     res.json({
 
-      message: `Successfully took ₹${result.amount} from ${targetAdmin.name || targetAdmin.username} main wallet`,
+      message: `Successfully took ${result.amount} from ${targetAdmin.name || targetAdmin.username} main wallet`,
 
       amount: result.amount,
 
@@ -15754,7 +16144,7 @@ router.post('/admins/:id/give-incentive', protectAdmin, superAdminOnly, async (r
 
 
 
-    /** Split ₹ into main (trading) vs temporary (games) wallet halves; remainder on trading. */
+    /** Split  into main (trading) vs temporary (games) wallet halves; remainder on trading. */
 
     const splitGamesAndTrading = (total) => {
 
@@ -15794,7 +16184,7 @@ router.post('/admins/:id/give-incentive', protectAdmin, superAdminOnly, async (r
 
     if (superBal < amtNum) {
 
-      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${superBal}` });
+      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ${superBal}` });
 
     }
 
@@ -15950,7 +16340,7 @@ router.post('/admins/:id/give-incentive', protectAdmin, superAdminOnly, async (r
 
     res.json({
 
-      message: `Successfully gave ₹${amtNum} incentive to ${targetAdmin.name || targetAdmin.username}`,
+      message: `Successfully gave ${amtNum} incentive to ${targetAdmin.name || targetAdmin.username}`,
 
       amount: amtNum,
 
@@ -16104,7 +16494,7 @@ router.delete('/archive/permanent/users/:id', protectAdmin, superAdminOnly, asyn
 
       message: remainingBalance > 0 
 
-        ? `User permanently deleted. ₹${remainingBalance} credited to Super Admin.`
+        ? `User permanently deleted. ${remainingBalance} credited to Super Admin.`
 
         : 'User permanently deleted from archive',
 
@@ -16260,7 +16650,7 @@ router.post('/nifty-bracket/manual-settle', protectAdmin, superAdminOnly, async 
 
     res.json({
 
-      message: `Settled ${okCount} of ${results.length} active trade(s) at ₹${price}`,
+      message: `Settled ${okCount} of ${results.length} active trade(s) at ${price}`,
 
       currentPrice: price,
 
@@ -16548,7 +16938,7 @@ router.post('/nifty-jackpot/lock-price', protectAdmin, superAdminOnly, async (re
 
     if (existing) {
 
-      return res.status(400).json({ message: `Price already locked for ${date}: ₹${existing.lockedPrice}` });
+      return res.status(400).json({ message: `Price already locked for ${date}: ${existing.lockedPrice}` });
 
     }
 
@@ -16622,7 +17012,7 @@ router.post('/nifty-jackpot/lock-price', protectAdmin, superAdminOnly, async (re
 
     res.json({
 
-      message: `Nifty price locked at ₹${lockedPrice} for ${date}`,
+      message: `Nifty price locked at ${lockedPrice} for ${date}`,
 
       result: {
 

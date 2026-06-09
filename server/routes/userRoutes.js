@@ -670,7 +670,7 @@ router.post('/demo-register', async (req, res) => {
       wallet: user.wallet,
       token: generateToken(user._id),
       trialDays,
-      message: `Demo account created! Valid for ${trialDays} days with ₹${demoBalance.toLocaleString('en-IN')} virtual balance. No brokerage is paid to admins on demo trades.`
+      message: `Demo account created! Valid for ${trialDays} days with ${demoBalance.toLocaleString('en-IN')} virtual balance. No brokerage is paid to admins on demo trades.`
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -917,7 +917,7 @@ router.post('/withdraw-request', protectUser, async (req, res) => {
     
     if (effectiveTradingBalance < 0) {
       return res.status(400).json({ 
-        message: `Withdrawal blocked! Your trading account has negative balance of ₹${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first by depositing funds to your trading account.`,
+        message: `Withdrawal blocked! Your trading account has negative balance of ${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first by depositing funds to your trading account.`,
         code: 'NEGATIVE_TRADING_BALANCE',
         deficit: Math.abs(effectiveTradingBalance)
       });
@@ -1232,8 +1232,8 @@ router.get('/referral-earnings', protectUser, async (req, res) => {
     const parseReferredNameFromDescription = (desc) => {
       const s = String(desc || '');
       // Common patterns written by gameProfitDistribution / referralService:
-      //   "Referral commission from <name>'s loss pool (₹X)"
-      //   "Referral commission from <name>'s brokerage (₹X)"
+      //   "Referral commission from <name>'s loss pool (X)"
+      //   "Referral commission from <name>'s brokerage (X)"
       //   "Referral bonus: 5% of <name>'s first win in niftyJackpot"
       //   "Referral bonus: Brokerage from <name>'s first winning trade"
       let m = /from\s+([^']+)'s\s+(loss pool|brokerage|first winning)/i.exec(s);
@@ -2673,10 +2673,10 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
     const minAmt = (gameConfig.minTickets || 1) * tValue;
     const maxAmt = (gameConfig.maxTickets || 500) * tValue;
     if (betAmount < minAmt) {
-      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt})` });
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (${minAmt})` });
     }
     if (betAmount > maxAmt) {
-      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 500} ticket(s) (₹${maxAmt})` });
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 500} ticket(s) (${maxAmt})` });
     }
 
     const settlementDayPlace = getTodayISTString();
@@ -3491,7 +3491,7 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
       }
 
       console.log(
-        `[RESOLVE] Trade: Amount=₹${amount}, Won=${won}, PnL=₹${pnl}, Brokerage=₹${brokerage} officialOpen=${officialOpen} officialClose=${officialClose}`
+        `[RESOLVE] Trade: Amount=${amount}, Won=${won}, PnL=${pnl}, Brokerage=${brokerage} officialOpen=${officialOpen} officialClose=${officialClose}`
       );
       
       // Debug logging for Rena's trade
@@ -3516,7 +3516,7 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
       if (won) {
         totalBalanceInc += creditTotal;
         totalWinningStakeForReferral += amount;
-        console.log(`[RESOLVE] WIN: Gross credit ₹${creditTotal} (hierarchy/brokerage ₹${brokerage} from pool)`);
+        console.log(`[RESOLVE] WIN: Gross credit ${creditTotal} (hierarchy/brokerage ${brokerage} from pool)`);
         const placedAt = takePlacedAtForStake(trade);
         ledgerEntries.push({
           gameId,
@@ -3540,7 +3540,7 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
           },
         });
       } else {
-        console.log(`[RESOLVE] LOSS: Amount ₹${amount} already deducted at bet placement`);
+        console.log(`[RESOLVE] LOSS: Amount ${amount} already deducted at bet placement`);
       }
       totalPnl += pnl;
       settledCount += 1;
@@ -3556,7 +3556,7 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
     if (isBtcUpDown && totalBalanceInc > 0) {
       const poolDebit = await debitBtcUpDownSuperAdminPool(
         totalBalanceInc,
-        `BTC Up/Down — win payout from Super Admin pool (−₹${totalBalanceInc.toFixed(2)})`
+        `BTC Up/Down — win payout from Super Admin pool (−${totalBalanceInc.toFixed(2)})`
       );
       if (!poolDebit.ok) {
         await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber, settlementDay });
@@ -3574,7 +3574,7 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
       realizedPnL: totalPnl,
       todayRealizedPnL: totalPnl,
     });
-    console.log(`[RESOLVE] Atomic update done. New balance: ₹${gw.balance}`);
+    console.log(`[RESOLVE] Atomic update done. New balance: ${gw.balance}`);
 
     // Record ledger entries with final balance and transaction slip entries
     for (const entry of ledgerEntries) {
@@ -3770,7 +3770,7 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
         );
         if (refOut.credited) {
           console.log(
-            `[RESOLVE] referral per-win user=${req.user._id} game=${gameId} w=${windowNumber} → referrer ₹${refOut.amount}`
+            `[RESOLVE] referral per-win user=${req.user._id} game=${gameId} w=${windowNumber} → referrer ${refOut.amount}`
           );
         } else if (refOut.reason) {
           console.log(`[RESOLVE] referral per-win skipped: ${refOut.reason}`);
@@ -3893,10 +3893,10 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
     const minAmt = (gameConfig.minTickets || 1) * tValue;
     const maxAmt = (gameConfig.maxTickets || 100) * tValue;
     if (betAmount < minAmt) {
-      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt}) per number` });
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (${minAmt}) per number` });
     }
     if (betAmount > maxAmt) {
-      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 100} ticket(s) (₹${maxAmt}) per number` });
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 100} ticket(s) (${maxAmt}) per number` });
     }
 
     // Support quantity (number of bets per number)
@@ -3926,7 +3926,7 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
     // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
     const gw = await atomicGamesWalletDebit(User, userId, totalCost, { usedMargin: totalCost });
     if (!gw) {
-      return res.status(400).json({ message: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${numbers.length} number(s)` });
+      return res.status(400).json({ message: `Insufficient balance. Need ${totalCost.toLocaleString()} for ${numbers.length} number(s)` });
     }
 
     let saCredited = false;
@@ -4024,8 +4024,8 @@ router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
     const tValue = gameConfig?.ticketPrice || settings.tokenValue || 300;
     const minAmt = (gameConfig?.minTickets || 1) * tValue;
     const maxAmt = (gameConfig?.maxTickets || 100) * tValue;
-    if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (₹${minAmt})` });
-    if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (₹${maxAmt})` });
+    if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (${minAmt})` });
+    if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (${maxAmt})` });
 
     const oldAmount = bet.amount;
     const diff = amount - oldAmount;
@@ -4035,7 +4035,7 @@ router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
       if (await rejectIfHierarchyGameDenied(res, userId, 'niftyNumber')) return;
       gw = await atomicGamesWalletUpdate(User, userId, { balance: -diff, usedMargin: diff });
       if (!gw) {
-        return res.status(400).json({ message: `Insufficient balance. Need ₹${diff} more` });
+        return res.status(400).json({ message: `Insufficient balance. Need ${diff} more` });
       }
       try {
         await creditBtcUpDownSuperAdminPool(
@@ -4091,7 +4091,7 @@ router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
     await bet.save();
 
     res.json({
-      message: `Bet updated to ₹${amount}`,
+      message: `Bet updated to ${amount}`,
       bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, status: bet.status },
       newBalance: gw.balance
     });
@@ -4257,10 +4257,10 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
     const minAmt = (gameConfig.minTickets || 1) * tValue;
     const maxAmt = (gameConfig.maxTickets || 100) * tValue;
     if (betAmount < minAmt) {
-      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt}) per number` });
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (${minAmt}) per number` });
     }
     if (betAmount > maxAmt) {
-      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 100} ticket(s) (₹${maxAmt}) per number` });
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 100} ticket(s) (${maxAmt}) per number` });
     }
 
     const qty = parseInt(req.body.quantity, 10) || 1;
@@ -4286,7 +4286,7 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
 
     const gw = await atomicGamesWalletDebit(User, userId, totalCost, { usedMargin: totalCost });
     if (!gw) {
-      return res.status(400).json({ message: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${numbers.length} number(s)` });
+      return res.status(400).json({ message: `Insufficient balance. Need ${totalCost.toLocaleString()} for ${numbers.length} number(s)` });
     }
 
     let saCredited = false;
@@ -4382,8 +4382,8 @@ router.put('/btc-number/bet/:id', protectUser, async (req, res) => {
     const tValue = gameConfig?.ticketPrice || settings.tokenValue || 300;
     const minAmt = (gameConfig?.minTickets || 1) * tValue;
     const maxAmt = (gameConfig?.maxTickets || 100) * tValue;
-    if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (₹${minAmt})` });
-    if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (₹${maxAmt})` });
+    if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (${minAmt})` });
+    if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (${maxAmt})` });
 
     const oldAmount = bet.amount;
     const diff = amount - oldAmount;
@@ -4393,7 +4393,7 @@ router.put('/btc-number/bet/:id', protectUser, async (req, res) => {
       if (await rejectIfHierarchyGameDenied(res, userId, 'btcNumber')) return;
       gw = await atomicGamesWalletUpdate(User, userId, { balance: -diff, usedMargin: diff });
       if (!gw) {
-        return res.status(400).json({ message: `Insufficient balance. Need ₹${diff} more` });
+        return res.status(400).json({ message: `Insufficient balance. Need ${diff} more` });
       }
       try {
         await creditSuperAdminForBtcJackpotStake(
@@ -4452,7 +4452,7 @@ router.put('/btc-number/bet/:id', protectUser, async (req, res) => {
     await bet.save();
 
     res.json({
-      message: `Bet updated to ₹${amount}`,
+      message: `Bet updated to ${amount}`,
       bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, status: bet.status },
       newBalance: gw.balance,
     });
@@ -4705,10 +4705,10 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
     const minAmt = (gameConfig.minTickets || 1) * tValue;
     const maxAmt = (gameConfig.maxTickets || 250) * tValue;
     if (betAmount < minAmt) {
-      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt})` });
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (${minAmt})` });
     }
     if (betAmount > maxAmt) {
-      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 250} ticket(s) (₹${maxAmt})` });
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 250} ticket(s) (${maxAmt})` });
     }
 
     const bracketDayKey = getTodayISTString();
@@ -5204,7 +5204,7 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
     if (isBtcManual && totalBalanceInc > 0) {
       const poolDebit = await debitBtcUpDownSuperAdminPool(
         totalBalanceInc,
-        `BTC Up/Down — win payout from pool [manual] (−₹${totalBalanceInc.toFixed(2)})`
+        `BTC Up/Down — win payout from pool [manual] (−${totalBalanceInc.toFixed(2)})`
       );
       if (!poolDebit.ok) {
         await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber: wn, settlementDay });
@@ -5469,7 +5469,7 @@ router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
       Math.abs(bidAmount - ticketUnits * oneTicketRs) > 0.01
     ) {
       return res.status(400).json({
-        message: `Stake must be a whole number of tickets (multiple of ₹${oneTicketRs.toLocaleString('en-IN')} per ticket).`,
+        message: `Stake must be a whole number of tickets (multiple of ${oneTicketRs.toLocaleString('en-IN')} per ticket).`,
       });
     }
     const minTickets = Math.max(1, Math.min(5000, Number(gameConfig.minTickets) || 1));
@@ -5482,7 +5482,7 @@ router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
     );
     if (ticketUnits < minTickets || ticketUnits > maxPerRequest) {
       return res.status(400).json({
-        message: `Each request must be between ${minTickets} and ${maxPerRequest} ticket(s) (₹${oneTicketRs.toLocaleString('en-IN')} each).`,
+        message: `Each request must be between ${minTickets} and ${maxPerRequest} ticket(s) (${oneTicketRs.toLocaleString('en-IN')} each).`,
       });
     }
 

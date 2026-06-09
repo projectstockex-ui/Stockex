@@ -112,10 +112,10 @@ export function validateCommissionInput(data, limits = DEFAULT_COMMISSION_LIMITS
     if (type === 'PER_LOT' || type === 'PER_TRADE') {
       // Reject explicit percentage unit on flat-INR lines
       if (unit === 'PERCENT') {
-        errors.push(`${prefix}: PER_${type === 'PER_LOT' ? 'LOT' : 'TRADE'} cannot use unit PERCENT (fixed ₹ only)`);
+        errors.push(`${prefix}: PER_${type === 'PER_LOT' ? 'LOT' : 'TRADE'} cannot use unit PERCENT (fixed  only)`);
       }
       if (Number.isFinite(amount) && amount > limits.maxFlatInr) {
-        errors.push(`${prefix}.amount unrealistically high for fixed ₹ line (max ${limits.maxFlatInr})`);
+        errors.push(`${prefix}.amount unrealistically high for fixed  line (max ${limits.maxFlatInr})`);
       }
     }
 
@@ -218,10 +218,10 @@ export function calculateCommission(data, options = {}) {
 
     let charge = 0;
     if (type === 'PER_LOT') {
-      // charge = numberOfLots * amount (fixed ₹ per lot)
+      // charge = numberOfLots * amount (fixed  per lot)
       charge = lots * amount;
     } else if (type === 'PER_TRADE') {
-      // charge = flat ₹ per executed trade
+      // charge = flat  per executed trade
       charge = amount;
     } else if (type === 'PER_CRORE') {
       charge = calculatePerCroreCharge(tradeValue, amount, { perCroreMode });

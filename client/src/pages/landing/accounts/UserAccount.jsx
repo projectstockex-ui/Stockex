@@ -50,11 +50,11 @@ export default function UserAccount() {
                   <div className="text-sm text-white/60">Account Opening</div>
                 </div>
                 <div className="bg-white/10 rounded-xl px-6 py-4 text-center">
-                  <div className="text-2xl font-bold text-yellow-accent">₹0</div>
+                  <div className="text-2xl font-bold text-yellow-accent">0</div>
                   <div className="text-sm text-white/60">Delivery Brokerage</div>
                 </div>
                 <div className="bg-white/10 rounded-xl px-6 py-4 text-center">
-                  <div className="text-2xl font-bold text-yellow-accent">₹20</div>
+                  <div className="text-2xl font-bold text-yellow-accent">20</div>
                   <div className="text-sm text-white/60">Per Intraday Order</div>
                 </div>
               </div>

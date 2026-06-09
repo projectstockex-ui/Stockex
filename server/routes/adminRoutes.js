@@ -87,14 +87,13 @@ router.get('/demo-broker/:id/users', protectAdmin, async (req, res) => {
 // Get list of brokers for user registration (public endpoint)
 router.get('/brokers/public', async (req, res) => {
   try {
-    // Fetch all active brokers only (not sub-brokers)
-    const brokers = await Admin.find({ 
-      role: 'BROKER',
-      status: 'ACTIVE'
+    // Public list for user registration — code & area only (no personal names)
+    const brokers = await Admin.find({
+      role: { $in: ['BROKER', 'SUB_BROKER'] },
+      status: 'ACTIVE',
     })
-    .select('name username adminCode role parentId branding cityCode cityName certificate.rating certificate.yearsOfExperience')
-    .populate('parentId', 'name username adminCode role')
-    .sort({ name: 1 });
+      .select('adminCode role cityCode cityName')
+      .sort({ cityName: 1, adminCode: 1 });
 
     res.json({ brokers });
   } catch (error) {

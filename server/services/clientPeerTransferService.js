@@ -168,7 +168,7 @@ export async function executePeerTransfer(senderId, { recipientUserId, amount, r
 
   if (transferAmount > senderCash + 0.01) {
     const err = new Error(
-      `Insufficient Main Wallet balance. Available: ₹${senderCash.toLocaleString('en-IN')}`
+      `Insufficient Main Wallet balance. Available: ${senderCash.toLocaleString('en-IN')}`
     );
     err.statusCode = 400;
     throw err;
@@ -231,10 +231,10 @@ export async function executePeerTransfer(senderId, { recipientUserId, amount, r
   const recipientBalanceAfter = getMainWalletCash(creditRecipient);
 
   const senderDesc =
-    `Sent ₹${transferAmount.toLocaleString('en-IN')} to ${recipient.displayName} (${recipient.userId})` +
+    `Sent ${transferAmount.toLocaleString('en-IN')} to ${recipient.displayName} (${recipient.userId})` +
     (note ? ` — ${note}` : '');
   const recipientDesc =
-    `Received ₹${transferAmount.toLocaleString('en-IN')} from ${sender.fullName || sender.username || sender.userId}` +
+    `Received ${transferAmount.toLocaleString('en-IN')} from ${sender.fullName || sender.username || sender.userId}` +
     (note ? ` — ${note}` : '');
 
   await WalletLedger.create([
@@ -279,7 +279,7 @@ export async function executePeerTransfer(senderId, { recipientUserId, amount, r
   try {
     await Notification.create({
       title: 'Wallet transfer received',
-      subject: `₹${transferAmount.toLocaleString('en-IN')} credited to Main Wallet`,
+      subject: `${transferAmount.toLocaleString('en-IN')} credited to Main Wallet`,
       description: recipientDesc,
       senderType: 'SYSTEM',
       targetType: 'SINGLE_USER',

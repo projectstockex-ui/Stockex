@@ -1,6 +1,7 @@
 /**
  * Dynamic LTP ±% bracket (Super Admin per instrument).
  */
+import { formatCoinsRange } from './stockexCoins.js';
 
 export function computeLtpBracketBounds(ltp, percentUp, percentDown) {
   const base = Number(ltp);
@@ -35,6 +36,5 @@ export function isPriceInLtpBracket(price, bounds) {
 
 export function formatLtpBracketRange(bounds, decimals = 2) {
   if (!bounds) return '';
-  const d = decimals;
-  return `₹${bounds.lower.toFixed(d)} – ₹${bounds.upper.toFixed(d)}`;
+  return formatCoinsRange(bounds.lower, bounds.upper, decimals);
 }

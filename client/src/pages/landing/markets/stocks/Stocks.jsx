@@ -93,7 +93,7 @@ export default function Stocks() {
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground mb-2">{stock.name}</p>
-                <p className="text-lg font-semibold text-foreground">₹{stock.price}</p>
+                <p className="text-lg font-semibold text-foreground">{stock.price}</p>
               </div>
             ))}
           </div>

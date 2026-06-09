@@ -97,7 +97,7 @@ const ClientManagement = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-gray-300">{user.username}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-gray-300">{user.email}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-gray-300">
-                    ₹{(user.wallet?.balance || 0).toFixed(2)}
+                    {(user.wallet?.balance || 0).toFixed(2)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 py-1 text-xs font-medium rounded-full ${

@@ -24,7 +24,7 @@ async function fetchBinancePrice(symbol) {
   return parseFloat(data?.price);
 }
 
-/** INR per 1 USDT implied by Binance {BASE}INR / {BASE}USDT — aligns ₹ with Binance India BTC/INR page. */
+/** INR per 1 USDT implied by Binance {BASE}INR / {BASE}USDT — aligns  with Binance India BTC/INR page. */
 async function fetchBinanceImpliedInrPerUsdtByBase() {
   const implied = {};
   for (const base of BINANCE_BASES_FOR_INR) {

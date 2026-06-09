@@ -62,7 +62,7 @@ export async function isReferralEligible(referredUserId, amount, segment) {
       
       return {
         eligible: false,
-        reason: `Super Admin has not reached threshold. Current: ₹${currentEarnings}, Required: ${settings.thresholdAmount} ${settings.thresholdUnit}`,
+        reason: `Super Admin has not reached threshold. Current: ${currentEarnings}, Required: ${settings.thresholdAmount} ${settings.thresholdUnit}`,
         currentEarnings,
         requiredThreshold: settings.thresholdAmount,
         thresholdUnit: settings.thresholdUnit,
@@ -169,7 +169,7 @@ async function holdReferralCommission(referredUserId, amount, segment, eligibili
   try {
     // This would integrate with a held commissions system
     // For now, we'll just log the hold
-    console.log(`[ReferralEligibility] Holding ₹${amount} referral commission for user ${referredUserId} in ${segment} segment`);
+    console.log(`[ReferralEligibility] Holding ${amount} referral commission for user ${referredUserId} in ${segment} segment`);
     console.log(`[ReferralEligibility] Hold reason: ${eligibility.reason}`);
     console.log(`[ReferralEligibility] Root admin ID: ${eligibility.rootAdminId}`);
     

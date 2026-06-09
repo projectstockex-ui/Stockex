@@ -4,7 +4,7 @@ import User from '../models/User.js';
 
 export const ONE_CRORE = 10_000_000;
 
-/** ₹ amount from ₹/crore rate, turnover, and leg multiplier (1 = one leg, 2 = OPEN+CLOSE). */
+/**  amount from /crore rate, turnover, and leg multiplier (1 = one leg, 2 = OPEN+CLOSE). */
 export function perCroreRateToInr(ratePerCrore, turnover, legMultiplier = 1) {
   const rate = Number(ratePerCrore) || 0;
   const t = Number(turnover) || 0;
@@ -21,7 +21,7 @@ export function getAdminFranchiseRatePerCrore(admin) {
   return Number(admin?.restrictMode?.brokerageChargePerCrore) || 0;
 }
 
-/** Segment keys to try when resolving admin ₹/crore (crypto/forex aliases). */
+/** Segment keys to try when resolving admin /crore (crypto/forex aliases). */
 export function resolveFranchiseSegmentCandidates(segment, trade = null) {
   const primary = String(segment || '').toUpperCase();
   const keys = new Set();
@@ -48,7 +48,7 @@ export function getAdminSegmentPermissionSlice(admin, segment) {
 }
 
 /**
- * Franchise cascade ₹/crore for an admin: restrictMode first, then segment PER_CRORE, then defaults.
+ * Franchise cascade /crore for an admin: restrictMode first, then segment PER_CRORE, then defaults.
  */
 export function resolveAdminFranchiseRatePerCrore(admin, segment, trade = null) {
   if (admin?.role === 'SUPER_ADMIN') return 0;
@@ -233,14 +233,14 @@ export async function resolveFranchiseTradingContext(user, directAdmin) {
   };
 }
 
-/** One-way brokerage ₹ for client under franchise (PER_CRORE from franchiseChargePerCrore). */
+/** One-way brokerage  for client under franchise (PER_CRORE from franchiseChargePerCrore). */
 export function computeFranchiseUserOneWayBrokerage(user, turnover) {
   const rate = getUserFranchiseRatePerCrore(user);
   return perCroreRateToInr(rate, turnover, 1);
 }
 
 /**
- * Ensure parent ₹ levels never exceed child (direct admin highest → SA lowest).
+ * Ensure parent  levels never exceed child (direct admin highest → SA lowest).
  * Skips clamp when child level is unset (0) so downstream restrictMode rates are preserved.
  */
 export function normalizeFranchiseAdminInrLevels(adminInrs, hierarchyChain = []) {
@@ -258,7 +258,7 @@ export function normalizeFranchiseAdminInrLevels(adminInrs, hierarchyChain = [])
   return out;
 }
 
-/** Full ₹ at each admin's franchise rate for this distribution leg (same turnover × legMultiplier). */
+/** Full  at each admin's franchise rate for this distribution leg (same turnover × legMultiplier). */
 export function buildFranchiseAdminInrLevels(hierarchyChain, turnover, legMultiplier = 1, segment = null, trade = null) {
   const raw = (hierarchyChain || []).map((entry) =>
     perCroreRateToInr(resolveAdminFranchiseRatePerCrore(entry.admin, segment, trade), turnover, legMultiplier)
@@ -334,7 +334,7 @@ export function splitFranchiseBookPnL(totalAdminPnL, platformChargesPercentage) 
   };
 }
 
-/** Validate admin franchise ₹/crore: >= parent rate, <= downstream admin rates (when set). */
+/** Validate admin franchise /crore: >= parent rate, <= downstream admin rates (when set). */
 export async function validateAdminFranchiseRate(targetAdmin, newRatePerCrore) {
   if (!Number.isFinite(newRatePerCrore) || newRatePerCrore < 0) {
     return { ok: false, message: 'Rate must be a number >= 0' };
@@ -349,7 +349,7 @@ export async function validateAdminFranchiseRate(targetAdmin, newRatePerCrore) {
       if (parentRate > 0 && newRatePerCrore < parentRate) {
         return {
           ok: false,
-          message: `Rate must be >= parent (${parent.name || parent.username}) rate ₹${parentRate}/crore`,
+          message: `Rate must be >= parent (${parent.name || parent.username}) rate ${parentRate}/crore`,
         };
       }
     }
@@ -363,7 +363,7 @@ export async function validateAdminFranchiseRate(targetAdmin, newRatePerCrore) {
     if (childRate > 0 && newRatePerCrore < childRate) {
       return {
         ok: false,
-        message: `Rate cannot be below downstream admin (${child.name || child.username}) ₹${childRate}/crore`,
+        message: `Rate cannot be below downstream admin (${child.name || child.username}) ${childRate}/crore`,
       };
     }
   }
@@ -384,7 +384,7 @@ export async function validateUserFranchiseRate(user, newRatePerCrore) {
   if (managerRate > 0 && newRatePerCrore < managerRate) {
     return {
       ok: false,
-      message: `Client rate must be >= direct manager (${directAdmin.name || directAdmin.username}) rate ₹${managerRate}/crore`,
+      message: `Client rate must be >= direct manager (${directAdmin.name || directAdmin.username}) rate ${managerRate}/crore`,
     };
   }
 
@@ -411,7 +411,7 @@ export async function isUserInActiveFranchiseSubtree(user) {
 }
 
 /**
- * When franchise root is disabled, clear downstream ₹/crore rates so children cannot keep franchise UI/charges.
+ * When franchise root is disabled, clear downstream /crore rates so children cannot keep franchise UI/charges.
  */
 export async function clearFranchiseSubtreeRates(franchiseRootId) {
   const rootOid =

@@ -6,7 +6,7 @@ import { PlayCircle, TrendingUp, Shield, Zap, BarChart3, BookOpen, Target, Refre
 const features = [
   {
     icon: TrendingUp,
-    title: "₹1,00,000 Virtual Balance",
+    title: "1,00,000 Virtual Balance",
     description: "Start with a generous virtual balance to practice trading across all markets without any risk.",
   },
   {
@@ -55,7 +55,7 @@ const steps = [
   {
     step: "2",
     title: "Get Virtual Funds",
-    description: "Receive ₹1,00,000 virtual balance instantly credited to your account.",
+    description: "Receive 1,00,000 virtual balance instantly credited to your account.",
   },
   {
     step: "3",
@@ -111,11 +111,11 @@ export default function DemoTrading() {
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div className="bg-gray-800 rounded-lg p-3">
                       <div className="text-gray-400 text-xs mb-1">Balance</div>
-                      <div className="text-white font-bold text-lg">₹1,00,000</div>
+                      <div className="text-white font-bold text-lg">1,00,000</div>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-3">
                       <div className="text-gray-400 text-xs mb-1">P&L Today</div>
-                      <div className="text-green-400 font-bold text-lg">+₹2,450</div>
+                      <div className="text-green-400 font-bold text-lg">+2,450</div>
                     </div>
                   </div>
                   <div className="bg-gray-800 rounded-lg p-3">
@@ -200,7 +200,7 @@ export default function DemoTrading() {
             Ready to Start Learning?
           </h2>
           <p className="text-lg text-white/70 mb-8">
-            Open your free demo account today and start practicing with ₹1,00,000 virtual balance.
+            Open your free demo account today and start practicing with 1,00,000 virtual balance.
           </p>
           <Button className="bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold px-8 py-6 text-lg">
             Open Demo Account - It's Free

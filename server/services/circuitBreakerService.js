@@ -29,7 +29,7 @@ const CIRCUIT_DEFAULTS = {
 
 class CircuitBreakerService {
 
-  /** Indian exchange segments only — crypto/forex have no ₹ circuit bands. */
+  /** Indian exchange segments only — crypto/forex have no  circuit bands. */
   static instrumentUsesIndianCircuits(instrument, orderContext = {}) {
     if (!instrument) return false;
     if (instrument.isCrypto === true || orderContext.isCrypto) return false;
@@ -348,7 +348,7 @@ class CircuitBreakerService {
    * @param {Number} price - Circuit price
    */
   static notifyCircuitHit(instrument, type, price) {
-    console.log(`CIRCUIT HIT: ${instrument.symbol} hit ${type} circuit at ₹${price}`);
+    console.log(`CIRCUIT HIT: ${instrument.symbol} hit ${type} circuit at ${price}`);
     
     if (io) {
       io.emit('circuit_hit', {
@@ -396,14 +396,14 @@ class CircuitBreakerService {
     if (side === 'BUY' && !instrument.allowBuy) {
       return {
         allowed: false,
-        reason: `${instrument.symbol} is at UPPER CIRCUIT (₹${instrument.upperCircuit}). Only SELL orders allowed.`
+        reason: `${instrument.symbol} is at UPPER CIRCUIT (${instrument.upperCircuit}). Only SELL orders allowed.`
       };
     }
     
     if (side === 'SELL' && !instrument.allowSell) {
       return {
         allowed: false,
-        reason: `${instrument.symbol} is at LOWER CIRCUIT (₹${instrument.lowerCircuit}). Only BUY orders allowed.`
+        reason: `${instrument.symbol} is at LOWER CIRCUIT (${instrument.lowerCircuit}). Only BUY orders allowed.`
       };
     }
     
@@ -441,14 +441,14 @@ class CircuitBreakerService {
     if (upperCircuit > 0 && ref > upperCircuit) {
       return {
         valid: false,
-        reason: `Price ₹${ref} exceeds upper circuit limit ₹${upperCircuit}`
+        reason: `Price ${ref} exceeds upper circuit limit ${upperCircuit}`
       };
     }
     
     if (lowerCircuit > 0 && ref < lowerCircuit) {
       return {
         valid: false,
-        reason: `Price ₹${ref} is below lower circuit limit ₹${lowerCircuit}`
+        reason: `Price ${ref} is below lower circuit limit ${lowerCircuit}`
       };
     }
     

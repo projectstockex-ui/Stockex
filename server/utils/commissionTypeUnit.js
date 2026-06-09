@@ -1,14 +1,14 @@
 /**
  * Commission type helpers.
- * All commission types use ₹ (INR) as the unit.
- * PER_CRORE = ₹ per crore turnover (not percentage).
+ * All commission types use  (Stockex coins) as the unit.
+ * PER_CRORE =  per crore turnover (not percentage).
  */
 
 export const COMMISSION_TYPES = ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'];
 
 /** All commission types use INR — no PERCENT mode. */
 export function requiredUnitForCommissionType(commissionType) {
-  return 'INR';
+  return 'COINS';
 }
 
 /**

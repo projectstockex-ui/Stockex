@@ -53,10 +53,10 @@ export class ReferralTestRunner {
       console.log('='.repeat(80));
       console.log(`[TestRunner] Test started at: ${testStartTime.toISOString()}`);
       console.log(`[TestRunner] Test scenario: ${testConfig.description || 'Standard monishit -> hamsa referral'}`);
-      console.log(`[TestRunner] monishit amount: ₹${testConfig.monishitAmount}`);
-      console.log(`[TestRunner] hamsa amount: ₹${testConfig.hamsaAmount}`);
-      console.log(`[TestRunner] SuperAdmin threshold: ₹${testConfig.superAdminThreshold}`);
-      console.log(`[TestRunner] Expected referral commission: ₹${testConfig.expectedReferralCommission}`);
+      console.log(`[TestRunner] monishit amount: ${testConfig.monishitAmount}`);
+      console.log(`[TestRunner] hamsa amount: ${testConfig.hamsaAmount}`);
+      console.log(`[TestRunner] SuperAdmin threshold: ${testConfig.superAdminThreshold}`);
+      console.log(`[TestRunner] Expected referral commission: ${testConfig.expectedReferralCommission}`);
       console.log('-'.repeat(80));
 
       // Validate configuration
@@ -206,9 +206,9 @@ export class ReferralTestRunner {
     }
     
     console.log('\n🎯 Test Scenario Summary:');
-    console.log('  Phase 1: monishit trades ₹2000 → SuperAdmin earns ₹500 → monishit gets ₹0 referral');
-    console.log('  Phase 2: hamsa trades ₹2000 → SuperAdmin earns ₹500 more → monishit gets ₹1000 referral');
-    console.log(`  Expected: monishit receives ₹1000 referral commission after SuperAdmin reaches ₹1000 threshold`);
+    console.log('  Phase 1: monishit trades 2000 → SuperAdmin earns 500 → monishit gets 0 referral');
+    console.log('  Phase 2: hamsa trades 2000 → SuperAdmin earns 500 more → monishit gets 1000 referral');
+    console.log(`  Expected: monishit receives 1000 referral commission after SuperAdmin reaches 1000 threshold`);
   }
 
   countTotalChecks(results) {

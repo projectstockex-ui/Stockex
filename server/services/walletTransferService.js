@@ -142,7 +142,7 @@ class WalletTransferService {
     const { displayName, totalBalance, usedMargin, transferable } =
       this.getTransferableBalanceDetails(user, sourceWallet);
     const fmt = (n) =>
-      `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      `${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     const amt = roundTransferAmount(amount);
     const max = roundTransferAmount(transferable);
@@ -481,7 +481,7 @@ class WalletTransferService {
       return {
         success: true,
         transferId,
-        message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
+        message: `Successfully transferred ${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
         sourceBalance: ledgerSourceAfter,
         targetBalance: ledgerTargetAfter,
       };
@@ -566,7 +566,7 @@ class WalletTransferService {
         return {
           success: true,
           transferId,
-          message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
+          message: `Successfully transferred ${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
           sourceBalance: gamesWalletDebit.balance,
           targetBalance: ledgerTargetAfter
         };
@@ -677,7 +677,7 @@ class WalletTransferService {
         return {
           success: true,
           transferId,
-          message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
+          message: `Successfully transferred ${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
           sourceBalance: this.getTransferSourceBalance(updatedUser, sourceWallet),
           targetBalance: finalUser?.gamesWallet?.balance || 0,
         };
