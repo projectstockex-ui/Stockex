@@ -5,6 +5,7 @@ import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { resolveMainWalletBalance } from '../utils/resolveMainWalletBalance';
 import { formatCoins } from '../utils/stockexCoins.js';
+import { formatBrokerLocation } from '../utils/brokerLocation.js';
 import {
   Home, Wallet, Users, FileText, Copy, BarChart2, User, HelpCircle,
   LogOut, Menu, X, ChevronDown, Settings, Bell, Sun, Moon,
@@ -2292,9 +2293,8 @@ const UserDashboardNew = () => {
                       : `${broker.adminCode} - ${broker.role}`;
                     const ratingStars = '★'.repeat(broker.rating || 5) + '☆'.repeat(5 - (broker.rating || 5));
                     const extraInfo = [];
-                    if (broker.cityCode) {
-                      extraInfo.push(`${broker.cityCode}${broker.cityName ? ` - ${broker.cityName}` : ''}`);
-                    }
+                    const locLabel = formatBrokerLocation(broker);
+                    if (locLabel) extraInfo.push(locLabel);
                     if (broker.yearsOfExperience > 0) extraInfo.push(`${broker.yearsOfExperience} yrs`);
                     const extraInfoStr = extraInfo.length > 0 ? ` | ${extraInfo.join(' • ')}` : '';
                     return (

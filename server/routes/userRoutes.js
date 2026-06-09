@@ -2291,7 +2291,7 @@ router.get('/demo/available-brokers', protectUser, async (req, res) => {
       status: 'ACTIVE',
       role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] }
     })
-    .select('name username adminCode role parentId cityCode cityName certificate.rating certificate.yearsOfExperience')
+    .select('name username adminCode role parentId stateName stateCode cityName cityCode areaName areaPincode certificate.rating certificate.yearsOfExperience')
     .populate('parentId', 'adminCode username')
     .sort({ role: 1, name: 1 });
     
@@ -2303,8 +2303,12 @@ router.get('/demo/available-brokers', protectUser, async (req, res) => {
       adminCode: admin.adminCode,
       role: admin.role,
       parentCode: admin.parentId?.adminCode || null,
-      cityCode: admin.cityCode || '',
+      stateName: admin.stateName || '',
+      stateCode: admin.stateCode || '',
       cityName: admin.cityName || '',
+      cityCode: admin.cityCode || '',
+      areaName: admin.areaName || '',
+      areaPincode: admin.areaPincode || '',
       rating: admin.certificate?.rating || 5,
       yearsOfExperience: admin.certificate?.yearsOfExperience || 0
     }));

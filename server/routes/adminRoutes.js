@@ -92,8 +92,8 @@ router.get('/brokers/public', async (req, res) => {
       role: { $in: ['BROKER', 'SUB_BROKER'] },
       status: 'ACTIVE',
     })
-      .select('adminCode role cityCode cityName')
-      .sort({ cityName: 1, adminCode: 1 });
+      .select('adminCode role stateName stateCode cityName cityCode areaName areaPincode')
+      .sort({ stateName: 1, cityName: 1, areaName: 1, adminCode: 1 });
 
     res.json({ brokers });
   } catch (error) {

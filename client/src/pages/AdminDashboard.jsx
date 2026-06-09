@@ -67,6 +67,8 @@ import McxSegmentAdminExtras from '../components/admin/dashboard/ui/McxSegmentAd
 import NseBseSegmentAdminExtras from '../components/admin/dashboard/ui/NseBseSegmentAdminExtras.jsx';
 import TradeCloseBreakdownPanel from '../components/trading/TradeCloseBreakdownPanel.jsx';
 import IndividualPattiSharingModal from '../components/admin/dashboard/modals/IndividualPattiSharingModal.jsx';
+import BrokerLocationFields, { EMPTY_BROKER_LOCATION } from '../components/admin/BrokerLocationFields.jsx';
+import { formatBrokerLocation } from '../utils/brokerLocation.js';
 import ReferralGamesTradingToggles from '../components/admin/dashboard/modals/ReferralGamesTradingToggles.jsx';
 import WalletProfitBlockToggles from '../components/admin/dashboard/ui/WalletProfitBlockToggles.jsx';
 import { buildWalletBlocksState } from '../lib/walletProfitBlock.js';
@@ -8083,17 +8085,9 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
 
     parentAdminId: '', // For assigning broker/sub-broker under specific parent
 
-    cityCode: '', // Pincode area — shown in Choose Your Broker
-
-    cityName: '', // Area name — shown in Choose Your Broker
+    ...EMPTY_BROKER_LOCATION,
 
     refundableSecurityAmount: '',
-
-    autosquare: 0, // Auto square position at percentage loss
-
-    breakupQuantity: 0, // Breakup quantity per order
-
-    maxLotQuantity: 0 // Max lot quantity per order
 
   });
 
@@ -8486,28 +8480,10 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
             {['BROKER', 'SUB_BROKER'].includes(formData.role) && (
               <div className="bg-dark-700/50 rounded-lg p-4 border border-cyan-500/20 space-y-3">
                 <h4 className="text-sm font-semibold text-cyan-400">Broker area (shown in Choose Your Broker)</h4>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Pincode Area *</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 110001, DEL, MUM"
-                    value={formData.cityCode}
-                    onChange={e => setFormData({ ...formData, cityCode: e.target.value.toUpperCase() })}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Area Name *</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Delhi, Mumbai, Bangalore"
-                    value={formData.cityName}
-                    onChange={e => setFormData({ ...formData, cityName: e.target.value })}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                    required
-                  />
-                </div>
+                <BrokerLocationFields
+                  value={formData}
+                  onChange={(loc) => setFormData((prev) => ({ ...prev, ...loc }))}
+                />
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Refundable Security Amount *</label>
                   <input
@@ -8546,97 +8522,6 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
               pattern="[0-9]{4,6}"
 
             />
-
-
-
-            {/* Trading Limits */}
-
-            <div className="bg-dark-700/50 rounded-lg p-4 border border-dark-600">
-
-              <h4 className="text-sm font-semibold text-cyan-400 mb-3">Trading Limits</h4>
-
-              <div className="space-y-3">
-
-                <div>
-
-                  <label className="block text-xs text-gray-400 mb-1">Auto Square (%)</label>
-
-                  <input
-
-                    type="number"
-
-                    step="0.1"
-
-                    min="0"
-
-                    max="100"
-
-                    placeholder="0 = disabled"
-
-                    value={formData.autosquare || 0}
-
-                    onChange={e => setFormData({ ...formData, autosquare: parseFloat(e.target.value) || 0 })}
-
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                  />
-
-                  <p className="text-xs text-gray-500 mt-1">Auto square position at percentage loss</p>
-
-                </div>
-
-                <div>
-
-                  <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-
-                  <input
-
-                    type="number"
-
-                    min="0"
-
-                    placeholder="0 = no limit"
-
-                    value={formData.breakupQuantity || 0}
-
-                    onChange={e => setFormData({ ...formData, breakupQuantity: parseInt(e.target.value) || 0 })}
-
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                  />
-
-                  <p className="text-xs text-gray-500 mt-1">Maximum quantity per single order</p>
-
-                </div>
-
-                <div>
-
-                  <label className="block text-xs text-gray-400 mb-1">Max Lot Quantity (Per Order)</label>
-
-                  <input
-
-                    type="number"
-
-                    min="0"
-
-                    placeholder="0 = no limit"
-
-                    value={formData.maxLotQuantity || 0}
-
-                    onChange={e => setFormData({ ...formData, maxLotQuantity: parseInt(e.target.value) || 0 })}
-
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                  />
-
-                  <p className="text-xs text-gray-500 mt-1">Maximum lots per single order</p>
-
-                </div>
-
-              </div>
-
-            </div>
-
 
 
             <div className="flex gap-3 mt-4">
@@ -32260,7 +32145,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
     return securityRows.filter((row) => {
 
-      const blob = [row.brokerName, row.adminCode, row.cityCode, row.cityName, row.role]
+      const blob = [row.brokerName, row.adminCode, formatBrokerLocation(row), row.role]
 
         .filter(Boolean)
 
@@ -33194,9 +33079,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                   <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date</th>
 
-                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Area pincode</th>
-
-                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Area name</th>
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Location</th>
 
                   <th className="text-right px-3 py-2 text-gray-400 font-semibold">Amount</th>
 
@@ -33224,9 +33107,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                     </td>
 
-                    <td className="px-3 py-2 font-mono text-blue-400">{row.cityCode || '—'}</td>
-
-                    <td className="px-3 py-2 text-gray-300">{row.cityName || '—'}</td>
+                    <td className="px-3 py-2 text-gray-300 text-xs">{formatBrokerLocation(row) || '—'}</td>
 
                     <td className="px-3 py-2 text-right font-bold text-amber-300 tabular-nums">
 

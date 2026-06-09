@@ -4,6 +4,13 @@ import { useAuth } from '../context/AuthContext';
 import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2, CheckCircle, MapPin } from 'lucide-react';
 import axios from 'axios';
 import { StockExLogo } from '../components/StockExLogo';
+import {
+  getSortedStates,
+  getCitiesForState,
+  formatBrokerLocation,
+  brokerMatchesLocationFilters,
+  brokerMatchesSearch,
+} from '../utils/brokerLocation.js';
 
 const UserLogin = () => {
   const [searchParams] = useSearchParams();
@@ -35,6 +42,8 @@ const UserLogin = () => {
   const [selectedBroker, setSelectedBroker] = useState(null);
   const [showBrokerModal, setShowBrokerModal] = useState(false);
   const [brokerSearch, setBrokerSearch] = useState('');
+  const [brokerFilterState, setBrokerFilterState] = useState('');
+  const [brokerFilterCity, setBrokerFilterCity] = useState('');
 
   // OTP verification state
   const [phoneVerified, setPhoneVerified] = useState(false);
@@ -115,13 +124,15 @@ const UserLogin = () => {
     }
   };
   
-  // Filter brokers by search
-  const filteredBrokers = allBrokers.filter(b => {
-    const searchLower = brokerSearch.toLowerCase();
+  const brokerFilterCities = brokerFilterState ? getCitiesForState(brokerFilterState) : [];
+
+  const filteredBrokers = allBrokers.filter((b) => {
+    const searchLower = brokerSearch.trim().toLowerCase();
     return (
-      (b.adminCode || '').toLowerCase().includes(searchLower) ||
-      (b.cityCode || '').toLowerCase().includes(searchLower) ||
-      (b.cityName || '').toLowerCase().includes(searchLower)
+      brokerMatchesLocationFilters(b, {
+        stateName: brokerFilterState,
+        cityName: brokerFilterCity,
+      }) && brokerMatchesSearch(b, searchLower)
     );
   });
   
@@ -130,11 +141,15 @@ const UserLogin = () => {
     setSelectedBroker(broker);
     setShowBrokerModal(false);
     setBrokerSearch('');
+    setBrokerFilterState('');
+    setBrokerFilterCity('');
   };
-  
-  // Open broker modal
+
   const openBrokerModal = () => {
     fetchBrokers();
+    setBrokerSearch('');
+    setBrokerFilterState('');
+    setBrokerFilterCity('');
     setShowBrokerModal(true);
   };
   
@@ -613,11 +628,9 @@ const UserLogin = () => {
                   <div>
                     <div className="text-xs text-gray-400">Registering under</div>
                     <div className="text-green-400 font-mono font-medium">{selectedBroker.adminCode}</div>
-                    {(selectedBroker.cityCode || selectedBroker.cityName) && (
+                    {formatBrokerLocation(selectedBroker) && (
                       <div className="text-xs text-gray-400 mt-0.5">
-                        {selectedBroker.cityCode}
-                        {selectedBroker.cityCode && selectedBroker.cityName ? ' · ' : ''}
-                        {selectedBroker.cityName}
+                        {formatBrokerLocation(selectedBroker)}
                       </div>
                     )}
                   </div>
@@ -761,22 +774,52 @@ const UserLogin = () => {
             <div className="p-4 border-b border-dark-600 flex items-center justify-between">
               <h2 className="text-xl font-bold text-white">Choose Your Broker</h2>
               <button
-                onClick={() => { setShowBrokerModal(false); setBrokerSearch(''); }}
+                onClick={() => {
+                  setShowBrokerModal(false);
+                  setBrokerSearch('');
+                  setBrokerFilterState('');
+                  setBrokerFilterCity('');
+                }}
                 className="text-gray-400 hover:text-white"
               >
                 <X size={24} />
               </button>
             </div>
 
-            {/* Search Bar */}
-            <div className="p-4 border-b border-dark-600">
+            <div className="p-4 border-b border-dark-600 space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={brokerFilterState}
+                  onChange={(e) => {
+                    setBrokerFilterState(e.target.value);
+                    setBrokerFilterCity('');
+                  }}
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">All states</option>
+                  {getSortedStates().map((s) => (
+                    <option key={s.stateCode} value={s.state}>{s.state}</option>
+                  ))}
+                </select>
+                <select
+                  value={brokerFilterCity}
+                  onChange={(e) => setBrokerFilterCity(e.target.value)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm"
+                  disabled={!brokerFilterState}
+                >
+                  <option value="">{brokerFilterState ? 'All cities' : 'Select state'}</option>
+                  {brokerFilterCities.map((c) => (
+                    <option key={c.cityCode} value={c.city}>{c.city}</option>
+                  ))}
+                </select>
+              </div>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                 <input
                   type="text"
                   value={brokerSearch}
                   onChange={(e) => setBrokerSearch(e.target.value)}
-                  placeholder="Search by code or area..."
+                  placeholder="Search by code, state, city, area..."
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:border-green-500 transition"
                   autoFocus
                 />
@@ -802,18 +845,10 @@ const UserLogin = () => {
                           <div className="font-mono font-semibold text-green-400 text-lg mb-1.5">
                             {broker.adminCode}
                           </div>
-                          {(broker.cityCode || broker.cityName) ? (
+                          {formatBrokerLocation(broker) ? (
                             <div className="flex items-center gap-1.5 text-sm text-gray-300">
                               <MapPin size={14} className="text-blue-400 shrink-0" />
-                              <span className="truncate">
-                                {broker.cityCode && (
-                                  <span className="text-blue-400 font-medium">{broker.cityCode}</span>
-                                )}
-                                {broker.cityCode && broker.cityName && (
-                                  <span className="text-gray-500"> · </span>
-                                )}
-                                {broker.cityName && <span>{broker.cityName}</span>}
-                              </span>
+                              <span className="truncate">{formatBrokerLocation(broker)}</span>
                             </div>
                           ) : (
                             <div className="text-xs text-gray-500">Area not set</div>
@@ -832,7 +867,12 @@ const UserLogin = () => {
             {/* Modal Footer */}
             <div className="p-4 border-t border-dark-600">
               <button
-                onClick={() => { setShowBrokerModal(false); setBrokerSearch(''); }}
+                onClick={() => {
+                  setShowBrokerModal(false);
+                  setBrokerSearch('');
+                  setBrokerFilterState('');
+                  setBrokerFilterCity('');
+                }}
                 className="w-full bg-dark-600 hover:bg-dark-500 py-2 rounded-lg transition"
               >
                 Cancel

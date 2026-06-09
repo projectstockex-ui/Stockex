@@ -38,6 +38,8 @@ import User from '../models/User.js';
 
 import RefundableSecurityDeposit from '../models/RefundableSecurityDeposit.js';
 
+import { resolveLocationSelection } from '../utils/brokerLocation.js';
+
 import adminSegmentSettingsController from '../controllers/adminSegmentSettingsController.js';
 
 import userSegmentSettingsController from '../controllers/userSegmentSettingsController.js';
@@ -719,7 +721,7 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
   try {
 
-    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, cityCode, cityName, refundableSecurityAmount, autosquare, breakupQuantity, maxLotQuantity } = req.body;
+    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, stateName, stateCode, cityName, cityCode, areaName, areaPincode, refundableSecurityAmount, autosquare, breakupQuantity, maxLotQuantity } = req.body;
 
     
 
@@ -759,17 +761,22 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
     }
 
-    const normalizedCityCode = String(cityCode || '').trim().toUpperCase();
-
-    const normalizedCityName = String(cityName || '').trim();
-
     const normalizedSecurityAmount = Number(refundableSecurityAmount);
+
+    let brokerLocation = null;
 
     if (['BROKER', 'SUB_BROKER'].includes(roleToCreate)) {
 
-      if (!normalizedCityCode || !normalizedCityName) {
+      brokerLocation = resolveLocationSelection({
+        stateName: String(stateName || '').trim(),
+        cityName: String(cityName || '').trim(),
+        areaName: String(areaName || '').trim(),
+        areaPincode: String(areaPincode || '').trim(),
+      });
 
-        return res.status(400).json({ message: 'Pincode area and area name are required for broker/sub-broker' });
+      if (!brokerLocation) {
+
+        return res.status(400).json({ message: 'Valid state, city, and area are required for broker/sub-broker' });
 
       }
 
@@ -1090,9 +1097,7 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
       leverageSettings,
 
-      cityCode: normalizedCityCode,
-
-      cityName: normalizedCityName,
+      ...(brokerLocation || {}),
 
       createdBy: req.admin._id,
 
@@ -1116,9 +1121,7 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
         role: roleToCreate,
 
-        cityCode: normalizedCityCode,
-
-        cityName: normalizedCityName,
+        ...brokerLocation,
 
         amount: normalizedSecurityAmount,
 
@@ -1210,9 +1213,15 @@ router.get('/refundable-security-feed', protectAdmin, superAdminOnly, async (req
 
         { adminCode: re },
 
-        { cityCode: re },
+        { stateName: re },
 
         { cityName: re },
+
+        { cityCode: re },
+
+        { areaName: re },
+
+        { areaPincode: re },
 
       ];
 

@@ -559,15 +559,13 @@ const adminSchema = new mongoose.Schema({
     }
   },
 
-  // Broker location information for user selection
-  cityCode: {
-    type: String,
-    default: '' // e.g., "DEL", "MUM", "BLR"
-  },
-  cityName: {
-    type: String,
-    default: '' // e.g., "Delhi", "Mumbai", "Bangalore"
-  },
+  // Broker location — State → City → Area (predefined list)
+  stateName: { type: String, default: '' },
+  stateCode: { type: String, default: '' },
+  cityName: { type: String, default: '' }, // City name e.g. Bengaluru
+  cityCode: { type: String, default: '' }, // City code e.g. BLR
+  areaName: { type: String, default: '' },
+  areaPincode: { type: String, default: '' },
   
   // Restrict Mode - Limit number of users under this admin
   // Set by Super Admin for Admin/Broker/SubBroker
