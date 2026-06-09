@@ -30,6 +30,9 @@ Thumbs.db
 *.swo
 *~
 
+# Mobile app — separate repo (do not push with web)
+Stockex-client/
+
 # Build output
 dist/
 build/
