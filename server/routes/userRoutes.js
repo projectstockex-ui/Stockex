@@ -2328,10 +2328,15 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     // Find the admin to assign to
     let admin;
     if (selectedBrokerCode) {
-      admin = await Admin.findOne({ adminCode: selectedBrokerCode.trim().toUpperCase() });
+      const raw = String(selectedBrokerCode).trim();
+      admin = await Admin.findOne({ adminCode: raw.toUpperCase() });
       // If not found by adminCode, try searching by username
       if (!admin) {
-        admin = await Admin.findOne({ username: selectedBrokerCode.trim().toLowerCase() });
+        admin = await Admin.findOne({ username: raw.toLowerCase() });
+      }
+      // Legacy clients sent MongoDB _id in the dropdown value
+      if (!admin && /^[a-f\d]{24}$/i.test(raw)) {
+        admin = await Admin.findById(raw);
       }
       if (!admin) {
         return res.status(400).json({ message: 'Invalid broker code' });

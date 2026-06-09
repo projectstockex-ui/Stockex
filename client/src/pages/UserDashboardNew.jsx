@@ -2298,7 +2298,7 @@ const UserDashboardNew = () => {
                     if (broker.yearsOfExperience > 0) extraInfo.push(`${broker.yearsOfExperience} yrs`);
                     const extraInfoStr = extraInfo.length > 0 ? ` | ${extraInfo.join(' • ')}` : '';
                     return (
-                      <option key={broker._id} value={broker._id}>
+                      <option key={broker._id} value={broker.adminCode}>
                         {displayText} {ratingStars}{extraInfoStr}
                       </option>
                     );
