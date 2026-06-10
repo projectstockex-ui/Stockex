@@ -31345,9 +31345,9 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
   const isFranchiseBook = feedMode === 'franchise';
 
-  const [scope, setScope] = useState('main');
+  const [scope, setScope] = useState('sa-main');
 
-  const [txKind, setTxKind] = useState('');
+  const [txKind, setTxKind] = useState('CREDIT');
 
   const [reasonGroup, setReasonGroup] = useState('');
 
@@ -31433,15 +31433,15 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
   useEffect(() => {
 
-    if (scope === 'main') setGamesGameId('');
-
-    else if (scope === 'games') {
+    if (scope === 'games') {
 
       setReasonGroup('');
 
       setMainGameKey('');
 
-    } else if (scope === 'security' || scope === 'distributed' || scope === 'kuber' || scope === 'sa-main') {
+      setTxKind('CREDIT');
+
+    } else if (scope === 'security' || scope === 'distributed') {
 
       setReasonGroup('');
 
@@ -31450,6 +31450,16 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
       setGamesGameId('');
 
       setTxKind('');
+
+    } else if (scope === 'kuber' || scope === 'sa-main') {
+
+      setReasonGroup('');
+
+      setMainGameKey('');
+
+      setGamesGameId('');
+
+      setTxKind('CREDIT');
 
     }
 
@@ -32505,28 +32515,6 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           type="button"
 
-          onClick={() => setScope('main')}
-
-          className={`rounded-xl border px-3 py-3 text-left transition ${scope === 'main'
-
-              ? 'bg-blue-600 border-white/20 text-white shadow-lg'
-
-              : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
-
-            }`}
-
-        >
-
-          <div className="font-bold text-sm">Clients main</div>
-
-          <div className="text-[10px] opacity-90 mt-0.5">All users trading ledger</div>
-
-        </button>
-
-        <button
-
-          type="button"
-
           onClick={() => setScope('sa-main')}
 
           className={`rounded-xl border px-3 py-3 text-left transition ${scope === 'sa-main'
@@ -33151,7 +33139,10 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           )}
 
-          {(txKind === 'CREDIT' || txKind === 'DEBIT') && (
+          {(txKind === 'CREDIT' || txKind === 'DEBIT') &&
+            scope !== 'sa-main' &&
+            scope !== 'games' &&
+            scope !== 'kuber' && (
 
             <p className="text-[11px] text-amber-200/90 bg-amber-950/25 border border-amber-500/25 rounded-lg px-3 py-2">
 
@@ -33375,7 +33366,11 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           {[
 
-            { id: '', label: 'All lines', title: 'All loaded rows (client + your account columns)' },
+            ...(scope !== 'sa-main' && scope !== 'games' && scope !== 'kuber'
+
+              ? [{ id: '', label: 'All lines', title: 'All loaded rows (client + your account columns)' }]
+
+              : []),
 
             {
 
