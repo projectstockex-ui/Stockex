@@ -8,6 +8,14 @@ export const KUBER_POOL_DEBIT_KIND = 'PATTI_KUBER_SHARE';
 export const SA_PERSONAL_PATTI_DEBIT_KIND = 'PATTI_SA_PERSONAL_SHARE';
 export const FRANCHISE_KUBER_SHARE_KIND = 'FRANCHISE_KUBER_SHARE';
 export const KUBER_TO_MAIN_TRANSFER_KIND = 'KUBER_TO_MAIN_TRANSFER';
+export const KUBER_POOL_BOOTSTRAP_KIND = 'KUBER_POOL_BOOTSTRAP';
+
+export const INSUFFICIENT_SA_WALLET_MSG =
+  'Not sufficient amount in main wallet or in Kuber wallet — please check';
+
+export function insufficientKuberBalanceMsg(available) {
+  return `Insufficient Kuber wallet balance. Available: ${Number(available || 0).toLocaleString('en-IN')}`;
+}
 
 function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
@@ -18,15 +26,6 @@ async function findActiveSuperAdmin() {
     '_id adminCode username wallet kuberWallet'
   );
 }
-
-/**
- * Kuber % of SA funding when crediting a downline admin:
- * - Franchise root → 100% Kuber
- * - Patti credit → admin's patti % (e.g. 75% Kuber, 25% main)
- * - Normal admin → 0% Kuber (100% main)
- */
-export const INSUFFICIENT_SA_WALLET_MSG =
-  'Not sufficient amount in main wallet or in Kuber wallet — please check';
 
 /** Max enabled patti segment % for manual fund-deposit split. */
 export function resolvePattiChildPctForFunding(targetAdmin) {
@@ -78,11 +77,7 @@ export function validateSaFundingBalances(saDoc, total, kuberPct) {
 export function resolveSaFundingKuberPct(recipientAdmin, { isPattiCredit = false, pattiChildPct } = {}) {
   if (!recipientAdmin || recipientAdmin.role === 'SUPER_ADMIN') return null;
   if (recipientAdmin.isFranchiseRoot === true) return 100;
-  if (
-    isPattiCredit &&
-    pattiChildPct != null &&
-    Number.isFinite(Number(pattiChildPct))
-  ) {
+  if (isPattiCredit && pattiChildPct != null && Number.isFinite(Number(pattiChildPct))) {
     return Math.min(100, Math.max(0, Number(pattiChildPct)));
   }
   return 0;
@@ -110,10 +105,6 @@ function kuberDebitKind(kuberPct, isFranchise) {
   return KUBER_POOL_DEBIT_KIND;
 }
 
-/**
- * Fund downline admin credit from Super Admin wallets.
- * kuberPct: % of amount from Kuber wallet; remainder from main wallet.
- */
 export async function fundAdminShareFromSaWallets(amount, kuberPct, description, meta = {}) {
   const signed = Number(amount);
   const total = roundMoney(Math.abs(signed));
@@ -164,7 +155,7 @@ export async function fundAdminShareFromSaWallets(amount, kuberPct, description,
 
   const adminLabel =
     meta.targetAdminName || meta.targetAdminCode || meta.pattiRootAdminName || 'admin';
-  const shareLabel = fundingLabel(pct, isFranchise || meta.recipientIsFranchise);
+  const shareLabel = fundingLabel(pct, isFranchise);
   const baseMeta = {
     adminFunding: true,
     fundingKuberPct: pct,
@@ -190,7 +181,7 @@ export async function fundAdminShareFromSaWallets(amount, kuberPct, description,
         ...baseMeta,
         walletSource: 'KUBER',
         kuberWallet: true,
-        poolDebitKind: kuberDebitKind(pct, meta.recipientIsFranchise),
+        poolDebitKind: kuberDebitKind(pct, isFranchise),
       },
       reference: meta.reference || undefined,
     });
@@ -226,13 +217,55 @@ export async function fundAdminShareFromSaWallets(amount, kuberPct, description,
   return { ok: true, kuberBalanceAfter: kuberBal, mainBalanceAfter: mainBal, kuber, personal };
 }
 
-/** @deprecated Use fundAdminShareFromSaWallets */
 export async function fundPattiShareToAdmin(amount, childPct, description, meta = {}) {
   return fundAdminShareFromSaWallets(amount, childPct, description, meta);
 }
 
 export function splitPattiFundingByChildPct(total, childPct) {
   return splitFundingByKuberPct(total, childPct);
+}
+
+/** Top up Kuber wallet balance to 100 crore (only the shortfall is credited). */
+export async function bootstrapKuberWalletToMax(meta = {}) {
+  const sa = await findActiveSuperAdmin();
+  if (!sa) throw new Error('No active Super Admin');
+
+  const current = roundMoney(sa.kuberWallet?.balance ?? 0);
+  const topUp = roundMoney(KUBER_WALLET_MAX_BALANCE - current);
+  if (topUp < 0.01) {
+    return {
+      ok: true,
+      skipped: true,
+      message: 'Kuber wallet is already at 100 crore',
+      kuberBalanceAfter: current,
+    };
+  }
+
+  sa.kuberWallet.balance = KUBER_WALLET_MAX_BALANCE;
+  sa.kuberWallet.totalDeposited = roundMoney((sa.kuberWallet.totalDeposited || 0) + topUp);
+  await sa.save();
+
+  await WalletLedger.create({
+    ownerType: 'ADMIN',
+    ownerId: sa._id,
+    adminCode: sa.adminCode,
+    type: 'CREDIT',
+    reason: 'ADJUSTMENT',
+    amount: topUp,
+    balanceAfter: KUBER_WALLET_MAX_BALANCE,
+    description: meta.description || `Kuber pool topped up to 100 crore (+${topUp.toLocaleString('en-IN')})`,
+    meta: {
+      walletSource: 'KUBER',
+      kuberWallet: true,
+      poolDebitKind: KUBER_POOL_BOOTSTRAP_KIND,
+    },
+  });
+
+  return {
+    ok: true,
+    toppedUp: topUp,
+    kuberBalanceAfter: KUBER_WALLET_MAX_BALANCE,
+  };
 }
 
 /**
@@ -249,16 +282,19 @@ export async function transferKuberToMainWallet(amount, meta = {}) {
 
   const kuberBefore = roundMoney(sa.kuberWallet?.balance ?? 0);
   if (kuberBefore < amt) {
-    throw new Error(INSUFFICIENT_SA_WALLET_MSG);
+    throw new Error(insufficientKuberBalanceMsg(kuberBefore));
   }
 
   sa.kuberWallet.balance = roundMoney(kuberBefore - amt);
+  sa.kuberWallet.totalWithdrawn = roundMoney((sa.kuberWallet.totalWithdrawn || 0) + amt);
   sa.wallet.balance = roundMoney((sa.wallet?.balance ?? 0) + amt);
   await sa.save();
 
   const kuberAfter = sa.kuberWallet.balance;
   const mainAfter = sa.wallet.balance;
-  const desc = meta.description || `Kuber wallet → Main wallet transfer (${amt.toFixed(2)})`;
+  const desc =
+    meta.description ||
+    `Kuber wallet → Main wallet transfer (${amt.toLocaleString('en-IN')})`;
 
   await WalletLedger.create({
     ownerType: 'ADMIN',
@@ -274,6 +310,7 @@ export async function transferKuberToMainWallet(amount, meta = {}) {
       kuberWallet: true,
       poolDebitKind: KUBER_TO_MAIN_TRANSFER_KIND,
       transferDirection: 'KUBER_TO_MAIN',
+      transferAmount: amt,
       ...(meta.performedBy ? { performedBy: meta.performedBy } : {}),
     },
   });
@@ -286,11 +323,13 @@ export async function transferKuberToMainWallet(amount, meta = {}) {
     reason: 'ADJUSTMENT',
     amount: amt,
     balanceAfter: mainAfter,
-    description: desc,
+    description: `Credit from Kuber wallet — ${amt.toLocaleString('en-IN')} transferred to Main wallet`,
     meta: {
       walletSource: 'MAIN',
       poolDebitKind: KUBER_TO_MAIN_TRANSFER_KIND,
       transferDirection: 'KUBER_TO_MAIN',
+      transferAmount: amt,
+      creditFromKuber: true,
       ...(meta.performedBy ? { performedBy: meta.performedBy } : {}),
     },
   });

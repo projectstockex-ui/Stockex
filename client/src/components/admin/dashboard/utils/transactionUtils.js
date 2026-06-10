@@ -24,7 +24,7 @@ export function yourAccountFromClientTx(tx) {
   const abs = amt.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
   /** Pool / Kuber rows — already "your" DEBIT/CREDIT, do not flip. */
-  if (tx.saPoolDebit || tx.kuberWalletTx) {
+  if (tx.saPoolDebit || tx.kuberWalletTx || tx.saMainWalletTx) {
     if (tx.type === 'DEBIT') {
       return {
         state: 'DEBIT',

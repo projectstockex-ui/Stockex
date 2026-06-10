@@ -128,9 +128,19 @@ const seedHierarchy = async () => {
     // ========== 1. SUPER ADMIN ==========
     let superAdmin = await Admin.findOne({ role: 'SUPER_ADMIN' });
     
+    const KUBER_POOL_MAX = 1_000_000_000; // 100 crore
+
     if (superAdmin) {
       console.log('✓ Super Admin already exists!');
       console.log('  Email:', superAdmin.email);
+      const kuberBal = Number(superAdmin.kuberWallet?.balance) || 0;
+      if (kuberBal < KUBER_POOL_MAX) {
+        await Admin.updateOne(
+          { _id: superAdmin._id },
+          { $set: { 'kuberWallet.balance': KUBER_POOL_MAX } }
+        );
+        console.log('  Kuber wallet topped up to 100 crore');
+      }
     } else {
       superAdmin = await Admin.create({
         role: 'SUPER_ADMIN',
@@ -142,6 +152,7 @@ const seedHierarchy = async () => {
         password: 'admin123', 
         pin: '1234',
         wallet: { balance: 10000000 }, // 1 Crore initial balance
+        kuberWallet: { balance: KUBER_POOL_MAX },
         hierarchyLevel: 0,
         hierarchyPath: [],
         segmentPermissions: defaultSegmentPermissions

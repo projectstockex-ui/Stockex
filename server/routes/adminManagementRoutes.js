@@ -96,6 +96,7 @@ import {
 import { isAdminInActivePattiSubtree, findPattiSubtreeRootAdmin } from '../utils/pattiSubtree.js';
 import {
   transferKuberToMainWallet,
+  bootstrapKuberWalletToMax,
   fundAdminShareFromSaWallets,
   resolveFundingPlanForAdmin,
   validateSaFundingBalances,
@@ -103,6 +104,44 @@ import {
   KUBER_WALLET_MAX_BALANCE,
   INSUFFICIENT_SA_WALLET_MSG,
 } from '../utils/kuberWallet.js';
+
+function mapSaWalletLedgerRow(row, { walletKind = 'kuber' } = {}) {
+  const m = row.meta && typeof row.meta === 'object' ? row.meta : {};
+  const isKuberToMain =
+    m.transferDirection === 'KUBER_TO_MAIN' || m.poolDebitKind === 'KUBER_TO_MAIN_TRANSFER';
+  let reasonLabel =
+    walletKind === 'kuber'
+      ? 'KUBER_WALLET'
+      : m.creditFromKuber
+        ? 'CREDIT_FROM_KUBER'
+        : 'SA_MAIN_WALLET';
+  let description = row.description || '';
+  if (walletKind === 'kuber' && isKuberToMain && row.type === 'DEBIT') {
+    description = `Transferred to Main wallet — ${Number(row.amount || 0).toLocaleString('en-IN')}`;
+  }
+  if (walletKind === 'main' && m.creditFromKuber && row.type === 'CREDIT') {
+    description = `Credit from Kuber wallet — ${Number(row.amount || 0).toLocaleString('en-IN')}`;
+  }
+  return {
+    _id: row._id,
+    createdAt: row.createdAt,
+    type: row.type,
+    reason: reasonLabel,
+    description,
+    amount: row.amount,
+    balanceAfter: row.balanceAfter,
+    adminCode: '',
+    ownerId: null,
+    ownerUsername: '',
+    ownerFullName: walletKind === 'kuber' ? 'Kuber wallet' : 'Your main wallet',
+    meta: m,
+    reference: row.reference || { type: 'Manual', id: null },
+    performedBy: row.performedBy || null,
+    gamesWallet: false,
+    kuberWalletTx: walletKind === 'kuber',
+    saMainWalletTx: walletKind === 'main',
+  };
+}
 import {
   applyPattiSubtreeFromAdminRoot,
   applyPattiOnDirectChild,
@@ -8420,6 +8459,22 @@ router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req
 
  */
 
+/** Super Admin — top up Kuber pool to 100 crore */
+router.post('/kuber-wallet/bootstrap-pool', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const result = await bootstrapKuberWalletToMax({ performedBy: req.admin._id });
+    res.json({
+      message: result.skipped
+        ? result.message
+        : `Kuber wallet topped up by ${Number(result.toppedUp || 0).toLocaleString('en-IN')} to 100 crore`,
+      ...result,
+      kuberWalletMax: KUBER_WALLET_MAX_BALANCE,
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Bootstrap failed' });
+  }
+});
+
 /** Super Admin — main + Kuber wallet balances for fund modal */
 router.get('/kuber-wallet/balances', protectAdmin, superAdminOnly, async (req, res) => {
   try {
@@ -8482,7 +8537,13 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
     const scopeRaw = String(req.query.scope || 'main').toLowerCase();
     const scope =
-      scopeRaw === 'games' ? 'games' : scopeRaw === 'kuber' ? 'kuber' : 'main';
+      scopeRaw === 'games'
+        ? 'games'
+        : scopeRaw === 'kuber'
+          ? 'kuber'
+          : scopeRaw === 'sa-main'
+            ? 'sa-main'
+            : 'main';
 
     const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
 
@@ -8585,27 +8646,82 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
       const transactions = rows.map((row) => {
         const relKey = row.meta?.relatedUserId ? String(row.meta.relatedUserId) : '';
         const u = relKey ? relMap.get(relKey) : null;
-        return {
-          _id: row._id,
-          createdAt: row.createdAt,
-          type: row.type,
-          reason: 'KUBER_WALLET',
-          description: row.description || '',
-          amount: row.amount,
-          balanceAfter: row.balanceAfter,
-          adminCode: u?.adminCode || '',
-          ownerId: row.meta?.relatedUserId || null,
-          ownerUsername: u?.username || '',
-          ownerFullName: u?.fullName || '',
-          meta: row.meta && typeof row.meta === 'object' ? row.meta : {},
-          reference: row.reference || { type: 'Manual', id: null },
-          performedBy: row.performedBy || null,
-          gamesWallet: false,
-          kuberWalletTx: true,
-        };
+        const mapped = mapSaWalletLedgerRow(row, { walletKind: 'kuber' });
+        if (u) {
+          mapped.adminCode = u.adminCode || '';
+          mapped.ownerId = row.meta?.relatedUserId || null;
+          mapped.ownerUsername = u.username || '';
+          mapped.ownerFullName = u.fullName || mapped.ownerFullName;
+        }
+        return mapped;
       });
 
       return res.json({ transactions, summary, scope: 'kuber' });
+    }
+
+    if (scope === 'sa-main') {
+      const { type, dateFrom, dateTo } = req.query;
+      const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' })
+        .select('_id adminCode kuberWallet wallet')
+        .lean();
+      if (!sa) {
+        return res.json({ transactions: [], summary: null, scope: 'sa-main' });
+      }
+
+      const filter = {
+        ownerType: 'ADMIN',
+        ownerId: sa._id,
+        'meta.walletSource': 'MAIN',
+      };
+
+      const tUpper = type != null ? String(type).toUpperCase() : '';
+      if (tUpper === 'CREDIT' || tUpper === 'DEBIT') {
+        filter.type = tUpper;
+      }
+
+      if (dateFrom || dateTo) {
+        filter.createdAt = {};
+        if (dateFrom) filter.createdAt.$gte = new Date(String(dateFrom));
+        if (dateTo) filter.createdAt.$lte = new Date(String(dateTo));
+      }
+
+      let summary = null;
+      if (wantSummary) {
+        const agg = await WalletLedger.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: '$type',
+              total: { $sum: '$amount' },
+              count: { $sum: 1 },
+            },
+          },
+        ]);
+        summary = {
+          credits: 0,
+          debits: 0,
+          creditCount: 0,
+          debitCount: 0,
+          net: 0,
+          mainWalletBalance: sa.wallet?.balance ?? 0,
+          kuberWalletBalance: sa.kuberWallet?.balance ?? 0,
+        };
+        for (const row of agg) {
+          if (row._id === 'CREDIT') {
+            summary.credits = row.total || 0;
+            summary.creditCount = row.count || 0;
+          } else if (row._id === 'DEBIT') {
+            summary.debits = row.total || 0;
+            summary.debitCount = row.count || 0;
+          }
+        }
+        summary.net = (summary.credits || 0) - (summary.debits || 0);
+      }
+
+      const rows = await WalletLedger.find(filter).sort({ createdAt: -1 }).limit(lim).lean();
+      const transactions = rows.map((row) => mapSaWalletLedgerRow(row, { walletKind: 'main' }));
+
+      return res.json({ transactions, summary, scope: 'sa-main' });
     }
 
     if (scope === 'games') {

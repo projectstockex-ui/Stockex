@@ -29206,7 +29206,7 @@ function yourAccountFromClientTx(tx) {
 
   /** Merged games feed: Super Admin pool debit row (main wallet) — already “your” DEBIT/CREDIT, do not flip. */
 
-  if (tx.saPoolDebit || tx.kuberWalletTx) {
+  if (tx.saPoolDebit || tx.kuberWalletTx || tx.saMainWalletTx) {
 
     if (tx.type === 'DEBIT') {
 
@@ -31407,6 +31407,10 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
   const [kuberTransferLoading, setKuberTransferLoading] = useState(false);
 
+  const [kuberTransferError, setKuberTransferError] = useState('');
+
+  const [kuberBootstrapLoading, setKuberBootstrapLoading] = useState(false);
+
 
 
   useEffect(() => {
@@ -31439,7 +31443,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
       setMainGameKey('');
 
-    } else if (scope === 'security' || scope === 'distributed' || scope === 'kuber') {
+    } else if (scope === 'security' || scope === 'distributed' || scope === 'kuber' || scope === 'sa-main') {
 
       setReasonGroup('');
 
@@ -31727,13 +31731,15 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
     if (!Number.isFinite(amt) || amt <= 0) {
 
-      alert('Enter a valid amount');
+      setKuberTransferError('Enter a valid amount');
 
       return;
 
     }
 
     setKuberTransferLoading(true);
+
+    setKuberTransferError('');
 
     try {
 
@@ -31747,19 +31753,63 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
       );
 
-      alert(data?.message || 'Transferred to main wallet');
-
       setKuberTransferAmount('');
+
+      setKuberTransferError('');
+
+      fetchFeed();
+
+      if (data?.message) {
+
+        setKuberTransferError('');
+
+      }
+
+    } catch (err) {
+
+      setKuberTransferError(
+
+        err.response?.data?.message || 'Insufficient Kuber wallet balance. Please check available balance.'
+
+      );
+
+    } finally {
+
+      setKuberTransferLoading(false);
+
+    }
+
+  };
+
+
+
+  const handleKuberBootstrap = async () => {
+
+    setKuberBootstrapLoading(true);
+
+    setKuberTransferError('');
+
+    try {
+
+      await axios.post(
+
+        '/api/admin/manage/kuber-wallet/bootstrap-pool',
+
+        {},
+
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+
+      );
 
       fetchFeed();
 
     } catch (err) {
 
-      alert(err.response?.data?.message || 'Transfer failed');
+      setKuberTransferError(err.response?.data?.message || 'Could not top up Kuber wallet');
 
     } finally {
 
-      setKuberTransferLoading(false);
+      setKuberBootstrapLoading(false);
 
     }
 
@@ -32451,7 +32501,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
       {!isFranchiseBook ? (
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 max-w-5xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2 max-w-6xl">
 
         <button
 
@@ -32469,9 +32519,31 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
         >
 
-          <div className="font-bold text-sm">Main wallet</div>
+          <div className="font-bold text-sm">Clients main</div>
 
-          <div className="text-[10px] opacity-90 mt-0.5">Trading ledger (all users)</div>
+          <div className="text-[10px] opacity-90 mt-0.5">All users trading ledger</div>
+
+        </button>
+
+        <button
+
+          type="button"
+
+          onClick={() => setScope('sa-main')}
+
+          className={`rounded-xl border px-3 py-3 text-left transition ${scope === 'sa-main'
+
+              ? 'bg-amber-600 border-white/20 text-white shadow-lg'
+
+              : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
+
+            }`}
+
+        >
+
+          <div className="font-bold text-sm">Your main wallet</div>
+
+          <div className="text-[10px] opacity-90 mt-0.5">SA main — Kuber credits & fund out</div>
 
         </button>
 
@@ -32601,6 +32673,56 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
 
 
+      {scope === 'sa-main' && summary && (
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-3xl">
+
+          <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Your main wallet balance</div>
+
+            <div className="text-base font-bold text-amber-300 tabular-nums">
+
+              {Number(summary.mainWalletBalance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+          </div>
+
+          <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Credits (incl. from Kuber)</div>
+
+            <div className="text-base font-bold text-green-400 tabular-nums">
+
+              +{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+            <div className="text-[10px] text-gray-600">{summary.creditCount ?? 0} lines</div>
+
+          </div>
+
+          <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Debits</div>
+
+            <div className="text-base font-bold text-red-400 tabular-nums">
+
+              −{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+            <div className="text-[10px] text-gray-600">{summary.debitCount ?? 0} lines</div>
+
+          </div>
+
+        </div>
+
+      )}
+
+
+
       {scope === 'kuber' && summary && (
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-3xl">
@@ -32653,59 +32775,83 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
       {scope === 'kuber' && !isFranchiseBook && (
 
-        <form onSubmit={handleKuberToMainTransfer} className="mb-4 max-w-md flex flex-wrap items-end gap-2">
+        <div className="mb-4 max-w-lg space-y-2">
 
-          <div className="flex-1 min-w-[140px]">
+          {kuberTransferError && (
 
-            <label className="block text-[10px] text-gray-500 uppercase mb-1">Transfer to main wallet</label>
+            <div className="bg-red-500/20 border border-red-500/40 text-red-300 px-3 py-2 rounded text-sm">
 
-            <input
+              {kuberTransferError}
 
-              type="number"
+            </div>
 
-              min="0"
+          )}
 
-              step="0.01"
+          <form onSubmit={handleKuberToMainTransfer} className="flex flex-wrap items-end gap-2">
 
-              value={kuberTransferAmount}
+            <div className="flex-1 min-w-[140px]">
 
-              onChange={(e) => setKuberTransferAmount(e.target.value)}
+              <label className="block text-[10px] text-gray-500 uppercase mb-1">Transfer to your main wallet</label>
 
-              placeholder="Amount"
+              <input
 
-              className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
+                type="number"
 
-            />
+                min="0"
 
-          </div>
+                step="0.01"
 
-          <button
+                value={kuberTransferAmount}
 
-            type="submit"
+                onChange={(e) => setKuberTransferAmount(e.target.value)}
 
-            disabled={kuberTransferLoading}
+                placeholder="Amount"
 
-            className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium disabled:opacity-50"
+                className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
 
-          >
+              />
 
-            {kuberTransferLoading ? '…' : 'Transfer'}
+            </div>
 
-          </button>
+            <button
 
-          <p className="w-full text-[10px] text-gray-500">
+              type="submit"
 
-            Kuber wallet max balance: 100 crore
+              disabled={kuberTransferLoading}
 
-            {summary?.kuberWalletMax != null
+              className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium disabled:opacity-50"
 
-              ? ` (${Number(summary.kuberWalletMax).toLocaleString('en-IN')})`
+            >
 
-              : ''}
+              {kuberTransferLoading ? '…' : 'Transfer'}
+
+            </button>
+
+            <button
+
+              type="button"
+
+              onClick={handleKuberBootstrap}
+
+              disabled={kuberBootstrapLoading}
+
+              className="px-4 py-2 rounded-lg bg-dark-700 border border-orange-500/40 text-orange-300 text-sm disabled:opacity-50"
+
+            >
+
+              {kuberBootstrapLoading ? '…' : 'Top up to 100 Cr'}
+
+            </button>
+
+          </form>
+
+          <p className="text-[10px] text-gray-500">
+
+            Kuber max: 100 crore. Transfer shows as DEBIT here and CREDIT under Your main wallet tab.
 
           </p>
 
-        </form>
+        </div>
 
       )}
 
@@ -33729,9 +33875,13 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                           month: '2-digit',
 
+                          year: 'numeric',
+
                           hour: '2-digit',
 
-                          minute: '2-digit'
+                          minute: '2-digit',
+
+                          second: '2-digit',
 
                         })}</span>
 
@@ -33775,9 +33925,11 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                             tx.kuberWalletTx ? 'text-orange-300' :
 
-                              tx.saPoolDebit ? 'text-amber-300' :
+                              tx.saMainWalletTx ? 'text-amber-300' :
 
-                                'text-gray-200'
+                                tx.saPoolDebit ? 'text-amber-300/80' :
+
+                                  'text-gray-200'
 
                           }`}>
 
@@ -33789,11 +33941,19 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                               ? '🪙 Kuber wallet'
 
-                              : tx.saPoolDebit
+                              : tx.saMainWalletTx
 
-                                ? '🏠 House pool (SA main)'
+                                ? tx.meta?.creditFromKuber
 
-                                : tx.reason || '—'}
+                                  ? '💰 Main wallet (from Kuber)'
+
+                                  : '🏦 Your main wallet'
+
+                                : tx.saPoolDebit
+
+                                  ? '🏠 House pool (SA main)'
+
+                                  : tx.reason || '—'}
 
                         </div>
 
@@ -33895,7 +34055,11 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                           ? 'Kuber wallet balance after this transaction'
 
-                          : tx.saPoolDebit
+                          : tx.saMainWalletTx
+
+                            ? 'Your main wallet balance after this transaction'
+
+                            : tx.saPoolDebit
 
                             ? 'Super Admin main wallet balance after this pool debit (not games-wallet balance)'
 
