@@ -95,6 +95,10 @@ import {
 } from '../utils/pattiFranchiseExclusion.js';
 import { isAdminInActivePattiSubtree, findPattiSubtreeRootAdmin } from '../utils/pattiSubtree.js';
 import {
+  transferKuberToMainWallet,
+  KUBER_WALLET_MAX_BALANCE,
+} from '../utils/kuberWallet.js';
+import {
   applyPattiSubtreeFromAdminRoot,
   applyPattiOnDirectChild,
 } from '../utils/pattiSubtree.js';
@@ -8297,6 +8301,21 @@ router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req
 
  */
 
+/** Super Admin — move balance from Kuber wallet to main wallet */
+router.post('/kuber-wallet/transfer-to-main', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const amount = Number(req.body?.amount);
+    const result = await transferKuberToMainWallet(amount, { performedBy: req.admin._id });
+    res.json({
+      message: `Transferred ${result.amount.toLocaleString('en-IN')} from Kuber wallet to main wallet`,
+      ...result,
+      kuberWalletMax: KUBER_WALLET_MAX_BALANCE,
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Transfer failed' });
+  }
+});
+
 router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res) => {
 
   try {
@@ -8377,6 +8396,7 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
           net: 0,
           kuberWalletBalance: sa.kuberWallet?.balance ?? 0,
           mainWalletBalance: sa.wallet?.balance ?? 0,
+          kuberWalletMax: KUBER_WALLET_MAX_BALANCE,
         };
         for (const row of agg) {
           if (row._id === 'CREDIT') {

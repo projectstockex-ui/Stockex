@@ -31289,6 +31289,10 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
   const [loadingClientHierarchy, setLoadingClientHierarchy] = useState(false);
 
+  const [kuberTransferAmount, setKuberTransferAmount] = useState('');
+
+  const [kuberTransferLoading, setKuberTransferLoading] = useState(false);
+
 
 
   useEffect(() => {
@@ -31598,6 +31602,54 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
     fetchFeed();
 
   }, [fetchFeed]);
+
+
+
+  const handleKuberToMainTransfer = async (e) => {
+
+    e.preventDefault();
+
+    const amt = Number(kuberTransferAmount);
+
+    if (!Number.isFinite(amt) || amt <= 0) {
+
+      alert('Enter a valid amount');
+
+      return;
+
+    }
+
+    setKuberTransferLoading(true);
+
+    try {
+
+      const { data } = await axios.post(
+
+        '/api/admin/manage/kuber-wallet/transfer-to-main',
+
+        { amount: amt },
+
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+
+      );
+
+      alert(data?.message || 'Transferred to main wallet');
+
+      setKuberTransferAmount('');
+
+      fetchFeed();
+
+    } catch (err) {
+
+      alert(err.response?.data?.message || 'Transfer failed');
+
+    } finally {
+
+      setKuberTransferLoading(false);
+
+    }
+
+  };
 
 
 
@@ -32480,6 +32532,66 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
           </div>
 
         </div>
+
+      )}
+
+
+
+      {scope === 'kuber' && !isFranchiseBook && (
+
+        <form onSubmit={handleKuberToMainTransfer} className="mb-4 max-w-md flex flex-wrap items-end gap-2">
+
+          <div className="flex-1 min-w-[140px]">
+
+            <label className="block text-[10px] text-gray-500 uppercase mb-1">Transfer to main wallet</label>
+
+            <input
+
+              type="number"
+
+              min="0"
+
+              step="0.01"
+
+              value={kuberTransferAmount}
+
+              onChange={(e) => setKuberTransferAmount(e.target.value)}
+
+              placeholder="Amount"
+
+              className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
+
+            />
+
+          </div>
+
+          <button
+
+            type="submit"
+
+            disabled={kuberTransferLoading}
+
+            className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium disabled:opacity-50"
+
+          >
+
+            {kuberTransferLoading ? '…' : 'Transfer'}
+
+          </button>
+
+          <p className="w-full text-[10px] text-gray-500">
+
+            Kuber wallet max balance: 100 crore
+
+            {summary?.kuberWalletMax != null
+
+              ? ` (${Number(summary.kuberWalletMax).toLocaleString('en-IN')})`
+
+              : ''}
+
+          </p>
+
+        </form>
 
       )}
 
