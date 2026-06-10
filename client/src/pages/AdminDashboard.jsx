@@ -4239,38 +4239,6 @@ const AdminManagement = () => {
 
                   </div>
 
-                  <div className="text-center">
-
-                    <div className="text-xs text-gray-400">Auto Square</div>
-
-                    <div className="text-lg font-bold text-orange-400">{adm.defaultSettings?.autosquare || 0}%</div>
-
-                  </div>
-
-                  <div className="text-center">
-
-                    <div className="text-xs text-gray-400">Max Lot</div>
-
-                    <div className="text-lg font-bold text-cyan-400">{adm.defaultSettings?.quantitySettings?.maxLotQuantity || adm.defaultSettings?.lotSettings?.maxLotSize || 0}</div>
-
-                  </div>
-
-                  <div className="text-center">
-
-                    <div className="text-xs text-gray-400">Min Lot</div>
-
-                    <div className="text-lg font-bold text-cyan-400">{adm.defaultSettings?.lotSettings?.minLotSize || 1}</div>
-
-                  </div>
-
-                  <div className="text-center">
-
-                    <div className="text-xs text-gray-400">Breakup Qty</div>
-
-                    <div className="text-lg font-bold text-cyan-400">{adm.defaultSettings?.quantitySettings?.breakupQuantity || 0}</div>
-
-                  </div>
-
                   {adm.restrictMode?.enabled && (
 
                     <div className="text-center">
@@ -4288,68 +4256,6 @@ const AdminManagement = () => {
                   )}
 
                 </div>
-
-
-
-                {/* Super Admin Brokerage Settings - Only for Super Admin */}
-
-                {isSuperAdmin && (
-
-                  <div className="flex gap-4 flex-wrap items-end">
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">SA Flat %</label>
-
-                      <input
-
-                        type="number"
-
-                        min="0"
-
-                        max="100"
-
-                        step="0.1"
-
-                        value={adm.superAdminFlatBrokerage || 0}
-
-                        onChange={(e) => handleSuperAdminBrokerageChange(adm._id, 'flat', parseFloat(e.target.value) || 0)}
-
-                        className="w-20 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
-
-                        placeholder="%"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">SA Fixed </label>
-
-                      <input
-
-                        type="number"
-
-                        min="0"
-
-                        step="1"
-
-                        value={adm.superAdminFixedBrokerage || 0}
-
-                        onChange={(e) => handleSuperAdminBrokerageChange(adm._id, 'fixed', parseFloat(e.target.value) || 0)}
-
-                        className="w-24 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
-
-                        placeholder=""
-
-                      />
-
-                    </div>
-
-                  </div>
-
-                )}
 
 
 
