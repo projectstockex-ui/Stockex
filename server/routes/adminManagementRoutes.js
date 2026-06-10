@@ -103,6 +103,9 @@ import {
   splitFundingByKuberPct,
   KUBER_WALLET_MAX_BALANCE,
   INSUFFICIENT_SA_WALLET_MSG,
+  backfillKuberMainLedgerMeta,
+  buildKuberLedgerQuery,
+  buildSaMainLedgerQuery,
 } from '../utils/kuberWallet.js';
 
 function mapSaWalletLedgerRow(row, { walletKind = 'kuber' } = {}) {
@@ -119,8 +122,13 @@ function mapSaWalletLedgerRow(row, { walletKind = 'kuber' } = {}) {
   if (walletKind === 'kuber' && isKuberToMain && row.type === 'DEBIT') {
     description = `Transferred to Main wallet — ${Number(row.amount || 0).toLocaleString('en-IN')}`;
   }
-  if (walletKind === 'main' && m.creditFromKuber && row.type === 'CREDIT') {
+  const isKuberCredit =
+    walletKind === 'main' &&
+    row.type === 'CREDIT' &&
+    (m.creditFromKuber || m.poolDebitKind === 'KUBER_TO_MAIN_TRANSFER');
+  if (isKuberCredit) {
     description = `Credit from Kuber wallet — ${Number(row.amount || 0).toLocaleString('en-IN')}`;
+    m.creditFromKuber = true;
   }
   return {
     _id: row._id,
@@ -8558,6 +8566,8 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
     const perspectiveSuper = pRaw !== 'client';
 
     if (scope === 'kuber') {
+      await backfillKuberMainLedgerMeta();
+
       const { type, userSearch, dateFrom, dateTo } = req.query;
       const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' })
         .select('_id adminCode kuberWallet wallet')
@@ -8566,11 +8576,7 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
         return res.json({ transactions: [], summary: null, scope: 'kuber' });
       }
 
-      const filter = {
-        ownerType: 'ADMIN',
-        ownerId: sa._id,
-        'meta.walletSource': 'KUBER',
-      };
+      const filter = buildKuberLedgerQuery(sa._id);
 
       const tUpper = type != null ? String(type).toUpperCase() : '';
       if (tUpper === 'CREDIT' || tUpper === 'DEBIT') {
@@ -8660,6 +8666,8 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
     }
 
     if (scope === 'sa-main') {
+      await backfillKuberMainLedgerMeta();
+
       const { type, dateFrom, dateTo } = req.query;
       const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' })
         .select('_id adminCode kuberWallet wallet')
@@ -8668,11 +8676,7 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
         return res.json({ transactions: [], summary: null, scope: 'sa-main' });
       }
 
-      const filter = {
-        ownerType: 'ADMIN',
-        ownerId: sa._id,
-        'meta.walletSource': 'MAIN',
-      };
+      const filter = buildSaMainLedgerQuery(sa._id);
 
       const tUpper = type != null ? String(type).toUpperCase() : '';
       if (tUpper === 'CREDIT' || tUpper === 'DEBIT') {

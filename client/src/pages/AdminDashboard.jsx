@@ -2981,8 +2981,6 @@ const AdminManagement = () => {
 
   const { admin } = useAuth();
 
-  const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
-
   const [admins, setAdmins] = useState([]);
 
   const [loading, setLoading] = useState(true);

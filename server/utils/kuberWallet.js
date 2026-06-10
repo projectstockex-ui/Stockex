@@ -342,4 +342,89 @@ export async function transferKuberToMainWallet(amount, meta = {}) {
   };
 }
 
+/** One-time fix: older rows saved poolDebitKind but Mongoose stripped walletSource. */
+export async function backfillKuberMainLedgerMeta() {
+  const sa = await findActiveSuperAdmin();
+  if (!sa) return { updated: 0 };
+
+  const r1 = await WalletLedger.updateMany(
+    {
+      ownerType: 'ADMIN',
+      ownerId: sa._id,
+      'meta.poolDebitKind': KUBER_TO_MAIN_TRANSFER_KIND,
+      type: 'DEBIT',
+      $or: [{ 'meta.walletSource': { $exists: false } }, { 'meta.walletSource': null }],
+    },
+    {
+      $set: {
+        'meta.walletSource': 'KUBER',
+        'meta.kuberWallet': true,
+        'meta.transferDirection': 'KUBER_TO_MAIN',
+      },
+    }
+  );
+
+  const r2 = await WalletLedger.updateMany(
+    {
+      ownerType: 'ADMIN',
+      ownerId: sa._id,
+      'meta.poolDebitKind': KUBER_TO_MAIN_TRANSFER_KIND,
+      type: 'CREDIT',
+      $or: [{ 'meta.creditFromKuber': { $ne: true } }, { 'meta.walletSource': { $exists: false } }],
+    },
+    {
+      $set: {
+        'meta.walletSource': 'MAIN',
+        'meta.creditFromKuber': true,
+        'meta.transferDirection': 'KUBER_TO_MAIN',
+      },
+    }
+  );
+
+  const r3 = await WalletLedger.updateMany(
+    {
+      ownerType: 'ADMIN',
+      ownerId: sa._id,
+      'meta.poolDebitKind': KUBER_POOL_BOOTSTRAP_KIND,
+      $or: [{ 'meta.walletSource': { $exists: false } }, { 'meta.walletSource': null }],
+    },
+    {
+      $set: {
+        'meta.walletSource': 'KUBER',
+        'meta.kuberWallet': true,
+      },
+    }
+  );
+
+  return {
+    updated:
+      (r1.modifiedCount || 0) + (r2.modifiedCount || 0) + (r3.modifiedCount || 0),
+  };
+}
+
+export function buildKuberLedgerQuery(saId) {
+  return {
+    ownerType: 'ADMIN',
+    ownerId: saId,
+    $or: [
+      { 'meta.walletSource': 'KUBER' },
+      { 'meta.poolDebitKind': KUBER_POOL_BOOTSTRAP_KIND },
+      { 'meta.poolDebitKind': KUBER_TO_MAIN_TRANSFER_KIND, type: 'DEBIT' },
+      { 'meta.poolDebitKind': { $in: [KUBER_POOL_DEBIT_KIND, FRANCHISE_KUBER_SHARE_KIND] } },
+    ],
+  };
+}
+
+export function buildSaMainLedgerQuery(saId) {
+  return {
+    ownerType: 'ADMIN',
+    ownerId: saId,
+    $or: [
+      { 'meta.walletSource': 'MAIN' },
+      { 'meta.poolDebitKind': KUBER_TO_MAIN_TRANSFER_KIND, type: 'CREDIT' },
+      { 'meta.poolDebitKind': SA_PERSONAL_PATTI_DEBIT_KIND },
+    ],
+  };
+}
+
 export { findActiveSuperAdmin };

@@ -119,6 +119,16 @@ const walletLedgerSchema = new mongoose.Schema({
     gameKey: { type: String },
     /** Super Admin pool debit tagging (games client feed / audit) */
     poolDebitKind: { type: String },
+    /** Kuber vs SA main wallet leg (must be in schema or Mongoose strips on save) */
+    walletSource: { type: String },
+    kuberWallet: { type: Boolean },
+    creditFromKuber: { type: Boolean },
+    transferDirection: { type: String },
+    transferAmount: { type: Number },
+    fundDeposit: { type: Boolean },
+    adminFunding: { type: Boolean },
+    fundingKuberPct: { type: Number },
+    relatedAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
     relatedUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     /** Who received this GAME_PROFIT (SUB_BROKER / BROKER / ADMIN / SUPER_ADMIN) — for admin wallet ledger UI */
     hierarchyRole: { type: String },
