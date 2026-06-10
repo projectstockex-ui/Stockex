@@ -21,10 +21,6 @@ import {
   splitByChildPercent,
   roundMoney,
 } from './pattiTradeSettlement.js';
-import {
-  fundAdminShareFromSaWallets,
-  resolveSaFundingKuberPct,
-} from '../utils/kuberWallet.js';
 import { 
   trackHierarchyEarnings 
 } from './superAdminEarningsService.js';
@@ -2097,28 +2093,6 @@ static _SEGMENT_MERGE_FALLBACK = {
       },
     });
 
-    if (adminDoc.role !== 'SUPER_ADMIN' && pattiSource !== 'individual_patti_parent') {
-      const kuberPct = resolveSaFundingKuberPct(adminDoc, {
-        isPattiCredit: true,
-        pattiChildPct: childPct,
-      });
-      if (kuberPct !== null) {
-        await fundAdminShareFromSaWallets(signedAmount, kuberPct, null, {
-          relatedUserId: user?._id || trade.user,
-          targetAdminName: adminDoc.name || adminDoc.username,
-          targetAdminCode: adminDoc.adminCode,
-          recipientIsFranchise: adminDoc.isFranchiseRoot === true,
-          fundingMode: adminDoc.isFranchiseRoot === true ? 'franchise' : 'patti',
-          pattiChildPct: childPct,
-          pattiRootAdminId: pattiRoot?._id || adminDoc._id,
-          pattiRootAdminName: pattiRoot?.name || pattiRoot?.username,
-          pattiRootAdminCode: pattiRoot?.adminCode,
-          pattiSegmentKey: segKey,
-          chargeKind,
-          reference: { type: 'Trade', id: trade._id },
-        });
-      }
-    }
   }
 
   /**
@@ -3405,31 +3379,6 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
     });
 
-    const pattiMeta = extraMeta && typeof extraMeta === 'object' ? extraMeta : {};
-    if (admin.role !== 'SUPER_ADMIN' && pattiMeta.pattiSource !== 'individual_patti_parent') {
-      const isPattiCredit = !!pattiMeta.pattiSharing;
-      const kuberPct = resolveSaFundingKuberPct(admin, {
-        isPattiCredit,
-        pattiChildPct: pattiMeta.pattiChildPct,
-      });
-      if (kuberPct !== null) {
-        await fundAdminShareFromSaWallets(amount, kuberPct, null, {
-          relatedUserId: trade.user,
-          targetAdminName: admin.name || admin.username,
-          targetAdminCode: admin.adminCode,
-          recipientIsFranchise: admin.isFranchiseRoot === true,
-          fundingMode: admin.isFranchiseRoot === true ? 'franchise' : isPattiCredit ? 'patti' : 'normal',
-          pattiChildPct: pattiMeta.pattiChildPct,
-          pattiRootAdminId: pattiMeta.pattiRootAdminId,
-          pattiRootAdminName: pattiMeta.pattiRootAdminName,
-          pattiRootAdminCode: pattiMeta.pattiRootAdminCode,
-          pattiSegmentKey: pattiMeta.pattiSegmentKey,
-          chargeKind: 'BROKERAGE',
-          reference: { type: 'Trade', id: trade._id },
-        });
-      }
-    }
-    
     console.log('[creditBrokerageToAdmin] Brokerage credited successfully:', {
       admin: admin.name,
       amount: amount,

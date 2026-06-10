@@ -96,7 +96,12 @@ import {
 import { isAdminInActivePattiSubtree, findPattiSubtreeRootAdmin } from '../utils/pattiSubtree.js';
 import {
   transferKuberToMainWallet,
+  fundAdminShareFromSaWallets,
+  resolveFundingPlanForAdmin,
+  validateSaFundingBalances,
+  splitFundingByKuberPct,
   KUBER_WALLET_MAX_BALANCE,
+  INSUFFICIENT_SA_WALLET_MSG,
 } from '../utils/kuberWallet.js';
 import {
   applyPattiSubtreeFromAdminRoot,
@@ -3852,6 +3857,74 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
 
       });
 
+    } else {
+
+      const plan = resolveFundingPlanForAdmin(targetAdmin);
+
+      const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' }).select(
+
+        'wallet kuberWallet adminCode _id'
+
+      );
+
+      const check = validateSaFundingBalances(sa, amount, plan.kuberPct);
+
+      if (!check.ok) {
+
+        return res.status(400).json({
+
+          message: INSUFFICIENT_SA_WALLET_MSG,
+
+          fundingPlan: plan,
+
+          ...check,
+
+        });
+
+      }
+
+      try {
+
+        await fundAdminShareFromSaWallets(
+
+          amount,
+
+          plan.kuberPct,
+
+          description || `Fund deposit → ${targetAdmin.adminCode}`,
+
+          {
+
+            targetAdminName: targetAdmin.name || targetAdmin.username,
+
+            targetAdminCode: targetAdmin.adminCode,
+
+            recipientIsFranchise: plan.mode === 'franchise',
+
+            fundingMode: plan.mode,
+
+            pattiChildPct: plan.pattiChildPct,
+
+            fundDeposit: true,
+
+            relatedAdminId: targetAdmin._id,
+
+          }
+
+        );
+
+      } catch (fundErr) {
+
+        return res.status(400).json({
+
+          message: fundErr.message || INSUFFICIENT_SA_WALLET_MSG,
+
+          details: fundErr.details,
+
+        });
+
+      }
+
     }
 
     
@@ -4405,6 +4478,52 @@ router.post('/admins/:id/deduct-funds', protectAdmin, async (req, res) => {
         performedBy: req.admin._id
 
       });
+
+    } else {
+
+      const plan = resolveFundingPlanForAdmin(targetAdmin);
+
+      try {
+
+        await fundAdminShareFromSaWallets(
+
+          -amount,
+
+          plan.kuberPct,
+
+          description || `Fund withdraw refund ← ${targetAdmin.adminCode}`,
+
+          {
+
+            targetAdminName: targetAdmin.name || targetAdmin.username,
+
+            targetAdminCode: targetAdmin.adminCode,
+
+            recipientIsFranchise: plan.mode === 'franchise',
+
+            fundingMode: plan.mode,
+
+            pattiChildPct: plan.pattiChildPct,
+
+            fundDeposit: true,
+
+            relatedAdminId: targetAdmin._id,
+
+          }
+
+        );
+
+      } catch (fundErr) {
+
+        return res.status(400).json({
+
+          message: fundErr.message || 'Could not refund Super Admin wallets',
+
+          details: fundErr.details,
+
+        });
+
+      }
 
     }
 
@@ -8300,6 +8419,47 @@ router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req
  *   only if you need raw client ledger type filtering.
 
  */
+
+/** Super Admin — main + Kuber wallet balances for fund modal */
+router.get('/kuber-wallet/balances', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' }).select(
+      'wallet kuberWallet'
+    );
+    res.json({
+      mainBalance: sa?.wallet?.balance ?? 0,
+      kuberBalance: sa?.kuberWallet?.balance ?? 0,
+      kuberMax: KUBER_WALLET_MAX_BALANCE,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/** Funding split preview for admin fund deposit */
+router.get('/admins/:id/funding-plan', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const target = await Admin.findById(req.params.id).select(
+      'pattiSharing isFranchiseRoot role name username adminCode'
+    );
+    if (!target) return res.status(404).json({ message: 'Admin not found' });
+    const plan = resolveFundingPlanForAdmin(target);
+    const amt = Number(req.query.amount);
+    let split = null;
+    if (Number.isFinite(amt) && amt > 0) {
+      split = splitFundingByKuberPct(amt, plan.kuberPct);
+    }
+    const label =
+      plan.mode === 'franchise'
+        ? 'Franchise — 100% from Kuber wallet'
+        : plan.mode === 'patti'
+          ? `Patti — ${100 - plan.kuberPct}% Main wallet, ${plan.kuberPct}% Kuber wallet`
+          : 'Normal — 100% from Main wallet';
+    res.json({ ...plan, label, split });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 /** Super Admin — move balance from Kuber wallet to main wallet */
 router.post('/kuber-wallet/transfer-to-main', protectAdmin, superAdminOnly, async (req, res) => {

@@ -2981,6 +2981,8 @@ const AdminManagement = () => {
 
   const { admin } = useAuth();
 
+  const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
+
   const [admins, setAdmins] = useState([]);
 
   const [loading, setLoading] = useState(true);
@@ -4847,6 +4849,8 @@ const AdminManagement = () => {
           admin={selectedAdmin}
 
           token={admin.token}
+
+          isSuperAdmin={isSuperAdmin}
 
           onClose={() => { setShowFundModal(false); setSelectedAdmin(null); }}
 
@@ -8552,7 +8556,7 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
 
 // Admin Fund Modal
 
-const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
+const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess, isSuperAdmin = false }) => {
 
   const [amount, setAmount] = useState('');
 
@@ -8561,6 +8565,54 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);
 
   const [error, setError] = useState('');
+
+  const [saBalances, setSaBalances] = useState(null);
+
+  const [fundingPlan, setFundingPlan] = useState(null);
+
+
+
+  useEffect(() => {
+
+    if (!isSuperAdmin || !token) return;
+
+    axios
+
+      .get('/api/admin/manage/kuber-wallet/balances', {
+
+        headers: { Authorization: `Bearer ${token}` },
+
+      })
+
+      .then(({ data }) => setSaBalances(data))
+
+      .catch(() => setSaBalances(null));
+
+  }, [isSuperAdmin, token]);
+
+
+
+  useEffect(() => {
+
+    if (!isSuperAdmin || !token || !targetAdmin?._id) return;
+
+    const amt = Number(amount);
+
+    const q = Number.isFinite(amt) && amt > 0 ? `?amount=${amt}` : '';
+
+    axios
+
+      .get(`/api/admin/manage/admins/${targetAdmin._id}/funding-plan${q}`, {
+
+        headers: { Authorization: `Bearer ${token}` },
+
+      })
+
+      .then(({ data }) => setFundingPlan(data))
+
+      .catch(() => setFundingPlan(null));
+
+  }, [isSuperAdmin, token, targetAdmin?._id, amount]);
 
 
 
@@ -8596,7 +8648,13 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
 
     } catch (err) {
 
-      setError(err.response?.data?.message || 'Error');
+      setError(
+
+        err.response?.data?.message ||
+
+          'Not sufficient amount in main wallet or in Kuber wallet — please check'
+
+      );
 
     } finally {
 
@@ -8605,6 +8663,12 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
     }
 
   };
+
+
+
+  const fmtBal = (n) =>
+
+    Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
 
 
@@ -8628,11 +8692,61 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
 
           <div className="text-xs text-purple-400 font-mono">{targetAdmin.adminCode}</div>
 
-          <div className="text-2xl font-bold text-green-400 mt-2">{targetAdmin.wallet?.balance?.toLocaleString() || '0'}</div>
+          <div className="text-2xl font-bold text-green-400 mt-2">{fmtBal(targetAdmin.wallet?.balance)}</div>
 
         </div>
 
-        {error && <div className="bg-red-500/20 text-red-400 p-2 rounded mb-4">{error}</div>}
+        {isSuperAdmin && saBalances && (
+
+          <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+
+            <div className="rounded border border-amber-500/30 bg-amber-950/20 px-2 py-1.5">
+
+              <div className="text-gray-500">Your main wallet</div>
+
+              <div className="font-semibold text-amber-300 tabular-nums">{fmtBal(saBalances.mainBalance)}</div>
+
+            </div>
+
+            <div className="rounded border border-orange-500/30 bg-orange-950/20 px-2 py-1.5">
+
+              <div className="text-gray-500">Your Kuber wallet</div>
+
+              <div className="font-semibold text-orange-300 tabular-nums">{fmtBal(saBalances.kuberBalance)}</div>
+
+            </div>
+
+          </div>
+
+        )}
+
+        {isSuperAdmin && fundingPlan?.label && (
+
+          <div className="text-[11px] text-cyan-300/90 mb-3 px-1">{fundingPlan.label}</div>
+
+        )}
+
+        {isSuperAdmin && fundingPlan?.split && Number(amount) > 0 && (
+
+          <div className="text-[11px] text-gray-400 mb-3 px-1 space-y-0.5">
+
+            <div>From main wallet: <span className="text-amber-300 tabular-nums">{fmtBal(fundingPlan.split.personal)}</span></div>
+
+            <div>From Kuber wallet: <span className="text-orange-300 tabular-nums">{fmtBal(fundingPlan.split.kuber)}</span></div>
+
+          </div>
+
+        )}
+
+        {error && (
+
+          <div className="bg-red-500/20 border border-red-500/40 text-red-300 p-3 rounded mb-4 text-sm">
+
+            {error}
+
+          </div>
+
+        )}
 
         <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 mb-3" />
 

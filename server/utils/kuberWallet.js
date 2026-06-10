@@ -25,6 +25,56 @@ async function findActiveSuperAdmin() {
  * - Patti credit → admin's patti % (e.g. 75% Kuber, 25% main)
  * - Normal admin → 0% Kuber (100% main)
  */
+export const INSUFFICIENT_SA_WALLET_MSG =
+  'Not sufficient amount in main wallet or in Kuber wallet — please check';
+
+/** Max enabled patti segment % for manual fund-deposit split. */
+export function resolvePattiChildPctForFunding(targetAdmin) {
+  if (!targetAdmin?.pattiSharing?.enabled) return null;
+  const segments = targetAdmin.pattiSharing.segments || {};
+  let best = null;
+  for (const cfg of Object.values(segments)) {
+    if (cfg?.enabled === false) continue;
+    const pct = Number(cfg.adminPercentage ?? cfg.brokerPercentage);
+    if (!Number.isFinite(pct)) continue;
+    if (best == null || pct > best) best = pct;
+  }
+  return best;
+}
+
+export function resolveFundingPlanForAdmin(targetAdmin) {
+  if (!targetAdmin || targetAdmin.role === 'SUPER_ADMIN') {
+    return { kuberPct: 0, mode: 'none' };
+  }
+  if (targetAdmin.isFranchiseRoot === true) {
+    return { kuberPct: 100, mode: 'franchise' };
+  }
+  const pattiPct = resolvePattiChildPctForFunding(targetAdmin);
+  if (pattiPct != null) {
+    return { kuberPct: pattiPct, mode: 'patti', pattiChildPct: pattiPct };
+  }
+  return { kuberPct: 0, mode: 'normal' };
+}
+
+export function validateSaFundingBalances(saDoc, total, kuberPct) {
+  const { kuber, personal } = splitFundingByKuberPct(total, kuberPct);
+  const mainBal = roundMoney(saDoc?.wallet?.balance ?? 0);
+  const kuberBal = roundMoney(saDoc?.kuberWallet?.balance ?? 0);
+  const mainOk = personal < 0.01 || mainBal + 1e-9 >= personal;
+  const kuberOk = kuber < 0.01 || kuberBal + 1e-9 >= kuber;
+  if (!mainOk || !kuberOk) {
+    return {
+      ok: false,
+      message: INSUFFICIENT_SA_WALLET_MSG,
+      mainRequired: personal,
+      kuberRequired: kuber,
+      mainAvailable: mainBal,
+      kuberAvailable: kuberBal,
+    };
+  }
+  return { ok: true, kuber, personal, mainAvailable: mainBal, kuberAvailable: kuberBal };
+}
+
 export function resolveSaFundingKuberPct(recipientAdmin, { isPattiCredit = false, pattiChildPct } = {}) {
   if (!recipientAdmin || recipientAdmin.role === 'SUPER_ADMIN') return null;
   if (recipientAdmin.isFranchiseRoot === true) return 100;
@@ -78,6 +128,16 @@ export async function fundAdminShareFromSaWallets(amount, kuberPct, description,
 
   const saBefore = await findActiveSuperAdmin();
   if (!saBefore) return { ok: false, skipped: false };
+
+  if (!isRefund) {
+    const check = validateSaFundingBalances(saBefore, total, pct);
+    if (!check.ok) {
+      const err = new Error(check.message);
+      err.code = 'INSUFFICIENT_SA_WALLET';
+      err.details = check;
+      throw err;
+    }
+  }
 
   if (isRefund && kuber >= 0.01) {
     const curKuber = roundMoney(saBefore.kuberWallet?.balance ?? 0);
@@ -189,9 +249,7 @@ export async function transferKuberToMainWallet(amount, meta = {}) {
 
   const kuberBefore = roundMoney(sa.kuberWallet?.balance ?? 0);
   if (kuberBefore < amt) {
-    throw new Error(
-      `Insufficient Kuber wallet balance. Available: ${kuberBefore.toLocaleString('en-IN')}`
-    );
+    throw new Error(INSUFFICIENT_SA_WALLET_MSG);
   }
 
   sa.kuberWallet.balance = roundMoney(kuberBefore - amt);
