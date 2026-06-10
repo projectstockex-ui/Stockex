@@ -55622,17 +55622,19 @@ const UserManagement = () => {
 
 
 
+  const isDirectAdminClient = useCallback((user) => {
+    if (!admin) return false;
+    const adminId = String(admin._id || '');
+    const userAdminId = String(user.admin?._id || user.admin || '');
+    if (adminId && userAdminId === adminId) return true;
+    if (admin.adminCode && user.admin?.adminCode === admin.adminCode) return true;
+    return adminId && String(user.createdBy || '') === adminId;
+  }, [admin]);
+
   const usersForList = useMemo(() => {
     if (!showOnlyOwnUsers) return users;
-    const adminId = String(admin?._id || '');
-    const adminCode = admin?.adminCode;
-    return users.filter((user) => {
-      const userAdminId = String(user.admin?._id || user.admin || '');
-      if (adminId && userAdminId === adminId) return true;
-      if (adminCode && user.admin?.adminCode === adminCode) return true;
-      return adminId && String(user.createdBy || '') === adminId;
-    });
-  }, [users, showOnlyOwnUsers, admin?._id, admin?.adminCode]);
+    return users.filter((user) => isDirectAdminClient(user));
+  }, [users, showOnlyOwnUsers, isDirectAdminClient]);
 
   const { currentPage, setCurrentPage, totalPages, paginatedData: paginatedUsers, totalItems } = usePagination(
 
@@ -56596,7 +56598,16 @@ const UserManagement = () => {
 
       </div>
 
-
+      <div className="flex flex-wrap items-center gap-4 mb-4 text-xs">
+        <span className="inline-flex items-center gap-2 text-cyan-300">
+          <span className="w-3 h-3 rounded-sm bg-cyan-500/30 border border-cyan-400/60" />
+          Your direct client
+        </span>
+        <span className="inline-flex items-center gap-2 text-amber-300/90">
+          <span className="w-3 h-3 rounded-sm bg-dark-800 border border-dark-600" />
+          Under broker / sub-broker in your hierarchy
+        </span>
+      </div>
 
       {/* Mobile Card View */}
 
@@ -56620,13 +56631,33 @@ const UserManagement = () => {
 
           paginatedUsers.map(user => (
 
-            <div key={user._id} className="bg-dark-800 rounded-lg p-4">
+            <div
+              key={user._id}
+              className={`rounded-lg p-4 border ${
+                isDirectAdminClient(user)
+                  ? 'bg-cyan-500/10 border-cyan-500/40 ring-1 ring-cyan-500/20'
+                  : 'bg-dark-800 border-dark-600'
+              }`}
+            >
 
               <div className="flex items-start justify-between mb-3">
 
                 <div>
 
-                  <div className="font-medium">{user.fullName || user.username}</div>
+                  <div className="font-medium flex flex-wrap items-center gap-2">
+                    <span className={isDirectAdminClient(user) ? 'text-cyan-100' : ''}>
+                      {user.fullName || user.username}
+                    </span>
+                    {isDirectAdminClient(user) ? (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/25 text-cyan-200">
+                        Your client
+                      </span>
+                    ) : user.admin?.adminCode ? (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-300">
+                        Under {user.admin.adminCode}
+                      </span>
+                    ) : null}
+                  </div>
 
                   <div className="text-sm text-gray-400">@{user.username}</div>
 
@@ -56758,13 +56789,33 @@ const UserManagement = () => {
 
               paginatedUsers.map(user => (
 
-                <tr key={user._id} className="border-t border-dark-600 hover:bg-dark-700">
+                <tr
+                  key={user._id}
+                  className={`border-t border-dark-600 ${
+                    isDirectAdminClient(user)
+                      ? 'bg-cyan-500/10 hover:bg-cyan-500/15 border-l-4 border-l-cyan-400'
+                      : 'hover:bg-dark-700'
+                  }`}
+                >
 
                   <td className="px-4 py-3">
 
                     <div>
 
-                      <div className="font-medium">{user.fullName || user.username}</div>
+                      <div className="font-medium flex flex-wrap items-center gap-2">
+                        <span className={isDirectAdminClient(user) ? 'text-cyan-100' : ''}>
+                          {user.fullName || user.username}
+                        </span>
+                        {isDirectAdminClient(user) ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/25 text-cyan-200">
+                            Your client
+                          </span>
+                        ) : user.admin?.adminCode ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-300">
+                            Under {user.admin.adminCode}
+                          </span>
+                        ) : null}
+                      </div>
 
                       <div className="text-sm text-gray-400">@{user.username}</div>
 
