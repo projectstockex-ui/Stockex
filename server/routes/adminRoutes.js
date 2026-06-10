@@ -657,6 +657,7 @@ router.get('/users', protectAdmin, async (req, res) => {
     const users = await User.find(query)
       .select('-password')
       .populate('admin', 'name adminCode role')
+      .populate('createdBy', 'adminCode role')
       .sort({ createdAt: -1 });
     res.json(users);
   } catch (error) {

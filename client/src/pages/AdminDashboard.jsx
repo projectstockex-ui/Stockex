@@ -55622,11 +55622,27 @@ const UserManagement = () => {
 
 
 
+  const usersForList = useMemo(() => {
+    if (!showOnlyOwnUsers) return users;
+    const adminId = String(admin?._id || '');
+    const adminCode = admin?.adminCode;
+    return users.filter((user) => {
+      const userAdminId = String(user.admin?._id || user.admin || '');
+      if (adminId && userAdminId === adminId) return true;
+      if (adminCode && user.admin?.adminCode === adminCode) return true;
+      return adminId && String(user.createdBy || '') === adminId;
+    });
+  }, [users, showOnlyOwnUsers, admin?._id, admin?.adminCode]);
+
   const { currentPage, setCurrentPage, totalPages, paginatedData: paginatedUsers, totalItems } = usePagination(
 
-    users, 20, searchTerm, ['username', 'fullName', 'email', 'phone']
+    usersForList, 20, searchTerm, ['username', 'fullName', 'email', 'phone']
 
   );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [showOnlyOwnUsers, setCurrentPage]);
 
 
 
@@ -55747,25 +55763,6 @@ const UserManagement = () => {
     fetchMarketData();
 
   }, []);
-
-
-
-  const filteredUsers = users.filter(user => {
-    const matchesSearch =
-      user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesOwnUsers = showOnlyOwnUsers
-      ? user.admin?.adminCode === admin.adminCode
-      : true;
-
-    if (showOnlyOwnUsers) {
-      console.log('[Filter Own Users] User:', user.username, 'user.admin.adminCode:', user.admin?.adminCode, 'admin.adminCode:', admin.adminCode, 'matches:', matchesOwnUsers);
-    }
-
-    return matchesSearch && matchesOwnUsers;
-  });
 
 
 
@@ -56539,7 +56536,7 @@ const UserManagement = () => {
 
             <Users size={20} />
 
-            <span>See Your Own Users List</span>
+            <span>{showOnlyOwnUsers ? 'Showing your clients only' : 'See Your Own Users List'}</span>
 
           </button>
 
