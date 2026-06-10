@@ -23,8 +23,8 @@ export function yourAccountFromClientTx(tx) {
   const amt = Number(tx.amount) || 0;
   const abs = amt.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
-  /** Merged games feed: Super Admin pool debit row (main wallet) — already "your" DEBIT/CREDIT, do not flip. */
-  if (tx.saPoolDebit) {
+  /** Pool / Kuber rows — already "your" DEBIT/CREDIT, do not flip. */
+  if (tx.saPoolDebit || tx.kuberWalletTx) {
     if (tx.type === 'DEBIT') {
       return {
         state: 'DEBIT',

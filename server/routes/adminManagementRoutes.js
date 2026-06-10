@@ -7355,13 +7355,21 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
         isSaViewer &&
 
-        meta.poolDebitKind === 'BTC_JACKPOT_PAYOUT' &&
+        meta.walletSource === 'KUBER'
 
-        !meta.hierarchyPayoutToRole
+          ? `Kuber wallet (patti share${meta.pattiChildPct != null ? ` — ${meta.pattiChildPct}%` : ''})`
 
-          ? 'Super Admin main wallet (pool outflow — e.g. winner prize)'
+          : entry.reason === 'ADJUSTMENT' &&
 
-          : null;
+              isSaViewer &&
+
+              meta.poolDebitKind === 'BTC_JACKPOT_PAYOUT' &&
+
+              !meta.hierarchyPayoutToRole
+
+            ? 'Super Admin main wallet (pool outflow — e.g. winner prize)'
+
+            : null;
 
 
 
@@ -8293,7 +8301,9 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
   try {
 
-    const scope = String(req.query.scope || 'main').toLowerCase() === 'games' ? 'games' : 'main';
+    const scopeRaw = String(req.query.scope || 'main').toLowerCase();
+    const scope =
+      scopeRaw === 'games' ? 'games' : scopeRaw === 'kuber' ? 'kuber' : 'main';
 
     const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
 
@@ -8307,7 +8317,116 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
     const perspectiveSuper = pRaw !== 'client';
 
+    if (scope === 'kuber') {
+      const { type, userSearch, dateFrom, dateTo } = req.query;
+      const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' })
+        .select('_id adminCode kuberWallet wallet')
+        .lean();
+      if (!sa) {
+        return res.json({ transactions: [], summary: null, scope: 'kuber' });
+      }
 
+      const filter = {
+        ownerType: 'ADMIN',
+        ownerId: sa._id,
+        'meta.walletSource': 'KUBER',
+      };
+
+      const tUpper = type != null ? String(type).toUpperCase() : '';
+      if (tUpper === 'CREDIT' || tUpper === 'DEBIT') {
+        filter.type = tUpper;
+      }
+
+      let restrictUserIds = null;
+      if (userSearch && String(userSearch).trim()) {
+        const uq = new RegExp(escapeRegExpForQuery(String(userSearch).trim()), 'i');
+        const users = await User.find({
+          $or: [{ username: uq }, { fullName: uq }, { email: uq }],
+        })
+          .select('_id')
+          .limit(200)
+          .lean();
+        const ids = users.map((u) => u._id);
+        restrictUserIds = ids;
+        filter['meta.relatedUserId'] = ids.length ? { $in: ids } : { $in: [] };
+      }
+
+      if (dateFrom || dateTo) {
+        filter.createdAt = {};
+        if (dateFrom) filter.createdAt.$gte = new Date(String(dateFrom));
+        if (dateTo) filter.createdAt.$lte = new Date(String(dateTo));
+      }
+
+      let summary = null;
+      if (wantSummary) {
+        const agg = await WalletLedger.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: '$type',
+              total: { $sum: '$amount' },
+              count: { $sum: 1 },
+            },
+          },
+        ]);
+        summary = {
+          credits: 0,
+          debits: 0,
+          creditCount: 0,
+          debitCount: 0,
+          net: 0,
+          kuberWalletBalance: sa.kuberWallet?.balance ?? 0,
+          mainWalletBalance: sa.wallet?.balance ?? 0,
+        };
+        for (const row of agg) {
+          if (row._id === 'CREDIT') {
+            summary.credits = row.total || 0;
+            summary.creditCount = row.count || 0;
+          } else if (row._id === 'DEBIT') {
+            summary.debits = row.total || 0;
+            summary.debitCount = row.count || 0;
+          }
+        }
+        summary.net = (summary.credits || 0) - (summary.debits || 0);
+      }
+
+      const rows = await WalletLedger.find(filter).sort({ createdAt: -1 }).limit(lim).lean();
+      const relUserIds = [
+        ...new Set(rows.map((r) => r.meta?.relatedUserId).filter(Boolean).map(String)),
+      ].filter((id) => mongoose.Types.ObjectId.isValid(id));
+      const relUsers =
+        relUserIds.length > 0
+          ? await User.find({ _id: { $in: relUserIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+              .select('username fullName adminCode')
+              .lean()
+          : [];
+      const relMap = new Map(relUsers.map((u) => [String(u._id), u]));
+
+      const transactions = rows.map((row) => {
+        const relKey = row.meta?.relatedUserId ? String(row.meta.relatedUserId) : '';
+        const u = relKey ? relMap.get(relKey) : null;
+        return {
+          _id: row._id,
+          createdAt: row.createdAt,
+          type: row.type,
+          reason: 'KUBER_WALLET',
+          description: row.description || '',
+          amount: row.amount,
+          balanceAfter: row.balanceAfter,
+          adminCode: u?.adminCode || '',
+          ownerId: row.meta?.relatedUserId || null,
+          ownerUsername: u?.username || '',
+          ownerFullName: u?.fullName || '',
+          meta: row.meta && typeof row.meta === 'object' ? row.meta : {},
+          reference: row.reference || { type: 'Manual', id: null },
+          performedBy: row.performedBy || null,
+          gamesWallet: false,
+          kuberWalletTx: true,
+        };
+      });
+
+      return res.json({ transactions, summary, scope: 'kuber' });
+    }
 
     if (scope === 'games') {
 

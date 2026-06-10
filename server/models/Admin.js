@@ -387,6 +387,25 @@ const adminSchema = new mongoose.Schema({
     }
   },
   
+  /**
+   * Kuber wallet (Super Admin only) — house pool for patti share payouts to admins.
+   * Main `wallet` stays the Super Admin personal / games house ledger.
+   */
+  kuberWallet: {
+    balance: {
+      type: Number,
+      default: 0,
+    },
+    totalDeposited: {
+      type: Number,
+      default: 0,
+    },
+    totalWithdrawn: {
+      type: Number,
+      default: 0,
+    },
+  },
+
   // Temporary Wallet - Holds brokerage from winning users until SuperAdmin releases it
   temporaryWallet: {
     balance: {

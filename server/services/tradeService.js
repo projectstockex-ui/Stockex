@@ -21,6 +21,7 @@ import {
   splitByChildPercent,
   roundMoney,
 } from './pattiTradeSettlement.js';
+import { fundPattiShareToAdmin } from '../utils/kuberWallet.js';
 import { 
   trackHierarchyEarnings 
 } from './superAdminEarningsService.js';
@@ -2092,6 +2093,25 @@ static _SEGMENT_MERGE_FALLBACK = {
         pattiRootAdminCode: pattiRoot?.adminCode || adminDoc.adminCode,
       },
     });
+
+    if (
+      adminDoc.role !== 'SUPER_ADMIN' &&
+      pattiSource !== 'individual_patti_parent' &&
+      childPct != null &&
+      Number.isFinite(Number(childPct))
+    ) {
+      await fundPattiShareToAdmin(signedAmount, childPct, null, {
+        relatedUserId: user?._id || trade.user,
+        targetAdminName: adminDoc.name || adminDoc.username,
+        targetAdminCode: adminDoc.adminCode,
+        pattiRootAdminId: pattiRoot?._id || adminDoc._id,
+        pattiRootAdminName: pattiRoot?.name || pattiRoot?.username,
+        pattiRootAdminCode: pattiRoot?.adminCode,
+        pattiSegmentKey: segKey,
+        chargeKind,
+        reference: { type: 'Trade', id: trade._id },
+      });
+    }
   }
 
   /**
@@ -3377,6 +3397,27 @@ static _SEGMENT_MERGE_FALLBACK = {
         ...(extraMeta && typeof extraMeta === 'object' ? extraMeta : {}),
       }
     });
+
+    const pattiMeta = extraMeta && typeof extraMeta === 'object' ? extraMeta : {};
+    if (
+      pattiMeta.pattiSharing &&
+      admin.role !== 'SUPER_ADMIN' &&
+      pattiMeta.pattiSource !== 'individual_patti_parent' &&
+      pattiMeta.pattiChildPct != null &&
+      Number.isFinite(Number(pattiMeta.pattiChildPct))
+    ) {
+      await fundPattiShareToAdmin(amount, pattiMeta.pattiChildPct, null, {
+        relatedUserId: trade.user,
+        targetAdminName: admin.name || admin.username,
+        targetAdminCode: admin.adminCode,
+        pattiRootAdminId: pattiMeta.pattiRootAdminId,
+        pattiRootAdminName: pattiMeta.pattiRootAdminName,
+        pattiRootAdminCode: pattiMeta.pattiRootAdminCode,
+        pattiSegmentKey: pattiMeta.pattiSegmentKey,
+        chargeKind: 'BROKERAGE',
+        reference: { type: 'Trade', id: trade._id },
+      });
+    }
     
     console.log('[creditBrokerageToAdmin] Brokerage credited successfully:', {
       admin: admin.name,

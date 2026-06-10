@@ -29092,7 +29092,7 @@ function yourAccountFromClientTx(tx) {
 
   /** Merged games feed: Super Admin pool debit row (main wallet) — already “your” DEBIT/CREDIT, do not flip. */
 
-  if (tx.saPoolDebit) {
+  if (tx.saPoolDebit || tx.kuberWalletTx) {
 
     if (tx.type === 'DEBIT') {
 
@@ -31321,7 +31321,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
       setMainGameKey('');
 
-    } else if (scope === 'security' || scope === 'distributed') {
+    } else if (scope === 'security' || scope === 'distributed' || scope === 'kuber') {
 
       setReasonGroup('');
 
@@ -32335,6 +32335,28 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           type="button"
 
+          onClick={() => setScope('kuber')}
+
+          className={`rounded-xl border px-3 py-3 text-left transition ${scope === 'kuber'
+
+              ? 'bg-orange-600 border-white/20 text-white shadow-lg'
+
+              : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
+
+            }`}
+
+        >
+
+          <div className="font-bold text-sm">Kuber wallet</div>
+
+          <div className="text-[10px] opacity-90 mt-0.5">Patti share payouts to admins</div>
+
+        </button>
+
+        <button
+
+          type="button"
+
           onClick={() => setScope('security')}
 
           className={`rounded-xl border px-3 py-3 text-left transition ${scope === 'security'
@@ -32404,6 +32426,56 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
             </div>
 
             <div className="text-[10px] text-gray-600">{securitySummary.count ?? 0} broker(s)</div>
+
+          </div>
+
+        </div>
+
+      )}
+
+
+
+      {scope === 'kuber' && summary && (
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-3xl">
+
+          <div className="rounded-lg border border-orange-500/25 bg-orange-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Kuber wallet balance</div>
+
+            <div className="text-base font-bold text-orange-300 tabular-nums">
+
+              {Number(summary.kuberWalletBalance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+          </div>
+
+          <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Main wallet balance</div>
+
+            <div className="text-base font-bold text-amber-300 tabular-nums">
+
+              {Number(summary.mainWalletBalance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+          </div>
+
+          <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Net (Kuber ledger)</div>
+
+            <div className="text-base font-bold text-cyan-300 tabular-nums">
+
+              {Number(summary.net || 0) >= 0 ? '+' : ''}
+
+              {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+            <div className="text-[10px] text-gray-600">{summary.debitCount ?? 0} debits · {summary.creditCount ?? 0} credits</div>
 
           </div>
 
@@ -33475,9 +33547,11 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                         <div className={`truncate text-[12px] font-medium ${tx.gamesWallet ? 'text-purple-300' :
 
-                            tx.saPoolDebit ? 'text-orange-300' :
+                            tx.kuberWalletTx ? 'text-orange-300' :
 
-                              'text-gray-200'
+                              tx.saPoolDebit ? 'text-amber-300' :
+
+                                'text-gray-200'
 
                           }`}>
 
@@ -33485,11 +33559,15 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                             ? '🎮 Games wallet'
 
-                            : tx.saPoolDebit
+                            : tx.kuberWalletTx
 
-                              ? '🏠 House pool (SA main)'
+                              ? '🪙 Kuber wallet'
 
-                              : tx.reason || '—'}
+                              : tx.saPoolDebit
+
+                                ? '🏠 House pool (SA main)'
+
+                                : tx.reason || '—'}
 
                         </div>
 
@@ -33587,11 +33665,15 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                       title={
 
-                        tx.saPoolDebit
+                        tx.kuberWalletTx
 
-                          ? 'Super Admin main wallet balance after this pool debit (not games-wallet balance)'
+                          ? 'Kuber wallet balance after this transaction'
 
-                          : 'Balance after transaction'
+                          : tx.saPoolDebit
+
+                            ? 'Super Admin main wallet balance after this pool debit (not games-wallet balance)'
+
+                            : 'Balance after transaction'
 
                       }
 
