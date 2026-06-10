@@ -708,8 +708,6 @@ const AdminDashboard = () => {
 
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
-  const [walletBalance, setWalletBalance] = useState(admin?.wallet?.balance || 0);
-
 
 
   const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
@@ -812,7 +810,7 @@ const AdminDashboard = () => {
 
 
 
-  // Refresh admin data on mount to get latest wallet balance
+  // Refresh admin data on mount / route change so sidebar wallet stays in sync
 
   useEffect(() => {
 
@@ -822,7 +820,7 @@ const AdminDashboard = () => {
 
     }
 
-  }, []);
+  }, [admin?.token, location.pathname]);
 
 
 
@@ -837,8 +835,6 @@ const AdminDashboard = () => {
       });
 
       if (data.wallet) {
-
-        setWalletBalance(data.wallet.balance || 0);
 
         updateAdmin({ wallet: data.wallet, stats: data.stats });
 
@@ -1248,7 +1244,7 @@ const AdminDashboard = () => {
 
             <div className="text-xs text-gray-500 mt-1">
 
-              Wallet: {walletBalance.toLocaleString()}
+              Wallet: {(admin?.wallet?.balance || 0).toLocaleString()}
 
             </div>
 
