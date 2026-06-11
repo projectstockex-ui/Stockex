@@ -31336,11 +31336,9 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
         const params = new URLSearchParams();
 
+        params.set('limit', '2000');
+
         if (debouncedUserSearch) params.set('search', debouncedUserSearch);
-
-        if (dateFrom) params.set('dateFrom', new Date(dateFrom).toISOString());
-
-        if (dateTo) params.set('dateTo', new Date(`${dateTo}T23:59:59.999`).toISOString());
 
         const { data } = await axios.get(`/api/admin/manage/distributed-cash-feed?${params.toString()}`, {
 
@@ -32146,7 +32144,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
     return distributedRows.filter((row) => {
 
-      const blob = [row.adminName, row.adminCode, row.role]
+      const blob = [row.adminName, row.adminCode, row.role, row.date, row.time, row.description]
 
         .filter(Boolean)
 
@@ -32370,7 +32368,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           <div className="font-bold text-sm">Distributed Cash Account</div>
 
-          <div className="text-[10px] opacity-90 mt-0.5">Cash given to & returned by admins</div>
+          <div className="text-[10px] opacity-90 mt-0.5">Every give / return line — full history</div>
 
         </button>
 
@@ -32610,7 +32608,11 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
             </div>
 
-            <div className="text-[10px] text-gray-600">{distributedSummary.adminCount ?? 0} admin(s)</div>
+            <div className="text-[10px] text-gray-600">
+
+              {distributedSummary.txnCount ?? 0} line(s) · {distributedSummary.adminCount ?? 0} admin(s)
+
+            </div>
 
           </div>
 
@@ -32977,6 +32979,8 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           )}
 
+          {!isLedgerAltScope || scope === 'security' ? (
+
           <div>
 
             <label className="text-[10px] text-gray-500 block mb-1">From date</label>
@@ -32995,6 +32999,10 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           </div>
 
+          ) : null}
+
+          {!isLedgerAltScope || scope === 'security' ? (
+
           <div>
 
             <label className="text-[10px] text-gray-500 block mb-1">To date</label>
@@ -33012,6 +33020,8 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
             />
 
           </div>
+
+          ) : null}
 
         </div>
 
@@ -33323,7 +33333,7 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           <div className="text-center py-14 text-gray-500 text-sm rounded-xl border border-dark-600 bg-dark-800/50">
 
-            No distributed cash records found. Add funds to an admin or approve an admin fund request.
+            No distributed cash records yet. Use Admin Management → Add Funds or approve an admin fund request.
 
           </div>
 
@@ -33331,23 +33341,21 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
           <div className="bg-dark-800 rounded-xl border border-dark-600 overflow-x-auto">
 
-            <table className="w-full text-sm min-w-[760px]">
+            <table className="w-full text-sm min-w-[720px]">
 
               <thead className="bg-dark-700">
 
                 <tr>
 
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date</th>
+
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Time (IST)</th>
+
                   <th className="text-left px-3 py-2 text-gray-400 font-semibold">Admin name</th>
 
-                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date given</th>
+                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Given amount</th>
 
-                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Amount given</th>
-
-                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date returned</th>
-
-                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Amount returned</th>
-
-                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Net outstanding</th>
+                  <th className="text-right px-3 py-2 text-gray-400 font-semibold">Return amount</th>
 
                 </tr>
 
@@ -33357,7 +33365,19 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                 {filteredDistributedRows.map((row) => (
 
-                  <tr key={row.adminId} className="border-t border-dark-600 hover:bg-dark-700/40">
+                  <tr key={row._id} className="border-t border-dark-600 hover:bg-dark-700/40">
+
+                    <td className="px-3 py-2 text-gray-300 whitespace-nowrap tabular-nums">
+
+                      {row.date || '—'}
+
+                    </td>
+
+                    <td className="px-3 py-2 text-gray-400 whitespace-nowrap tabular-nums">
+
+                      {row.time || '—'}
+
+                    </td>
 
                     <td className="px-3 py-2 text-gray-200">
 
@@ -33371,45 +33391,23 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                     </td>
 
-                    <td className="px-3 py-2 text-gray-400 text-[11px] whitespace-nowrap">
-
-                      {row.lastGivenAt ? new Date(row.lastGivenAt).toLocaleString('en-IN') : '—'}
-
-                      {row.givenCount > 1 ? (
-
-                        <div className="text-[10px] text-gray-600">{row.givenCount} deposits</div>
-
-                      ) : null}
-
-                    </td>
-
                     <td className="px-3 py-2 text-right font-bold text-teal-300 tabular-nums">
 
-                      {Number(row.totalGiven || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      {row.givenAmount != null
 
-                    </td>
+                        ? Number(row.givenAmount).toLocaleString('en-IN', { maximumFractionDigits: 2 })
 
-                    <td className="px-3 py-2 text-gray-400 text-[11px] whitespace-nowrap">
-
-                      {row.lastReturnedAt ? new Date(row.lastReturnedAt).toLocaleString('en-IN') : '—'}
-
-                      {row.returnCount > 1 ? (
-
-                        <div className="text-[10px] text-gray-600">{row.returnCount} returns</div>
-
-                      ) : null}
+                        : '—'}
 
                     </td>
 
                     <td className="px-3 py-2 text-right font-bold text-rose-300 tabular-nums">
 
-                      {Number(row.totalReturned || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      {row.returnAmount != null
 
-                    </td>
+                        ? Number(row.returnAmount).toLocaleString('en-IN', { maximumFractionDigits: 2 })
 
-                    <td className="px-3 py-2 text-right font-bold text-cyan-300 tabular-nums">
-
-                      {Number(row.netOutstanding || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        : '—'}
 
                     </td>
 

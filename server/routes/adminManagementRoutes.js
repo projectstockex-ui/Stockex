@@ -1325,37 +1325,23 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
     const superAdminIds = superAdmins.map((a) => a._id);
 
+    const superAdminIdSet = new Set(superAdminIds.map(String));
+
     if (!superAdminIds.length) {
 
-      return res.json({ rows: [], summary: { adminCount: 0, totalGiven: 0, totalReturned: 0, netOutstanding: 0 } });
+      return res.json({
+
+        rows: [],
+
+        summary: { adminCount: 0, totalGiven: 0, totalReturned: 0, netOutstanding: 0, txnCount: 0 },
+
+      });
 
     }
 
 
 
-    const dateFilter = {};
-
-    if (req.query.dateFrom) {
-
-      const from = new Date(req.query.dateFrom);
-
-      if (!Number.isNaN(from.getTime())) dateFilter.$gte = from;
-
-    }
-
-    if (req.query.dateTo) {
-
-      const to = new Date(req.query.dateTo);
-
-      if (!Number.isNaN(to.getTime())) {
-
-        to.setHours(23, 59, 59, 999);
-
-        dateFilter.$lte = to;
-
-      }
-
-    }
+    const lim = Math.min(Math.max(parseInt(String(req.query.limit || '2000'), 10) || 2000, 1), 5000);
 
 
 
@@ -1363,97 +1349,51 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
       ownerType: 'ADMIN',
 
-      performedBy: { $in: superAdminIds },
+      reason: { $in: ['ADMIN_DEPOSIT', 'ADMIN_WITHDRAW'] },
 
-      ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
+      $or: [
 
-    };
+        { performedBy: { $in: superAdminIds } },
 
+        { performedBy: null },
 
+        { performedBy: { $exists: false } },
 
-    const [deposits, withdrawals] = await Promise.all([
-
-      WalletLedger.find({ ...ledgerFilter, reason: 'ADMIN_DEPOSIT', type: 'CREDIT' }).lean(),
-
-      WalletLedger.find({ ...ledgerFilter, reason: 'ADMIN_WITHDRAW', type: 'DEBIT' }).lean(),
-
-    ]);
-
-
-
-    const byAdmin = new Map();
-
-
-
-    const ensureRow = (ownerId) => {
-
-      const key = String(ownerId);
-
-      if (!byAdmin.has(key)) {
-
-        byAdmin.set(key, {
-
-          adminId: key,
-
-          totalGiven: 0,
-
-          totalReturned: 0,
-
-          lastGivenAt: null,
-
-          lastReturnedAt: null,
-
-          givenCount: 0,
-
-          returnCount: 0,
-
-        });
-
-      }
-
-      return byAdmin.get(key);
+      ],
 
     };
 
 
 
-    for (const entry of deposits) {
+    const entries = await WalletLedger.find(ledgerFilter)
 
-      const row = ensureRow(entry.ownerId);
+      .sort({ createdAt: -1 })
 
-      row.totalGiven += Number(entry.amount) || 0;
+      .limit(lim)
 
-      row.givenCount += 1;
-
-      const at = entry.createdAt ? new Date(entry.createdAt) : null;
-
-      if (at && (!row.lastGivenAt || at > row.lastGivenAt)) row.lastGivenAt = at;
-
-    }
+      .lean();
 
 
 
-    for (const entry of withdrawals) {
+    const ownerIds = [
 
-      const row = ensureRow(entry.ownerId);
+      ...new Set(
 
-      row.totalReturned += Number(entry.amount) || 0;
+        entries
 
-      row.returnCount += 1;
+          .map((e) => String(e.ownerId))
 
-      const at = entry.createdAt ? new Date(entry.createdAt) : null;
+          .filter((id) => id && !superAdminIdSet.has(id))
 
-      if (at && (!row.lastReturnedAt || at > row.lastReturnedAt)) row.lastReturnedAt = at;
+      ),
 
-    }
+    ];
 
 
 
-    const adminIds = [...byAdmin.keys()];
+    const admins = ownerIds.length
 
-    const admins = adminIds.length
-
-      ? await Admin.find({ _id: { $in: adminIds }, role: { $ne: 'SUPER_ADMIN' } })
+      ? await Admin.find({ _id: { $in: ownerIds }, role: { $ne: 'SUPER_ADMIN' } })
 
         .select('name username adminCode role')
 
@@ -1461,9 +1401,35 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
       : [];
 
-
-
     const adminMap = new Map(admins.map((a) => [String(a._id), a]));
+
+
+
+    const istDateFmt = new Intl.DateTimeFormat('en-IN', {
+
+      timeZone: 'Asia/Kolkata',
+
+      day: '2-digit',
+
+      month: '2-digit',
+
+      year: 'numeric',
+
+    });
+
+    const istTimeFmt = new Intl.DateTimeFormat('en-IN', {
+
+      timeZone: 'Asia/Kolkata',
+
+      hour: '2-digit',
+
+      minute: '2-digit',
+
+      second: '2-digit',
+
+      hour12: true,
+
+    });
 
 
 
@@ -1471,19 +1437,39 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
 
 
-    let rows = adminIds
+    let rows = entries
 
-      .map((id) => {
+      .map((entry) => {
 
-        const agg = byAdmin.get(id);
+        const ownerKey = String(entry.ownerId);
 
-        const adm = adminMap.get(id);
+        if (superAdminIdSet.has(ownerKey)) return null;
+
+        const adm = adminMap.get(ownerKey);
 
         if (!adm) return null;
 
+
+
+        const isGiven = entry.reason === 'ADMIN_DEPOSIT' && entry.type === 'CREDIT';
+
+        const isReturn = entry.reason === 'ADMIN_WITHDRAW' && entry.type === 'DEBIT';
+
+        if (!isGiven && !isReturn) return null;
+
+
+
+        const amt = Number(entry.amount) || 0;
+
+        const at = entry.createdAt ? new Date(entry.createdAt) : null;
+
+
+
         return {
 
-          adminId: id,
+          _id: String(entry._id),
+
+          adminId: ownerKey,
 
           adminName: adm.name || adm.username || '—',
 
@@ -1491,19 +1477,19 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
           role: adm.role || '',
 
-          totalGiven: parseFloat((agg.totalGiven || 0).toFixed(2)),
+          date: at ? istDateFmt.format(at) : '—',
 
-          totalReturned: parseFloat((agg.totalReturned || 0).toFixed(2)),
+          time: at ? istTimeFmt.format(at) : '—',
 
-          netOutstanding: parseFloat(((agg.totalGiven || 0) - (agg.totalReturned || 0)).toFixed(2)),
+          createdAt: at,
 
-          lastGivenAt: agg.lastGivenAt,
+          givenAmount: isGiven ? parseFloat(amt.toFixed(2)) : null,
 
-          lastReturnedAt: agg.lastReturnedAt,
+          returnAmount: isReturn ? parseFloat(amt.toFixed(2)) : null,
 
-          givenCount: agg.givenCount,
+          txnType: isGiven ? 'GIVEN' : 'RETURN',
 
-          returnCount: agg.returnCount,
+          description: entry.description || '',
 
         };
 
@@ -1517,7 +1503,13 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
       rows = rows.filter((row) => {
 
-        const blob = [row.adminName, row.adminCode, row.role].filter(Boolean).join(' ').toLowerCase();
+        const blob = [row.adminName, row.adminCode, row.role, row.description]
+
+          .filter(Boolean)
+
+          .join(' ')
+
+          .toLowerCase();
 
         return blob.includes(search);
 
@@ -1527,21 +1519,21 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
 
 
-    rows.sort((a, b) => {
+    const adminTotals = new Map();
 
-      const aT = a.lastGivenAt ? new Date(a.lastGivenAt).getTime() : 0;
+    let totalGiven = 0;
 
-      const bT = b.lastGivenAt ? new Date(b.lastGivenAt).getTime() : 0;
+    let totalReturned = 0;
 
-      return bT - aT;
+    for (const row of rows) {
 
-    });
+      if (row.givenAmount != null) totalGiven += row.givenAmount;
 
+      if (row.returnAmount != null) totalReturned += row.returnAmount;
 
+      if (!adminTotals.has(row.adminId)) adminTotals.set(row.adminId, true);
 
-    const totalGiven = rows.reduce((s, r) => s + (r.totalGiven || 0), 0);
-
-    const totalReturned = rows.reduce((s, r) => s + (r.totalReturned || 0), 0);
+    }
 
 
 
@@ -1551,13 +1543,15 @@ router.get('/distributed-cash-feed', protectAdmin, superAdminOnly, async (req, r
 
       summary: {
 
-        adminCount: rows.length,
+        adminCount: adminTotals.size,
 
         totalGiven: parseFloat(totalGiven.toFixed(2)),
 
         totalReturned: parseFloat(totalReturned.toFixed(2)),
 
         netOutstanding: parseFloat((totalGiven - totalReturned).toFixed(2)),
+
+        txnCount: rows.length,
 
       },
 
