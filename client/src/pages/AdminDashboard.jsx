@@ -40793,6 +40793,9 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
   const [live, setLive] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [previousLtps, setPreviousLtps] = useState(null);
+  const [previousLtpsLoading, setPreviousLtpsLoading] = useState(false);
+  const [previousLtpsError, setPreviousLtpsError] = useState('');
   const [streamNifty, setStreamNifty] = useState(null);
   const [streamBtc, setStreamBtc] = useState(null);
   const [niftyStreamOn, setNiftyStreamOn] = useState(false);
@@ -40800,6 +40803,7 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
   const [priceTape, setPriceTape] = useState([]);
   const [lastTickAt, setLastTickAt] = useState(null);
   const lastTapePriceRef = useRef(null);
+  const showPreviousLtps = GAME_SETTINGS_BTC_STREAM_IDS.has(selectedGame);
 
   const fetchLive = useCallback(async () => {
     if (!adminToken) return;
@@ -40816,6 +40820,24 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
     }
   }, [adminToken]);
 
+  const fetchPreviousLtps = useCallback(async () => {
+    if (!adminToken || !showPreviousLtps) return;
+    setPreviousLtpsLoading(true);
+    try {
+      const { data } = await axios.get('/api/admin/manage/game-settings/previous-ltps', {
+        params: { game: selectedGame, limit: 5 },
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      setPreviousLtps(data);
+      setPreviousLtpsError('');
+    } catch (e) {
+      setPreviousLtps(null);
+      setPreviousLtpsError(e.response?.data?.message || 'Could not load previous LTPs');
+    } finally {
+      setPreviousLtpsLoading(false);
+    }
+  }, [adminToken, selectedGame, showPreviousLtps]);
+
   useEffect(() => {
     if (!GAME_SETTINGS_LIVE_DETAIL_IDS.has(selectedGame)) return undefined;
     setLoading(true);
@@ -40823,6 +40845,17 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
     const id = setInterval(fetchLive, 8000);
     return () => clearInterval(id);
   }, [selectedGame, fetchLive]);
+
+  useEffect(() => {
+    if (!showPreviousLtps) {
+      setPreviousLtps(null);
+      setPreviousLtpsError('');
+      return undefined;
+    }
+    fetchPreviousLtps();
+    const id = setInterval(fetchPreviousLtps, 60000);
+    return () => clearInterval(id);
+  }, [showPreviousLtps, fetchPreviousLtps]);
 
   useEffect(() => {
     if (!GAME_SETTINGS_LIVE_DETAIL_IDS.has(selectedGame)) return undefined;
@@ -40868,7 +40901,12 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
       if (!Number.isFinite(p) || p <= 0) return;
       setStreamNifty(p);
       setNiftyStreamOn(true);
-      if (GAME_SETTINGS_NIFTY_STREAM_IDS.has(selectedGame)) appendTape(p, 'INR');
+      if (
+        GAME_SETTINGS_NIFTY_STREAM_IDS.has(selectedGame) &&
+        !(selectedGame === 'niftyBracket' && !isNseCashMarketOpen())
+      ) {
+        appendTape(p, 'INR');
+      }
     };
 
     const onBtcTick = (ticks) => {
@@ -40914,10 +40952,20 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
   const d = live?.[selectedGame];
   const isBtcGame = GAME_SETTINGS_BTC_STREAM_IDS.has(selectedGame);
   const isNiftyGame = GAME_SETTINGS_NIFTY_STREAM_IDS.has(selectedGame);
+  const isNiftyBracket = selectedGame === 'niftyBracket';
+  const niftyMarketOpen =
+    isNiftyBracket && d ? (d.marketOpen ?? isNseCashMarketOpen()) : isNseCashMarketOpen();
   const niftyLtp = streamNifty ?? d?.ltp ?? d?.livePrice ?? d?.displayPrice;
   const btcLtp = streamBtc ?? d?.ltp ?? d?.livePrice;
   const streamOn = isBtcGame ? btcStreamOn : isNiftyGame ? niftyStreamOn : false;
-  const livePx = isBtcGame ? btcLtp : niftyLtp;
+  // Nifty Bracket: after market close, stick hero price to session clearing (same as user game screen).
+  const bracketDisplayPx =
+    isNiftyBracket && d
+      ? niftyMarketOpen
+        ? (streamNifty ?? d.ltp ?? d.displayPrice)
+        : (d.displayPrice ?? d.sessionClearing ?? d.ltp)
+      : null;
+  const livePx = isBtcGame ? btcLtp : isNiftyBracket ? bracketDisplayPx : niftyLtp;
   const liveFmt = isBtcGame ? fmtUsd(livePx) : fmtInr(livePx);
   const runningDecimal = adminGameDecimalFromPrice(livePx);
 
@@ -41000,7 +41048,11 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
               className={`w-2 h-2 rounded-full ${streamOn ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}
             />
             <span className="text-[10px] uppercase tracking-wide text-gray-400">
-              {isBtcGame ? 'BTC/USDT live stream' : 'NIFTY 50 live stream'}
+              {isBtcGame
+                ? 'BTC/USDT live stream'
+                : isNiftyBracket && !niftyMarketOpen
+                  ? 'NIFTY 50 · session clearing'
+                  : 'NIFTY 50 live stream'}
             </span>
           </div>
           <div
@@ -41010,8 +41062,12 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
           >
             {liveFmt}
           </div>
-          {!streamOn && (
-            <p className="text-[10px] text-amber-400/90 mt-1">Waiting for socket ticks… (API fallback active)</p>
+          {isNiftyBracket && !niftyMarketOpen ? (
+            <p className="text-[10px] text-gray-400 mt-1">Market closed · stuck to 15m session clearing</p>
+          ) : (
+            !streamOn && (
+              <p className="text-[10px] text-amber-400/90 mt-1">Waiting for socket ticks… (API fallback active)</p>
+            )
           )}
         </div>
       )}
@@ -41044,6 +41100,59 @@ const GameSettingsLiveDetailsPanel = ({ selectedGame, adminToken }) => {
       )}
 
       {d?.message && <p className="text-[10px] text-gray-500 mt-2">{d.message}</p>}
+
+      {showPreviousLtps && (
+        <div className="mt-4 rounded-lg border border-orange-600/35 bg-dark-800/80 overflow-hidden">
+          <div className="px-3 py-2 border-b border-dark-600/80 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-semibold text-orange-300">Previous LTPs</div>
+              <div className="text-[10px] text-gray-500">
+                Last 5 days at configured end time
+                {previousLtps?.endTimeLabel ? ` (${previousLtps.endTimeLabel})` : ''}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={fetchPreviousLtps}
+              disabled={previousLtpsLoading}
+              className="text-[10px] text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+            >
+              Refresh
+            </button>
+          </div>
+          {previousLtpsError && (
+            <p className="px-3 py-2 text-xs text-red-400">{previousLtpsError}</p>
+          )}
+          {previousLtpsLoading && !previousLtps?.rows?.length ? (
+            <p className="px-3 py-3 text-xs text-gray-500">Loading previous LTPs…</p>
+          ) : !previousLtps?.rows?.length ? (
+            <p className="px-3 py-3 text-xs text-gray-500">No completed sessions in the last 5 days yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="text-left text-gray-500 border-b border-dark-600/80">
+                    <th className="px-3 py-2 font-medium">Date (IST)</th>
+                    <th className="px-3 py-2 font-medium">End time</th>
+                    <th className="px-3 py-2 font-medium text-right">LTP (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previousLtps.rows.map((item) => (
+                    <tr key={item.date} className="border-b border-dark-700/60 last:border-0">
+                      <td className="px-3 py-2 text-gray-300">{item.date}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono">{item.endTime || '—'}</td>
+                      <td className="px-3 py-2 text-right text-orange-200 font-medium tabular-nums">
+                        {fmtUsd(item.ltp)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

@@ -230,6 +230,8 @@ import { ZerodhaPriceResolver } from '../services/zerodha/ZerodhaPriceResolver.j
 
 import { getLiveBtcSpotForJackpot } from '../utils/btcJackpotSpot.js';
 
+import { getBtcGamePreviousLtps, BTC_PREVIOUS_LTP_GAMES } from '../utils/btcGamePreviousLtps.js';
+
 import { getTodayISTString } from '../utils/istDate.js';
 
 import {
@@ -15141,7 +15143,23 @@ router.get('/game-settings/live-details', protectAdmin, superAdminOnly, async (r
   }
 });
 
-
+/** Super Admin — last 5 days BTC LTP at each game's configured end/result time. */
+router.get('/game-settings/previous-ltps', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const game = String(req.query.game || '').trim();
+    if (!BTC_PREVIOUS_LTP_GAMES.has(game)) {
+      return res.status(400).json({
+        message: 'game query required: btcUpDown, btcJackpot, or btcNumber',
+      });
+    }
+    const settings = await GameSettings.getSettings();
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 10);
+    const payload = await getBtcGamePreviousLtps(game, settings?.games || {}, limit);
+    res.json(payload);
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Failed to load previous LTPs' });
+  }
+});
 
 // Update game settings
 
