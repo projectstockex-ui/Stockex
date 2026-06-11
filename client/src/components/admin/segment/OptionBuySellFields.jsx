@@ -22,8 +22,15 @@ export function isSimplifiedHierarchyOptSegment(segmentKey) {
   return SIMPLIFIED_HIERARCHY_OPT_SEGMENTS.includes(String(segmentKey || '').toUpperCase());
 }
 
+/** Intraday + carryforward leverage on every OPT segment (BSE-OPT, FOREXOPT, etc.). */
 export function segmentHasOptionLeverageFields(segmentKey) {
-  return OPTION_LEVERAGE_SEGMENT_KEYS.includes(String(segmentKey || '').toUpperCase());
+  const k = String(segmentKey || '').toUpperCase();
+  return (
+    isSimplifiedHierarchyOptSegment(k) ||
+    OPTION_LEVERAGE_SEGMENT_KEYS.includes(k) ||
+    k.endsWith('OPT') ||
+    k.endsWith('-OPT')
+  );
 }
 
 export default function OptionBuySellFields({
