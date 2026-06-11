@@ -10,7 +10,7 @@ import { isCryptoQtyOnlySegment } from '../dashboard/utils/cryptoUtils.js';
 import CryptoSegmentAdminExtras from '../dashboard/ui/CryptoSegmentAdminExtras.jsx';
 import McxSegmentAdminExtras from '../dashboard/ui/McxSegmentAdminExtras.jsx';
 import NseBseSegmentAdminExtras from '../dashboard/ui/NseBseSegmentAdminExtras.jsx';
-import OptionBuySellFields from '../segment/OptionBuySellFields.jsx';
+import OptionBuySellFields, { isSimplifiedHierarchyOptSegment } from '../segment/OptionBuySellFields.jsx';
 import SegmentBrokerageFields from '../segment/SegmentBrokerageFields.jsx';
 import {
   numInputValue,
@@ -27,6 +27,7 @@ import SegmentNumberInput from '../segment/SegmentNumberInput.jsx';
 export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange }) {
   const s = slice || {};
   const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT', 'FOREXOPT', 'CRYPTOOPT'].includes(segmentKey);
+  const simplifiedOpt = isSimplifiedHierarchyOptSegment(segmentKey);
   const [showLotSettingsButton, setShowLotSettingsButton] = useState(true);
   const [showQtySettingsButton, setShowQtySettingsButton] = useState(true);
 
@@ -45,6 +46,7 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
     <div className="space-y-6 text-sm">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
+          {!simplifiedOpt && (
           <div className="flex gap-4 items-center">
             <button
               type="button"
@@ -63,6 +65,7 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
             </button>
             <span className="text-xs text-gray-400">Qty</span>
           </div>
+          )}
         </div>
         <button
           type="button"
@@ -73,6 +76,7 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
         </button>
       </div>
 
+      {!simplifiedOpt && (
       <div>
         <h4 className="text-sm font-semibold text-yellow-400 mb-3">Leverage Settings</h4>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -94,6 +98,7 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
           </div>
         </div>
       </div>
+      )}
 
       <div className="rounded-lg border border-dark-600 bg-dark-700/60 p-3">
         <label className="flex cursor-pointer items-start gap-3">
@@ -127,7 +132,7 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
         </label>
       </div>
 
-      {showLotSettingsButton && (
+      {!simplifiedOpt && showLotSettingsButton && (
         <>
           <h4 className="text-sm font-semibold text-yellow-400 mb-4">Lot Settings</h4>
           <div className="grid grid-cols-2 gap-4 mb-4">
@@ -201,7 +206,7 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
         </>
       )}
 
-      {showQtySettingsButton && (
+      {!simplifiedOpt && showQtySettingsButton && (
         <>
           <h4 className="text-sm font-semibold text-blue-400 mb-3">Quantity Settings</h4>
           <div className="grid grid-cols-2 gap-4 mb-4">
@@ -317,10 +322,12 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
         </div>
       </div>
 
+      {!simplifiedOpt && (
       <SegmentBrokerageFields
         slice={s}
         onChange={onChange}
       />
+      )}
 
       {['MCXFUT', 'MCXOPT', 'MCX'].includes(segmentKey) && (
         <>

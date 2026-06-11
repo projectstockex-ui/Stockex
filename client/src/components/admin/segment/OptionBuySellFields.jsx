@@ -11,8 +11,14 @@ import SegmentNumberInput from './SegmentNumberInput.jsx';
 
 export const OPTION_LEVERAGE_SEGMENT_KEYS = ['NSEOPT', 'MCXOPT', 'CRYPTOOPT'];
 
-/** OPT segments: hierarchy hides segment lot/qty + segment brokerage; Option Buy/Sell keeps per-lot brokerage. */
-export const SIMPLIFIED_HIERARCHY_OPT_SEGMENTS = OPTION_LEVERAGE_SEGMENT_KEYS;
+/** All OPT segments use Option Buy/Sell — no Settings in Lot / Qty toggles in hierarchy. */
+export const SIMPLIFIED_HIERARCHY_OPT_SEGMENTS = [
+  'NSEOPT',
+  'MCXOPT',
+  'BSE-OPT',
+  'FOREXOPT',
+  'CRYPTOOPT',
+];
 
 export function isSimplifiedHierarchyOptSegment(segmentKey) {
   return SIMPLIFIED_HIERARCHY_OPT_SEGMENTS.includes(String(segmentKey || '').toUpperCase());
