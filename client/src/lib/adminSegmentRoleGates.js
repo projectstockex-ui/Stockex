@@ -18,6 +18,11 @@ export function canEditCryptoSessionTiming(role) {
   return role === 'SUPER_ADMIN';
 }
 
+/** Session timing is never shown on client/user segment settings — admin hierarchy SA screens only. */
+export function showSegmentSessionTimingInUserSettings() {
+  return false;
+}
+
 /**
  * Hierarchy "Admin Settings" modal: show the limit/pending toggle only when the row being edited
  * is an Admin or Super Admin — not Broker/Sub broker — even when a Super Admin opens Settings.

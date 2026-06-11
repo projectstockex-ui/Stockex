@@ -58128,33 +58128,6 @@ const UserManagement = () => {
                         }}
                       />
                     )}
-
-                    {['MCXFUT', 'MCX', 'MCXOPT'].includes(segmentKey) && (
-                      <McxSegmentAdminExtras
-                        segmentKey={segmentKey}
-                        slice={s}
-                        canEdit={isSuperAdmin}
-                        onFieldChange={(field, value) => handleEditSegmentPermissionChange(segmentKey, field, value)}
-                      />
-                    )}
-
-                    {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(segmentKey) && (
-                      <NseBseSegmentAdminExtras
-                        segmentKey={segmentKey}
-                        slice={s}
-                        canEdit={isSuperAdmin}
-                        onFieldChange={(field, value) => handleEditSegmentPermissionChange(segmentKey, field, value)}
-                      />
-                    )}
-
-                    {['CRYPTOFUT', 'CRYPTOOPT'].includes(segmentKey) && (
-                      <CryptoSegmentAdminExtras
-                        segmentKey={segmentKey}
-                        slice={s}
-                        canEdit={isSuperAdmin}
-                        onFieldChange={(field, value) => handleEditSegmentPermissionChange(segmentKey, field, value)}
-                      />
-                    )}
                     </>
                     )}
 

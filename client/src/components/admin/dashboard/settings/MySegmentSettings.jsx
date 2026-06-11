@@ -4,16 +4,7 @@ import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
 import { normalizeMongoMapOfObjects, isCryptoQtyOnlySegment } from '../utils';
 import { computeSegmentExplicitKeys } from '../../../../utils/segmentExplicitKeys';
-import {
-  canManageLimitPendingSegmentGate,
-  canEditMcxSessionTiming,
-  canEditNseBseSessionTiming,
-  canEditCryptoSessionTiming,
-  LIMIT_PENDING_HELP_TEXT,
-} from '../../../../lib/adminSegmentRoleGates';
-import CryptoSegmentAdminExtras from '../ui/CryptoSegmentAdminExtras';
-import McxSegmentAdminExtras from '../ui/McxSegmentAdminExtras';
-import NseBseSegmentAdminExtras from '../ui/NseBseSegmentAdminExtras';
+import { canManageLimitPendingSegmentGate, LIMIT_PENDING_HELP_TEXT } from '../../../../lib/adminSegmentRoleGates';
 import SegmentBrokerageFields from '../../segment/SegmentBrokerageFields.jsx';
 import FranchiseSegmentBrokerageNotice from '../../segment/FranchiseSegmentBrokerageNotice.jsx';
 import { isAdminFranchiseBrokerageActive } from '../../../../utils/franchiseSegmentBrokerage.js';
@@ -274,39 +265,6 @@ const MySegmentSettings = () => {
                         />
                       </div>
                     ))}
-
-                    {['CRYPTOFUT', 'CRYPTOOPT'].includes(segment) && (
-                      <div className="col-span-2 md:col-span-4">
-                        <CryptoSegmentAdminExtras
-                          segmentKey={segment}
-                          slice={segmentPermissions[segment]}
-                          canEdit={canEditCryptoSessionTiming(admin?.role)}
-                          onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
-                        />
-                      </div>
-                    )}
-
-                    {['MCXFUT', 'MCXOPT', 'MCX'].includes(segment) && (
-                      <div className="col-span-2 md:col-span-4">
-                        <McxSegmentAdminExtras
-                          segmentKey={segment}
-                          slice={segmentPermissions[segment]}
-                          canEdit={canEditMcxSessionTiming(admin?.role)}
-                          onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
-                        />
-                      </div>
-                    )}
-
-                    {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(segment) && (
-                      <div className="col-span-2 md:col-span-4">
-                        <NseBseSegmentAdminExtras
-                          segmentKey={segment}
-                          slice={segmentPermissions[segment]}
-                          canEdit={canEditNseBseSessionTiming(admin?.role)}
-                          onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
-                        />
-                      </div>
-                    )}
 
                     <div className="col-span-2 md:col-span-4 mt-2">
                       <h4 className="text-sm font-semibold text-purple-400 mb-2">Leverage Settings</h4>
