@@ -4,6 +4,7 @@ import axios from '../../../config/axios';
 import { X, Save, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { numInputValue, parseNumInput, parseIntInput, parseNonNegativeNumInput } from '../../../utils/segmentFormValues.js';
 import CryptoSegmentAdminExtras from '../dashboard/ui/CryptoSegmentAdminExtras.jsx';
+import { canEditCryptoSessionTiming } from '../../../lib/adminSegmentRoleGates.js';
 
 const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
   const { admin } = useAuth();
@@ -318,6 +319,7 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                       <CryptoSegmentAdminExtras
                         segmentKey={segment}
                         slice={segmentPermissions[segment]}
+                        canEdit={canEditCryptoSessionTiming(admin?.role)}
                         onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
                       />
                     )}

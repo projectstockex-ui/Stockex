@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { normalizeCryptoIstClock24, formatStoredCryptoIstClock } from '../utils/cryptoUtils';
 
-/** NSE/BSE (NSEFUT): IST session gates — Super Admin sets on franchise admin; flows to full hierarchy. */
+/** NSE/BSE (NSEFUT): IST session gates — Super Admin only. */
 function NseBseSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = false }) {
   const [startDraft, setStartDraft] = useState(() =>
     formatStoredCryptoIstClock(slice?.nseStartTime || slice?.startTime)
@@ -18,8 +18,17 @@ function NseBseSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = 
     setCloseDraft(formatStoredCryptoIstClock(slice?.nseClosingTime || slice?.closingTime));
   }, [slice?.nseClosingTime, slice?.closingTime]);
 
+  if (!canEdit) return null;
+
+  if (segmentKey !== 'NSEFUT') {
+    return (
+      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+        <p className="text-xs text-gray-400">NSE/BSE timing is managed in NSEFUT settings only.</p>
+      </div>
+    );
+  }
+
   const commitStartBlur = () => {
-    if (!canEdit) return;
     const n = normalizeCryptoIstClock24(startDraft);
     if (n === null) {
       setStartDraft(formatStoredCryptoIstClock(slice?.nseStartTime || slice?.startTime));
@@ -36,7 +45,6 @@ function NseBseSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = 
   };
 
   const commitCloseBlur = () => {
-    if (!canEdit) return;
     const n = normalizeCryptoIstClock24(closeDraft);
     if (n === null) {
       setCloseDraft(formatStoredCryptoIstClock(slice?.nseClosingTime || slice?.closingTime));
@@ -57,25 +65,12 @@ function NseBseSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = 
     }
   };
 
-  if (segmentKey !== 'NSEFUT') {
-    return (
-      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
-        <p className="text-xs text-gray-400">NSE/BSE timing is managed in NSEFUT settings only.</p>
-      </div>
-    );
-  }
-
-  const readOnly = !canEdit;
-
   return (
     <div className="mb-4 rounded-lg border border-green-700/40 bg-dark-800/60 p-3 space-y-3">
-      {canEdit ? (
-        <p className="text-xs text-green-400/90">
-          Super Admin only. Session times apply to this admin and all users/brokers below. End time triggers carry-forward + wallet update.
-        </p>
-      ) : (
-        <p className="text-xs text-gray-400">NSE/BSE session timing (set by Super Admin on franchise admin)</p>
-      )}
+      <p className="text-xs text-green-400/90">
+        Super Admin only. Session times apply to this admin and all users/brokers below. End time triggers
+        carry-forward + wallet update.
+      </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
         <div>
           <label className="block text-xs text-gray-400 mb-1">NSE/BSE start time (IST, 24h HH:mm:ss)</label>
@@ -86,11 +81,9 @@ function NseBseSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = 
             spellCheck={false}
             placeholder="09:15:00"
             value={startDraft}
-            onChange={(e) => canEdit && setStartDraft(e.target.value)}
+            onChange={(e) => setStartDraft(e.target.value)}
             onBlur={commitStartBlur}
-            readOnly={readOnly}
-            disabled={readOnly}
-            className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm font-mono ${readOnly ? 'opacity-80 cursor-default' : ''}`}
+            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm font-mono"
           />
         </div>
         <div>
@@ -102,11 +95,9 @@ function NseBseSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = 
             spellCheck={false}
             placeholder="15:30:00"
             value={closeDraft}
-            onChange={(e) => canEdit && setCloseDraft(e.target.value)}
+            onChange={(e) => setCloseDraft(e.target.value)}
             onBlur={commitCloseBlur}
-            readOnly={readOnly}
-            disabled={readOnly}
-            className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm font-mono ${readOnly ? 'opacity-80 cursor-default' : ''}`}
+            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm font-mono"
           />
         </div>
       </div>

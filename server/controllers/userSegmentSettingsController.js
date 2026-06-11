@@ -160,7 +160,11 @@ class UserSegmentSettingsController {
 
         {
           const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+          const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
+          const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
           plain = stripMcxSessionTimingFromSegmentMap(plain);
+          plain = stripNseBseSessionTimingFromSegmentMap(plain);
+          plain = stripCryptoSessionTimingFromSegmentMap(plain);
         }
 
         console.log('[UserSegmentSettings] Plain data before validation:', JSON.stringify(plain, null, 2));
@@ -372,7 +376,11 @@ class UserSegmentSettingsController {
         let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
         if (sanitized) {
           const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
+          const { stripNseBseKeysFromSegmentExplicitKeys } = await import('../utils/nseBseSessionTiming.js');
+          const { stripCryptoKeysFromSegmentExplicitKeys } = await import('../utils/cryptoSessionTiming.js');
           sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
+          sanitized = stripNseBseKeysFromSegmentExplicitKeys(sanitized);
+          sanitized = stripCryptoKeysFromSegmentExplicitKeys(sanitized);
         }
         if (sanitized !== undefined) {
           updateFields.segmentExplicitKeys = sanitized;

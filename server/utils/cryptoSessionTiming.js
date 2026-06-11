@@ -1,5 +1,35 @@
 import TradeService from '../services/tradeService.js';
 
+export const CRYPTO_SESSION_TIMING_KEYS = [
+  'cryptoStartTime',
+  'cryptoClosingTime',
+  'startTime',
+  'closingTime',
+];
+
+export function stripCryptoSessionTimingFromSegmentMap(plain) {
+  if (!plain || typeof plain !== 'object') return plain;
+  const out = { ...plain };
+  for (const [segName, segData] of Object.entries(out)) {
+    if (!segData || typeof segData !== 'object') continue;
+    const seg = { ...segData };
+    for (const k of CRYPTO_SESSION_TIMING_KEYS) delete seg[k];
+    out[segName] = seg;
+  }
+  return out;
+}
+
+export function stripCryptoKeysFromSegmentExplicitKeys(explicitKeys) {
+  if (!explicitKeys || typeof explicitKeys !== 'object') return explicitKeys;
+  const out = {};
+  for (const [seg, keys] of Object.entries(explicitKeys)) {
+    out[seg] = Array.isArray(keys)
+      ? keys.filter((k) => !CRYPTO_SESSION_TIMING_KEYS.includes(k))
+      : keys;
+  }
+  return out;
+}
+
 /** SystemSettings CRYPTOFUT close — same source of truth as UI / getUserSegmentSettings. */
 export function resolveSystemCryptoClosingTime(sysSegDefaults = {}) {
   const cf = sysSegDefaults.CRYPTOFUT || sysSegDefaults.CRYPTOOPT || sysSegDefaults.CRYPTO || {};

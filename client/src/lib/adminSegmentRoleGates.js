@@ -3,13 +3,18 @@ export function canManageLimitPendingSegmentGate(role) {
   return role === 'SUPER_ADMIN' || role === 'ADMIN';
 }
 
-/** MCX session start/close — Super Admin only (sets on franchise admin; flows to full hierarchy). */
+/** MCX session start/close — Super Admin only (flows to full hierarchy). */
 export function canEditMcxSessionTiming(role) {
   return role === 'SUPER_ADMIN';
 }
 
-/** NSE/BSE session start/close — same policy as MCX. */
+/** NSE/BSE session start/close — Super Admin only. */
 export function canEditNseBseSessionTiming(role) {
+  return role === 'SUPER_ADMIN';
+}
+
+/** Crypto session start/close — Super Admin only. */
+export function canEditCryptoSessionTiming(role) {
   return role === 'SUPER_ADMIN';
 }
 

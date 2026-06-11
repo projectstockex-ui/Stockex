@@ -852,8 +852,10 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
       if (req.admin.role !== 'SUPER_ADMIN') {
         const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
         const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
+        const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
         plain = stripMcxSessionTimingFromSegmentMap(plain);
         plain = stripNseBseSessionTimingFromSegmentMap(plain);
+        plain = stripCryptoSessionTimingFromSegmentMap(plain);
       }
       updateFields.segmentPermissions = alignSegmentDefaultsMapPreservingSessionTiming(plain);
     }
@@ -865,8 +867,10 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
       if (req.admin.role !== 'SUPER_ADMIN' && sanitized) {
         const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
         const { stripNseBseKeysFromSegmentExplicitKeys } = await import('../utils/nseBseSessionTiming.js');
+        const { stripCryptoKeysFromSegmentExplicitKeys } = await import('../utils/cryptoSessionTiming.js');
         sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
         sanitized = stripNseBseKeysFromSegmentExplicitKeys(sanitized);
+        sanitized = stripCryptoKeysFromSegmentExplicitKeys(sanitized);
       }
       if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
     }
@@ -952,8 +956,10 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
       {
         const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
         const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
+        const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
         plain = stripMcxSessionTimingFromSegmentMap(plain);
         plain = stripNseBseSessionTimingFromSegmentMap(plain);
+        plain = stripCryptoSessionTimingFromSegmentMap(plain);
       }
       if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
         const existingSeg =

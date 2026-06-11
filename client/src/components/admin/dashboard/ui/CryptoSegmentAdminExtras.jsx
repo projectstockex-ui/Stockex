@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { normalizeCryptoIstClock24, formatStoredCryptoIstClock } from '../utils/cryptoUtils';
 
-/** Crypto (CRYPTOFUT / CRYPTOOPT): IST session gates only — no lot↔qty mapping UI. */
-function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey }) {
+/** Crypto (CRYPTOFUT): IST session gates — Super Admin only. */
+function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = false }) {
   const [startDraft, setStartDraft] = useState(() => formatStoredCryptoIstClock(slice?.cryptoStartTime));
   const [closeDraft, setCloseDraft] = useState(() => formatStoredCryptoIstClock(slice?.cryptoClosingTime));
 
@@ -13,6 +13,16 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey }) {
   useEffect(() => {
     setCloseDraft(formatStoredCryptoIstClock(slice?.cryptoClosingTime));
   }, [slice?.cryptoClosingTime]);
+
+  if (!canEdit) return null;
+
+  if (segmentKey === 'CRYPTOOPT') {
+    return (
+      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+        <p className="text-xs text-gray-400">Crypto timing is managed in CRYPTOFUT settings only.</p>
+      </div>
+    );
+  }
 
   const commitStartBlur = () => {
     const n = normalizeCryptoIstClock24(startDraft);
@@ -36,19 +46,11 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey }) {
     if ((n || '') !== prev) onFieldChange('cryptoClosingTime', n);
   };
 
-  // Only show time settings for CRYPTOFUT, not CRYPTOOPT
-  if (segmentKey === 'CRYPTOOPT') {
-    return (
-      <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
-        <p className="text-xs text-gray-400">
-          Crypto timing is managed in CRYPTOFUT settings only.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3 space-y-3">
+    <div className="mb-4 rounded-lg border border-cyan-700/40 bg-dark-800/60 p-3 space-y-3">
+      <p className="text-xs text-cyan-400/90">
+        Super Admin only. Session times apply to this admin and all users/brokers below.
+      </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
         <div>
           <label className="block text-xs text-gray-400 mb-1">Crypto start time (IST, 24h HH:mm:ss)</label>

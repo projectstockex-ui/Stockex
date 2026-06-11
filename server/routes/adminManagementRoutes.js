@@ -5290,7 +5290,11 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
 
       {
         const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+        const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
+        const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
         plain = stripMcxSessionTimingFromSegmentMap(plain);
+        plain = stripNseBseSessionTimingFromSegmentMap(plain);
+        plain = stripCryptoSessionTimingFromSegmentMap(plain);
       }
 
       if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {

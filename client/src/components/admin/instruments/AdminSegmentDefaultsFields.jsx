@@ -281,7 +281,7 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
       )}
 
       {['CRYPTOFUT', 'CRYPTOOPT'].includes(segmentKey) && (
-        <CryptoSegmentAdminExtras segmentKey={segmentKey} slice={s} onFieldChange={handleChange} />
+        <CryptoSegmentAdminExtras segmentKey={segmentKey} slice={s} canEdit onFieldChange={handleChange} />
       )}
 
       {['MCXFUT', 'MCXOPT', 'MCX'].includes(segmentKey) && (

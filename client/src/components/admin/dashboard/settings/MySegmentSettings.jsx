@@ -4,7 +4,13 @@ import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
 import { normalizeMongoMapOfObjects, isCryptoQtyOnlySegment } from '../utils';
 import { computeSegmentExplicitKeys } from '../../../../utils/segmentExplicitKeys';
-import { canManageLimitPendingSegmentGate, canEditMcxSessionTiming, canEditNseBseSessionTiming, LIMIT_PENDING_HELP_TEXT } from '../../../../lib/adminSegmentRoleGates';
+import {
+  canManageLimitPendingSegmentGate,
+  canEditMcxSessionTiming,
+  canEditNseBseSessionTiming,
+  canEditCryptoSessionTiming,
+  LIMIT_PENDING_HELP_TEXT,
+} from '../../../../lib/adminSegmentRoleGates';
 import CryptoSegmentAdminExtras from '../ui/CryptoSegmentAdminExtras';
 import McxSegmentAdminExtras from '../ui/McxSegmentAdminExtras';
 import NseBseSegmentAdminExtras from '../ui/NseBseSegmentAdminExtras';
@@ -274,6 +280,7 @@ const MySegmentSettings = () => {
                         <CryptoSegmentAdminExtras
                           segmentKey={segment}
                           slice={segmentPermissions[segment]}
+                          canEdit={canEditCryptoSessionTiming(admin?.role)}
                           onFieldChange={(field, value) => handleSegmentChange(segment, field, value)}
                         />
                       </div>

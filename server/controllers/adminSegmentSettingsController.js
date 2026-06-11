@@ -143,8 +143,10 @@ class AdminSegmentSettingsController {
         if (currentAdmin.role !== 'SUPER_ADMIN') {
           const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
           const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
+          const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
           plain = stripMcxSessionTimingFromSegmentMap(plain);
           plain = stripNseBseSessionTimingFromSegmentMap(plain);
+          plain = stripCryptoSessionTimingFromSegmentMap(plain);
         }
 
         // Validate all segment permission fields against parent's limits
@@ -404,16 +406,15 @@ class AdminSegmentSettingsController {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].commissionUnit = segData.commissionUnit;
           }
-          // Preserve crypto fields
-          if (segData.cryptoStartTime !== undefined) {
-            aligned[segName] = aligned[segName] || {};
-            aligned[segName].cryptoStartTime = segData.cryptoStartTime;
-          }
-          if (segData.cryptoClosingTime !== undefined) {
-            aligned[segName] = aligned[segName] || {};
-            aligned[segName].cryptoClosingTime = segData.cryptoClosingTime;
-          }
           if (currentAdmin.role === 'SUPER_ADMIN') {
+            if (segData.cryptoStartTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].cryptoStartTime = segData.cryptoStartTime;
+            }
+            if (segData.cryptoClosingTime !== undefined) {
+              aligned[segName] = aligned[segName] || {};
+              aligned[segName].cryptoClosingTime = segData.cryptoClosingTime;
+            }
             if (segData.mcxStartTime !== undefined) {
               aligned[segName] = aligned[segName] || {};
               aligned[segName].mcxStartTime = segData.mcxStartTime;
@@ -482,8 +483,10 @@ class AdminSegmentSettingsController {
         if (currentAdmin.role !== 'SUPER_ADMIN' && sanitized) {
           const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
           const { stripNseBseKeysFromSegmentExplicitKeys } = await import('../utils/nseBseSessionTiming.js');
+          const { stripCryptoKeysFromSegmentExplicitKeys } = await import('../utils/cryptoSessionTiming.js');
           sanitized = stripMcxKeysFromSegmentExplicitKeys(sanitized);
           sanitized = stripNseBseKeysFromSegmentExplicitKeys(sanitized);
+          sanitized = stripCryptoKeysFromSegmentExplicitKeys(sanitized);
         }
         if (sanitized !== undefined) {
           updateFields.segmentExplicitKeys = sanitized;
