@@ -14994,6 +14994,22 @@ function mergeGameConfigForAdmin(prev, patch) {
 
 // Get game settings
 
+/** Read-only platform security flags for hierarchy admins (User Management UI). */
+router.get('/platform-security', protectAdmin, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings();
+    const plain = typeof settings.toObject === 'function' ? settings.toObject() : settings;
+    res.json({
+      adminHierarchyClientSettings: {
+        allowEditSubordinateClientValues:
+          plain?.adminHierarchyClientSettings?.allowEditSubordinateClientValues === true,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 router.get('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
 
   try {

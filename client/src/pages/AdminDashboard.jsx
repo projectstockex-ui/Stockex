@@ -44583,6 +44583,72 @@ const SecuritySettings = () => {
 
         </div>
 
+        <div className="bg-dark-800 rounded-lg p-6">
+
+          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+
+            <Users className="text-cyan-400" size={20} /> Admin hierarchy — client settings
+
+          </h3>
+
+          <div className="space-y-4">
+
+            <label className="flex items-center justify-between p-3 bg-dark-700 rounded cursor-pointer">
+
+              <div>
+
+                <span className="block">Allow edit for broker / sub-broker clients</span>
+
+                <span className="text-xs text-gray-500">
+
+                  When ON, Admin and Broker can change segment values for any client in their hierarchy. When OFF, only direct clients (own admin code).
+
+                </span>
+
+              </div>
+
+              <input
+
+                type="checkbox"
+
+                checked={settings?.adminHierarchyClientSettings?.allowEditSubordinateClientValues === true}
+
+                onChange={(e) =>
+
+                  updateNestedSetting(
+
+                    'adminHierarchyClientSettings',
+
+                    'allowEditSubordinateClientValues',
+
+                    e.target.checked
+
+                  )
+
+                }
+
+                disabled={saving}
+
+                className="w-5 h-5"
+
+              />
+
+            </label>
+
+            <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-500/30">
+
+              <p className="text-xs text-amber-200">
+
+                <strong>Default OFF:</strong> Admin can set values only for clients created directly under them — not broker or sub-broker clients.
+
+              </p>
+
+            </div>
+
+          </div>
+
+        </div>
+
       </div>
 
     </div>
@@ -55938,6 +56004,8 @@ const UserManagement = () => {
 
   const [showOnlyOwnUsers, setShowOnlyOwnUsers] = useState(false);
 
+  const [allowEditSubordinateClientValues, setAllowEditSubordinateClientValues] = useState(false);
+
   const [selectedScriptSegment, setSelectedScriptSegment] = useState(null);
 
   const [selectedScript, setSelectedScript] = useState(null);
@@ -55980,9 +56048,19 @@ const UserManagement = () => {
     const adminId = String(admin._id || '');
     const userAdminId = String(user.admin?._id || user.admin || '');
     if (adminId && userAdminId === adminId) return true;
+    if (admin.adminCode && user.adminCode === admin.adminCode) return true;
     if (admin.adminCode && user.admin?.adminCode === admin.adminCode) return true;
     return adminId && String(user.createdBy || '') === adminId;
   }, [admin]);
+
+  const canEditUserSettings = useCallback(
+    (user) => {
+      if (isSuperAdmin) return true;
+      if (isDirectAdminClient(user)) return true;
+      return allowEditSubordinateClientValues;
+    },
+    [isSuperAdmin, isDirectAdminClient, allowEditSubordinateClientValues]
+  );
 
   const usersForList = useMemo(() => {
     if (!showOnlyOwnUsers) return users;
@@ -56111,11 +56189,41 @@ const UserManagement = () => {
 
 
 
+  const fetchPlatformSecurity = async () => {
+
+    if (!admin?.token || isSuperAdmin) return;
+
+    try {
+
+      const { data } = await axios.get('/api/admin/manage/platform-security', {
+
+        headers: { Authorization: `Bearer ${admin.token}` },
+
+      });
+
+      setAllowEditSubordinateClientValues(
+
+        data?.adminHierarchyClientSettings?.allowEditSubordinateClientValues === true
+
+      );
+
+    } catch (error) {
+
+      console.error('Error fetching platform security:', error);
+
+    }
+
+  };
+
+
+
   useEffect(() => {
 
     fetchUsers();
 
     fetchMarketData();
+
+    fetchPlatformSecurity();
 
   }, []);
 
@@ -56324,6 +56432,10 @@ const UserManagement = () => {
 
 
   const openSettingsModal = async (user) => {
+    if (!canEditUserSettings(user)) {
+      alert('You can only change settings for your direct clients. Super Admin can enable hierarchy client settings in Security Settings.');
+      return;
+    }
     setLoadingSettingsModal(true);
     console.log('[Open Settings Modal] User data:', JSON.stringify(user, null, 2));
     console.log('[Open Settings Modal] User segmentPermissions:', JSON.stringify(user.segmentPermissions, null, 2));
@@ -57322,6 +57434,8 @@ const UserManagement = () => {
 
                       )}
 
+                      {canEditUserSettings(user) && (
+
                       <button
 
                         onClick={() => openSettingsModal(user)}
@@ -57335,6 +57449,8 @@ const UserManagement = () => {
                         <Settings size={16} />
 
                       </button>
+
+                      )}
 
                       <button
 

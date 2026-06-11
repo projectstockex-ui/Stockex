@@ -383,6 +383,12 @@ const gameSettingsSchema = new mongoose.Schema({
     enabled: { type: Boolean, default: true }, // Enable/disable phone verification for registration
     requireForRegistration: { type: Boolean, default: true } // Require phone verification before account creation
   },
+
+  /** Super Admin — who in the admin hierarchy may edit client segment/settings values */
+  adminHierarchyClientSettings: {
+    /** When true, Admin/Broker can edit segment settings for broker/sub-broker clients in their tree */
+    allowEditSubordinateClientValues: { type: Boolean, default: false },
+  },
   
   // First Deposit Bonus
   firstDepositBonus: {

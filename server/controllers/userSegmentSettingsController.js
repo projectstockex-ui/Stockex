@@ -2,6 +2,10 @@ import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import leverageValidationService from '../services/leverageValidationService.js';
 import hierarchyValidationService from '../services/hierarchyValidationService.js';
+import {
+  canManageUserSegmentSettings,
+  getAllowEditSubordinateClientValues,
+} from '../utils/adminClientSettingsAccess.js';
 
 /**
  * User Segment Settings Controller
@@ -25,13 +29,14 @@ class UserSegmentSettingsController {
         return res.status(404).json({ message: 'User not found' });
       }
 
-      // Verify access - user must belong to this admin or be in hierarchy
       if (req.admin.role !== 'SUPER_ADMIN') {
-        const isDirectParent = user.adminCode === req.admin.adminCode;
-        const isInHierarchy = user.hierarchyPath?.some(id => id.toString() === req.admin._id.toString());
-
-        if (!isDirectParent && !isInHierarchy) {
-          return res.status(403).json({ message: 'This user is not under your management' });
+        const allowSubordinateClients = await getAllowEditSubordinateClientValues();
+        if (!canManageUserSegmentSettings(req.admin, user, allowSubordinateClients)) {
+          return res.status(403).json({
+            message: allowSubordinateClients
+              ? 'This user is not under your management'
+              : 'You can only change settings for your direct clients. Ask Super Admin to enable hierarchy client settings.',
+          });
         }
       }
 
@@ -128,13 +133,14 @@ class UserSegmentSettingsController {
 
       console.log('[UserSegmentSettings] Current user segmentPermissions before update:', JSON.stringify(user.segmentPermissions, null, 2));
 
-      // Verify access - user must belong to this admin or be in hierarchy
       if (parentAdmin.role !== 'SUPER_ADMIN') {
-        const isDirectParent = user.adminCode === parentAdmin.adminCode;
-        const isInHierarchy = user.hierarchyPath?.some(id => id.toString() === req.admin._id.toString());
-
-        if (!isDirectParent && !isInHierarchy) {
-          return res.status(403).json({ message: 'This user is not under your management' });
+        const allowSubordinateClients = await getAllowEditSubordinateClientValues();
+        if (!canManageUserSegmentSettings(parentAdmin, user, allowSubordinateClients)) {
+          return res.status(403).json({
+            message: allowSubordinateClients
+              ? 'This user is not under your management'
+              : 'You can only change settings for your direct clients. Ask Super Admin to enable hierarchy client settings.',
+          });
         }
       }
 
