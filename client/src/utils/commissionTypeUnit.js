@@ -28,6 +28,7 @@ export function commissionAmountLabel(commissionType) {
 export function commissionHelperText(commissionType) {
   switch (commissionType) {
     case 'PER_LOT':
+      return `Enter amount per lot (e.g. 10, 20)`;
     case 'PER_QUANTITY':
       return `Charge per quantity (${CURRENCY_SHORT})`;
     case 'PER_TRADE':

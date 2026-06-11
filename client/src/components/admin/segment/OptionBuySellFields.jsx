@@ -3,10 +3,8 @@ import {
   requiredUnitForCommissionType,
   commissionAmountLabel,
   commissionHelperText,
-  unitOptionsForCommissionType,
 } from '../../../utils/commissionTypeUnit.js';
 import { isCryptoQtyOnlySegment } from '../dashboard/utils/cryptoUtils.js';
-import { numInputValue, intInputValue, parseNumInput, parseIntInput } from '../../../utils/segmentFormValues.js';
 import SegmentNumberInput from './SegmentNumberInput.jsx';
 
 export const OPTION_LEVERAGE_SEGMENT_KEYS = ['NSEOPT', 'MCXOPT', 'CRYPTOOPT'];
@@ -81,43 +79,6 @@ export default function OptionBuySellFields({
           </>
         )}
         <div>
-          <label className={labelCls}>
-            {opt.commissionType
-              ? commissionAmountLabel(opt.commissionType)
-              : 'Brokerage amount'}
-          </label>
-          <input
-            type="number"
-            min={0}
-            value={numInputValue(opt.commission)}
-            onChange={(e) => patch({ commission: parseNumInput(e.target.value) })}
-            className={inputCls}
-          />
-          {opt.commissionType ? (
-            <p className="text-[9px] text-gray-600 mt-0.5">{commissionHelperText(opt.commissionType)}</p>
-          ) : null}
-        </div>
-        <div>
-          <label className={labelCls}>Strike Selection</label>
-          <input
-            type="number"
-            value={intInputValue(opt.strikeSelection)}
-            onChange={(e) => patch({ strikeSelection: parseIntInput(e.target.value) })}
-            className={inputCls}
-          />
-        </div>
-        <div>
-          <label className={labelCls}>
-            {isCryptoQtyOnlySegment(segmentKey) ? 'Max Exchange Qty' : 'Max Exchange Lots'}
-          </label>
-          <input
-            type="number"
-            value={intInputValue(opt.maxExchangeLots)}
-            onChange={(e) => patch({ maxExchangeLots: parseIntInput(e.target.value) })}
-            className={inputCls}
-          />
-        </div>
-        <div>
           <label className={labelCls}>Commission Type</label>
           <select
             value={opt.commissionType || ''}
@@ -135,20 +96,43 @@ export default function OptionBuySellFields({
             <option value="PER_LOT">Per Lot</option>
             <option value="PER_TRADE">Per Trade</option>
           </select>
+        </div>
+        <div>
+          <label className={labelCls}>
+            {opt.commissionType
+              ? commissionAmountLabel(opt.commissionType)
+              : 'Brokerage amount'}
+          </label>
+          <SegmentNumberInput
+            value={opt.commission}
+            onChange={(v) => patch({ commission: v })}
+            className={inputCls}
+          />
           {opt.commissionType ? (
-            <select
-              value={requiredUnitForCommissionType(opt.commissionType)}
-              disabled
-              className={`${inputCls} mt-1 opacity-90 cursor-not-allowed`}
-              title="Unit follows commission type"
-            >
-              {unitOptionsForCommissionType(opt.commissionType).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          ) : null}
+            <p className="text-[9px] text-gray-500 mt-0.5">{commissionHelperText(opt.commissionType)}</p>
+          ) : (
+            <p className="text-[9px] text-gray-500 mt-0.5">Select commission type, then enter amount here</p>
+          )}
+        </div>
+        <div>
+          <label className={labelCls}>Strike Selection</label>
+          <SegmentNumberInput
+            integer
+            value={opt.strikeSelection}
+            onChange={(v) => patch({ strikeSelection: v })}
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className={labelCls}>
+            {isCryptoQtyOnlySegment(segmentKey) ? 'Max Exchange Qty' : 'Max Exchange Lots'}
+          </label>
+          <SegmentNumberInput
+            integer
+            value={opt.maxExchangeLots}
+            onChange={(v) => patch({ maxExchangeLots: v })}
+            className={inputCls}
+          />
         </div>
       </div>
     </div>

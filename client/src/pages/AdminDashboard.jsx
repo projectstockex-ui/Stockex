@@ -10074,20 +10074,6 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
       });
     }
 
-    if (viewerRole !== 'SUPER_ADMIN' && (field === 'optionBuy' || field === 'optionSell') && value && typeof value === 'object') {
-      const parentOpt = parentSegBaseline[seg]?.[field];
-      const commission = value.commission;
-      if (optionCommissionBelowParent(commission, parentOpt?.commission)) {
-        const label = field === 'optionBuy' ? 'Option Buy' : 'Option Sell';
-        const parentMin = Number(parentOpt.commission);
-        setMessage({
-          type: 'error',
-          text: `${seg} ${label} Brokerage must be at least ${parentMin} (same as or higher than your parent setting).`,
-        });
-        return;
-      }
-    }
-
     setSegDefs((prev) => ({
       ...prev,
       [seg]: patchSegmentField(prev[seg] || {}, field, value),
