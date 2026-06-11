@@ -56,6 +56,11 @@ import AdminTradingTransactions from '../components/admin/AdminTradingTransactio
 
 import OptionBuySellFields, { isSimplifiedHierarchyOptSegment } from '../components/admin/segment/OptionBuySellFields.jsx';
 import SegmentBrokerageFields from '../components/admin/segment/SegmentBrokerageFields.jsx';
+import FranchiseSegmentBrokerageNotice from '../components/admin/segment/FranchiseSegmentBrokerageNotice.jsx';
+import {
+  isAdminFranchiseBrokerageActive,
+  isUserFranchiseBrokerageActive,
+} from '../utils/franchiseSegmentBrokerage.js';
 import { numInputValue, parseNumInput, parseIntInput, parseNonNegativeNumInput, patchSegmentField } from '../utils/segmentFormValues.js';
 import SegmentNumberInput from '../components/admin/segment/SegmentNumberInput.jsx';
 import { normalizeSegmentCommissionFields } from '../utils/segmentCommissionType.js';
@@ -4672,6 +4677,10 @@ const AdminManagement = () => {
                       <li>All trading profit/loss stays within this subtree only</li>
                       <li>Super Admin platform percentage share remains 0%</li>
                       <li>Downline brokers/sub-brokers can get their own /crore via Franchise button</li>
+                      <li className="text-purple-300">
+                        Segment brokerage fields will be hidden for this admin and downline — use Franchise /crore
+                        charge instead
+                      </li>
                     </ul>
                   </>
                 ) : (
@@ -4683,6 +4692,10 @@ const AdminManagement = () => {
                         Example: Radha (admin) → Abhay (broker) 1200/crore yahan set karein.
                       </span>
                     )}
+                    <span className="block mt-2 text-purple-300">
+                      Segment brokerage is not used while franchise is on — set /crore here and Client Franchise
+                      Charge on users.
+                    </span>
                   </p>
                 )}
               </div>
@@ -9696,6 +9709,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
   const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
+  const hideSegmentBrokerage = isAdminFranchiseBrokerageActive(targetAdmin);
+
 
 
   // General settings state
@@ -10665,17 +10680,21 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           </>
                         )}
 
-                        <SegmentBrokerageFields
-                          slice={s}
-                          baseline={systemSegBaseline[expandedSeg]}
-                          compact
-                          onChange={(next) =>
-                            setSegDefs((prev) => ({
-                              ...prev,
-                              [expandedSeg]: { ...prev[expandedSeg], ...next },
-                            }))
-                          }
-                        />
+                        {hideSegmentBrokerage ? (
+                          <FranchiseSegmentBrokerageNotice compact />
+                        ) : (
+                          <SegmentBrokerageFields
+                            slice={s}
+                            baseline={systemSegBaseline[expandedSeg]}
+                            compact
+                            onChange={(next) =>
+                              setSegDefs((prev) => ({
+                                ...prev,
+                                [expandedSeg]: { ...prev[expandedSeg], ...next },
+                              }))
+                            }
+                          />
+                        )}
                         </>
                         )}
 
@@ -10841,6 +10860,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                   optType={optType}
                                   opt={s[optType] || {}}
                                   compact
+                                  hideBrokerage={hideSegmentBrokerage}
                                   onChange={(next) => handleSegDefChange(expandedSeg, optType, next)}
                                 />
                               ))}
@@ -56258,6 +56278,8 @@ const UserManagement = () => {
   const canSetFranchiseChargeOnUser = (user) =>
     canSetUserFranchiseCharge && user?.franchiseActive !== false;
 
+  const hideUserSegmentBrokerage = isUserFranchiseBrokerageActive(selectedUser);
+
   const openFranchiseUserModal = (user) => {
     setSelectedUser(user);
     setFranchiseUserChargeInput(
@@ -57513,6 +57535,10 @@ const UserManagement = () => {
                   Sub-broker / broker / admin client par  per crore set karein. Trading turnover ke hisaab se charge
                   apply hoga (franchise hierarchy ke andar).
                 </p>
+                <p className="text-xs text-purple-300 mt-2">
+                  Franchise clients par segment brokerage fields hide rehti hain — charge sirf yahan set /crore se
+                  apply hota hai.
+                </p>
                 {admin?.restrictMode?.brokerageChargePerCrore > 0 && (
                   <p className="text-xs text-amber-400 mt-2">
                     Minimum client rate: {Number(admin.restrictMode.brokerageChargePerCrore).toLocaleString('en-IN')}
@@ -58245,17 +58271,21 @@ const UserManagement = () => {
                     )}
 
 
-                    <SegmentBrokerageFields
-                      slice={s}
-                      baseline={segmentDefaultsBaseline[segmentKey]}
-                      compact
-                      onChange={(next) => {
-                        Object.entries(next).forEach(([k, v]) => {
-                          if (k === 'optionBuy' || k === 'optionSell') return;
-                          if (s[k] !== v) handleEditSegmentPermissionChange(expandedSegment, k, v);
-                        });
-                      }}
-                    />
+                    {hideUserSegmentBrokerage ? (
+                      <FranchiseSegmentBrokerageNotice compact />
+                    ) : (
+                      <SegmentBrokerageFields
+                        slice={s}
+                        baseline={segmentDefaultsBaseline[segmentKey]}
+                        compact
+                        onChange={(next) => {
+                          Object.entries(next).forEach(([k, v]) => {
+                            if (k === 'optionBuy' || k === 'optionSell') return;
+                            if (s[k] !== v) handleEditSegmentPermissionChange(expandedSegment, k, v);
+                          });
+                        }}
+                      />
+                    )}
 
                     {['MCXFUT', 'MCX', 'MCXOPT'].includes(segmentKey) && (
                       <McxSegmentAdminExtras
@@ -58296,6 +58326,7 @@ const UserManagement = () => {
                               optType={optType}
                               opt={s[optType] || {}}
                               compact
+                              hideBrokerage={hideUserSegmentBrokerage}
                               onChange={(next) => handleEditSegmentPermissionChange(expandedSegment, optType, next)}
                             />
                           ))}

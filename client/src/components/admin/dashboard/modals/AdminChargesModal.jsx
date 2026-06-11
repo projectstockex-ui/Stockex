@@ -17,6 +17,8 @@ import {
 } from '../../../../utils/commissionTypeUnit.js';
 import OptionBuySellFields from '../../segment/OptionBuySellFields.jsx';
 import SegmentBrokerageFields from '../../segment/SegmentBrokerageFields.jsx';
+import FranchiseSegmentBrokerageNotice from '../../segment/FranchiseSegmentBrokerageNotice.jsx';
+import { isAdminFranchiseBrokerageActive } from '../../../../utils/franchiseSegmentBrokerage.js';
 import { normalizeSegmentCommissionFields } from '../../../../utils/segmentCommissionType.js';
 import {
   numInputValue,
@@ -141,6 +143,7 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey }) {
 const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onSuccess }) => {
   const [activeTab, setActiveTab] = useState('segments');
   const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
+  const hideSegmentBrokerage = isAdminFranchiseBrokerageActive(targetAdmin);
 
   // General settings state
   const [adminSettings, setAdminSettings] = useState({
@@ -645,17 +648,21 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           />
                         )}
 
-                        <SegmentBrokerageFields
-                          slice={s}
-                          baseline={systemSegBaseline[expandedSeg]}
-                          compact
-                          onChange={(next) =>
-                            setSegDefs((prev) => ({
-                              ...prev,
-                              [expandedSeg]: { ...prev[expandedSeg], ...next },
-                            }))
-                          }
-                        />
+                        {hideSegmentBrokerage ? (
+                          <FranchiseSegmentBrokerageNotice compact />
+                        ) : (
+                          <SegmentBrokerageFields
+                            slice={s}
+                            baseline={systemSegBaseline[expandedSeg]}
+                            compact
+                            onChange={(next) =>
+                              setSegDefs((prev) => ({
+                                ...prev,
+                                [expandedSeg]: { ...prev[expandedSeg], ...next },
+                              }))
+                            }
+                          />
+                        )}
 
                         {/* Super Admin Brokerage & Incentive - Only for MCX segments */}
                         {['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
@@ -729,6 +736,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                   optType={optType}
                                   opt={s[optType] || {}}
                                   compact
+                                  hideBrokerage={hideSegmentBrokerage}
                                   onChange={(next) => handleSegDefChange(expandedSeg, optType, next)}
                                 />
                               ))}

@@ -40,6 +40,7 @@ export default function OptionBuySellFields({
   onChange,
   compact = false,
   showLeverage,
+  hideBrokerage = false,
 }) {
   const showOptLev =
     showLeverage !== undefined ? showLeverage : segmentHasOptionLeverageFields(segmentKey);
@@ -85,42 +86,46 @@ export default function OptionBuySellFields({
             </div>
           </>
         )}
-        <div>
-          <label className={labelCls}>Commission Type</label>
-          <select
-            value={opt.commissionType || ''}
-            onChange={(e) => {
-              const ct = e.target.value;
-              if (!ct) return;
-              patch({
-                commissionType: ct,
-                commissionUnit: requiredUnitForCommissionType(ct),
-              });
-            }}
-            className={inputCls}
-          >
-            <option value="">— Select —</option>
-            <option value="PER_LOT">Per Lot</option>
-            <option value="PER_TRADE">Per Trade</option>
-          </select>
-        </div>
-        <div>
-          <label className={labelCls}>
-            {opt.commissionType
-              ? commissionAmountLabel(opt.commissionType)
-              : 'Brokerage amount'}
-          </label>
-          <SegmentNumberInput
-            value={opt.commission}
-            onChange={(v) => patch({ commission: v })}
-            className={inputCls}
-          />
-          {opt.commissionType ? (
-            <p className="text-[9px] text-gray-500 mt-0.5">{commissionHelperText(opt.commissionType)}</p>
-          ) : (
-            <p className="text-[9px] text-gray-500 mt-0.5">Select commission type, then enter amount here</p>
-          )}
-        </div>
+        {!hideBrokerage && (
+          <>
+            <div>
+              <label className={labelCls}>Commission Type</label>
+              <select
+                value={opt.commissionType || ''}
+                onChange={(e) => {
+                  const ct = e.target.value;
+                  if (!ct) return;
+                  patch({
+                    commissionType: ct,
+                    commissionUnit: requiredUnitForCommissionType(ct),
+                  });
+                }}
+                className={inputCls}
+              >
+                <option value="">— Select —</option>
+                <option value="PER_LOT">Per Lot</option>
+                <option value="PER_TRADE">Per Trade</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>
+                {opt.commissionType
+                  ? commissionAmountLabel(opt.commissionType)
+                  : 'Brokerage amount'}
+              </label>
+              <SegmentNumberInput
+                value={opt.commission}
+                onChange={(v) => patch({ commission: v })}
+                className={inputCls}
+              />
+              {opt.commissionType ? (
+                <p className="text-[9px] text-gray-500 mt-0.5">{commissionHelperText(opt.commissionType)}</p>
+              ) : (
+                <p className="text-[9px] text-gray-500 mt-0.5">Select commission type, then enter amount here</p>
+              )}
+            </div>
+          </>
+        )}
         <div>
           <label className={labelCls}>Strike Selection</label>
           <SegmentNumberInput

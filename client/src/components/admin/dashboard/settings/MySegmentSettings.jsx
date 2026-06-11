@@ -9,6 +9,8 @@ import CryptoSegmentAdminExtras from '../ui/CryptoSegmentAdminExtras';
 import McxSegmentAdminExtras from '../ui/McxSegmentAdminExtras';
 import NseBseSegmentAdminExtras from '../ui/NseBseSegmentAdminExtras';
 import SegmentBrokerageFields from '../../segment/SegmentBrokerageFields.jsx';
+import FranchiseSegmentBrokerageNotice from '../../segment/FranchiseSegmentBrokerageNotice.jsx';
+import { isAdminFranchiseBrokerageActive } from '../../../../utils/franchiseSegmentBrokerage.js';
 import { normalizeSegmentCommissionFields } from '../../../../utils/segmentCommissionType.js';
 import { numInputValue, parseNumInput } from '../../../../utils/segmentFormValues.js';
 
@@ -33,6 +35,7 @@ const MySegmentSettings = () => {
   const emptySegmentSlice = () => ({ enabled: false });
 
   const showLimitPendingGate = canManageLimitPendingSegmentGate(admin?.role);
+  const hideSegmentBrokerage = isAdminFranchiseBrokerageActive(admin);
 
   useEffect(() => {
     fetchSettings();
@@ -325,16 +328,20 @@ const MySegmentSettings = () => {
                     </div>
 
                     <div className="col-span-2 md:col-span-4 mt-2">
-                      <SegmentBrokerageFields
-                        slice={segmentPermissions[segment] || {}}
-                        baseline={systemSegBaseline[segment]}
-                        onChange={(next) =>
-                          setSegmentPermissions((prev) => ({
-                            ...prev,
-                            [segment]: { ...(prev[segment] || {}), ...next },
-                          }))
-                        }
-                      />
+                      {hideSegmentBrokerage ? (
+                        <FranchiseSegmentBrokerageNotice />
+                      ) : (
+                        <SegmentBrokerageFields
+                          slice={segmentPermissions[segment] || {}}
+                          baseline={systemSegBaseline[segment]}
+                          onChange={(next) =>
+                            setSegmentPermissions((prev) => ({
+                              ...prev,
+                              [segment]: { ...(prev[segment] || {}), ...next },
+                            }))
+                          }
+                        />
+                      )}
                     </div>
                   </div>
                 )}

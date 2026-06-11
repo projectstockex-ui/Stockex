@@ -168,7 +168,7 @@ const AdminManagement = () => {
   const handleToggleFranchiseRoot = async (targetAdmin) => {
     const newValue = !targetAdmin.isFranchiseRoot;
     const action = newValue ? 'enable' : 'disable';
-    if (!confirm(`Franchise Root: ${action} for "${targetAdmin.name || targetAdmin.username}"?\n\nWhen ENABLED:\n• This admin's subtree forms an isolated unit\n• Trading profit/loss settles within subtree only\n• Brokerage-per-crore flow applies for this franchise hierarchy\n\nContinue?`)) return;
+    if (!confirm(`Franchise Root: ${action} for "${targetAdmin.name || targetAdmin.username}"?\n\nWhen ENABLED:\n• This admin's subtree forms an isolated unit\n• Trading profit/loss settles within subtree only\n• Brokerage-per-crore flow applies for this franchise hierarchy\n• Segment brokerage fields will be hidden — use Franchise /crore charge instead\n\nContinue?`)) return;
 
     try {
       await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/franchise-root`, {
