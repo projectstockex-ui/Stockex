@@ -1,4 +1,5 @@
 import TradeService from '../services/tradeService.js';
+import Admin from '../models/Admin.js';
 
 export const CRYPTO_SESSION_TIMING_KEYS = [
   'cryptoStartTime',
@@ -43,6 +44,60 @@ export function resolveSystemCryptoStartTime(sysSegDefaults = {}) {
 
 export function isCryptoSegmentKey(segKey) {
   return String(segKey || '').toUpperCase().startsWith('CRYPTO');
+}
+
+function segmentMapPlain(segmentMap) {
+  if (!segmentMap) return {};
+  if (segmentMap instanceof Map) return Object.fromEntries(segmentMap);
+  return typeof segmentMap === 'object' ? segmentMap : {};
+}
+
+function cryptoSliceFromPerms(perms) {
+  const plain = segmentMapPlain(perms);
+  return plain.CRYPTOFUT || plain.CRYPTOOPT || plain.CRYPTO || {};
+}
+
+function readCryptoTimingFromSlice(slice) {
+  if (!slice || typeof slice !== 'object') return { start: '', close: '' };
+  return {
+    start: String(slice.cryptoStartTime || slice.startTime || '').trim(),
+    close: String(slice.cryptoClosingTime || slice.closingTime || '').trim(),
+  };
+}
+
+/** Walk direct parent + hierarchyPath admins until crypto start/close are found (CRYPTOFUT slice). */
+export async function resolveCryptoTimingFromAdminChain(user) {
+  if (!user) return { cryptoStartTime: '', cryptoClosingTime: '' };
+
+  const chainIds = [];
+  const seen = new Set();
+  const push = (id) => {
+    if (!id) return;
+    const s = String(id);
+    if (seen.has(s)) return;
+    seen.add(s);
+    chainIds.push(id);
+  };
+
+  push(user.admin?._id || user.adminId || user.admin);
+  if (Array.isArray(user.hierarchyPath)) {
+    for (let i = user.hierarchyPath.length - 1; i >= 0; i--) {
+      push(user.hierarchyPath[i]);
+    }
+  }
+
+  let start = '';
+  let close = '';
+
+  for (const adminId of chainIds) {
+    const doc = await Admin.findById(adminId).select('segmentPermissions').lean();
+    const { start: s, close: c } = readCryptoTimingFromSlice(cryptoSliceFromPerms(doc?.segmentPermissions));
+    if (s && !start) start = s;
+    if (c && !close) close = c;
+    if (start && close) break;
+  }
+
+  return { cryptoStartTime: start, cryptoClosingTime: close };
 }
 
 /** Parse HH:mm or HH:mm:ss to seconds since midnight (IST wall clock). */

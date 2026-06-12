@@ -1874,6 +1874,22 @@ router.get('/settings', protectUser, async (req, res) => {
     }
 
     try {
+      const { resolveCryptoTimingFromAdminChain } = await import('../utils/cryptoSessionTiming.js');
+      const chainCrypto = await resolveCryptoTimingFromAdminChain(user);
+      for (const cryptoSeg of ['CRYPTOFUT', 'CRYPTOOPT']) {
+        if (!segmentPermissions[cryptoSeg]) continue;
+        if (chainCrypto.cryptoStartTime) {
+          segmentPermissions[cryptoSeg].cryptoStartTime = chainCrypto.cryptoStartTime;
+        }
+        if (chainCrypto.cryptoClosingTime) {
+          segmentPermissions[cryptoSeg].cryptoClosingTime = chainCrypto.cryptoClosingTime;
+        }
+      }
+    } catch (cryptoOverlayErr) {
+      console.warn('[user/settings] Crypto timing overlay failed:', cryptoOverlayErr?.message);
+    }
+
+    try {
       const { resolveNseBseTimingFromAdminChain } = await import('../utils/nseBseSessionTiming.js');
       const chainNse = await resolveNseBseTimingFromAdminChain(user);
       for (const nseSeg of ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT']) {

@@ -185,79 +185,13 @@ class TradeService {
     
     console.log(`[CryptoTimeCheck] Proceeding with timing check for ${segU}`);
 
-    // For both CRYPTOFUT and CRYPTOOPT, always use CRYPTOFUT timing
-    const segForTiming = 'CRYPTOFUT';
-    console.log(`[CryptoTimeCheck] Using CRYPTOFUT timing for ${segU}`);
+    const merged = await this.getUserSegmentSettings(user, 'CRYPTOFUT', null);
+    const start = String(merged?.cryptoStartTime || '').trim();
+    const close = String(merged?.cryptoClosingTime || '').trim();
 
-    // Resolve crypto timing from hierarchy: Admin's own timing takes precedence
-    // Walk up: user's direct admin → hierarchy path → Super Admin segmentPermissions → system defaults
-    let start = '';
-    let close = '';
-
-    // 1. Try to get from the user's direct admin (admin-specific timing)
-    const directAdmin = await Admin.findById(user.adminId).select('cryptoStartTime cryptoEndTime parentId hierarchyPath');
-    console.log(`[CryptoTimeCheck] Direct admin for user ${user?.username || user?._id}: ${directAdmin?.username || directAdmin?._id}`);
-    
-    if (directAdmin) {
-      // Check if direct admin has crypto timing set
-      if (directAdmin.cryptoStartTime && directAdmin.cryptoEndTime) {
-        start = directAdmin.cryptoStartTime.toString().trim();
-        close = directAdmin.cryptoEndTime.toString().trim();
-        console.log(`[CryptoTimeCheck] From direct admin crypto timing: start=${start}, close=${close}, admin=${directAdmin.username}`);
-      } else {
-        console.log(`[CryptoTimeCheck] Direct admin has no crypto timing set, checking hierarchy`);
-        
-        // 2. Walk up hierarchy to find first admin with crypto timing
-        let currentAdmin = directAdmin;
-        while (currentAdmin && (!start || !close)) {
-          if (currentAdmin.cryptoStartTime && currentAdmin.cryptoEndTime) {
-            start = currentAdmin.cryptoStartTime.toString().trim();
-            close = currentAdmin.cryptoEndTime.toString().trim();
-            console.log(`[CryptoTimeCheck] Found crypto timing in hierarchy: start=${start}, close=${close}, admin=${currentAdmin.username}`);
-            break;
-          }
-          if (currentAdmin.parentId) {
-            currentAdmin = await Admin.findById(currentAdmin.parentId).select('cryptoStartTime cryptoEndTime parentId username');
-          } else {
-            break;
-          }
-        }
-      }
-    }
-
-    // 3. If still not found, try Super Admin segmentPermissions
-    if (!start || !close) {
-      const superAdmin = await this._getSuperAdminForUser(user);
-      console.log(`[CryptoTimeCheck] Super Admin for user ${user?.username || user?._id}: ${superAdmin?.username || superAdmin?._id}`);
-      if (superAdmin) {
-        const saSegPerms = superAdmin.segmentPermissions instanceof Map
-          ? superAdmin.segmentPermissions.get(segForTiming)
-          : superAdmin.segmentPermissions?.[segForTiming];
-        const saSlice = saSegPerms && typeof saSegPerms.toObject === 'function' ? saSegPerms.toObject() : saSegPerms;
-        if (saSlice) {
-          start = (saSlice.cryptoStartTime || '').toString().trim();
-          close = (saSlice.cryptoClosingTime || '').toString().trim();
-          console.log(`[CryptoTimeCheck] From Super Admin segmentPermissions: start=${start}, close=${close}, segment=${segU}`);
-        } else {
-          console.log(`[CryptoTimeCheck] Super Admin segmentPermissions not found for ${segU}`);
-        }
-      }
-    }
-
-    // 2. Fallback to system defaults if Super Admin hasn't set them
-    if (!start && !close) {
-      console.log(`[CryptoTimeCheck] Falling back to system defaults`);
-      const sys = await SystemSettings.getSettings();
-      const m = this._segmentMapPlain(sys.adminSegmentDefaults);
-      const def = m[segU];
-      if (def) {
-        start = (def.cryptoStartTime || '').toString().trim();
-        close = (def.cryptoClosingTime || '').toString().trim();
-        console.log(`[CryptoTimeCheck] From system defaults: start=${start}, close=${close}, segment=${segU}`);
-      }
-    }
-
-    console.log(`[CryptoTimeCheck] Final values - Segment: ${segU}, StartTime: ${start}, CloseTime: ${close}, User: ${user?.username || user?._id}`);
+    console.log(
+      `[CryptoTimeCheck] Final values - Segment: ${segU}, StartTime: ${start}, CloseTime: ${close}, User: ${user?.username || user?._id}`
+    );
 
     // Check start time gate
     if (start && !this._isNowAtOrAfterIstClock(start)) {
@@ -881,17 +815,40 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
     }
 
-    // For crypto segments: ALWAYS use CRYPTOFUT timing from SystemSettings
-    // This ensures Super Admin's timing setting is the single source of truth
+    // Crypto: inherit CRYPTOFUT session timing from parent admin chain → SystemSettings fallback (same as MCX)
     const isCrypto = ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(segmentKey || '').toUpperCase());
     if (isCrypto) {
-      // Always read CRYPTOFUT timing from SystemSettings (not from hierarchy/user explicit keys)
-      const cryptoFutSystem = TradeService._normalizeSegmentSlice(adm['CRYPTOFUT']);
-      const sysStart = (cryptoFutSystem?.cryptoStartTime || '').toString().trim();
-      const sysClose = (cryptoFutSystem?.cryptoClosingTime || '').toString().trim();
-      if (sysStart) result.cryptoStartTime = sysStart;
-      if (sysClose) result.cryptoClosingTime = sysClose;
-      console.log(`[getUserSegmentSettings] Crypto timing override from SystemSettings CRYPTOFUT: start=${sysStart}, close=${sysClose}`);
+      const cryptoFutSystem = TradeService._normalizeSegmentSlice(adm.CRYPTOFUT || adm.CRYPTO);
+      const hierCrypto =
+        TradeService._sliceFromHierarchy(user, 'CRYPTOFUT', segment) ||
+        TradeService._sliceFromHierarchy(user, 'CRYPTOOPT', segment);
+      let start = String(
+        hierCrypto?.cryptoStartTime ||
+          hierCrypto?.startTime ||
+          cryptoFutSystem?.cryptoStartTime ||
+          cryptoFutSystem?.startTime ||
+          ''
+      ).trim();
+      let close = String(
+        hierCrypto?.cryptoClosingTime ||
+          hierCrypto?.closingTime ||
+          cryptoFutSystem?.cryptoClosingTime ||
+          cryptoFutSystem?.closingTime ||
+          ''
+      ).trim();
+
+      if (!start || !close) {
+        const { resolveCryptoTimingFromAdminChain } = await import('../utils/cryptoSessionTiming.js');
+        const chainTiming = await resolveCryptoTimingFromAdminChain(user);
+        if (!start) start = chainTiming.cryptoStartTime || '';
+        if (!close) close = chainTiming.cryptoClosingTime || '';
+      }
+
+      if (start) result.cryptoStartTime = start;
+      if (close) result.cryptoClosingTime = close;
+      console.log(
+        `[getUserSegmentSettings] Crypto timing for ${segmentKey}: start=${start}, close=${close}`
+      );
     }
 
     // MCX: always inherit session timing from parent admin MCXFUT (Ram → users), not blocked by segmentExplicitKeys
