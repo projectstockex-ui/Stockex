@@ -3,10 +3,8 @@ import axios from '../../config/axios';
 import {
   Bitcoin,
   Lock,
-  Unlock,
   RefreshCw,
   Save,
-  Trophy,
   AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
@@ -16,9 +14,7 @@ import {
  * Uses only /api/admin/btc-jackpot/* endpoints (separate from Nifty Jackpot).
  *
  * Capabilities:
- *   - View today's bids
- *   - Lock the BTC closing price (manual override of scheduler) for any IST date
- *   - Manually declare result (scheduler auto-runs after bidding ends, or at BTC Number result time if both games are on)
+ *   - View bids and result status (lock/declare handled by scheduler)
  *   - Edit config (ticket price, times, prize ladder, hierarchy %s)
  */
 
@@ -57,7 +53,6 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const [manualPrice, setManualPrice] = useState('');
   const [settingsDraft, setSettingsDraft] = useState(null);
 
   const loadAll = useCallback(async () => {
@@ -91,55 +86,6 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
     if (!adminToken) return;
     loadAll();
   }, [loadAll, adminToken]);
-
-  /* ------------------------------- actions ------------------------------- */
-
-  const lockPrice = async (useManual) => {
-    setBusy(true);
-    setError('');
-    setSuccess('');
-    try {
-      const body = { date };
-      if (useManual) {
-        const n = Number(manualPrice);
-        if (!Number.isFinite(n) || n <= 0) {
-          setError('Enter a valid BTC price');
-          setBusy(false);
-          return;
-        }
-        body.price = n;
-      }
-      const { data } = await axios.post('/api/admin/btc-jackpot/lock-price', body, { headers });
-      setSuccess(`Locked at $${inr(data?.lockedBtcPrice, 2)} (${data?.source || 'manual'})`);
-      setManualPrice('');
-      await loadAll();
-    } catch (e) {
-      setError(e?.response?.data?.message || e.message || 'Lock failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const declare = async () => {
-    if (!confirm(`Declare BTC Jackpot for ${date}? This will pay winners & hierarchy and cannot be undone.`)) return;
-    setBusy(true);
-    setError('');
-    setSuccess('');
-    try {
-      const { data } = await axios.post('/api/admin/btc-jackpot/declare', { date }, { headers });
-      setSuccess(
-        `Declared ${data?.summary?.winnersCount || 0}W / ${data?.summary?.losersCount || 0}L. Paid ${inr(
-          data?.summary?.totalPaidOut,
-          2
-        )}.`
-      );
-      await loadAll();
-    } catch (e) {
-      setError(e?.response?.data?.message || e.message || 'Declare failed');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const saveSettings = async () => {
     if (!settingsDraft) return;
@@ -254,10 +200,10 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
         </div>
       )}
 
-      {/* Price lock + declare */}
+      {/* Result status (lock + declare run automatically via scheduler) */}
       <div className="bg-dark-800 border border-dark-600 rounded p-4">
         <div className="flex items-center gap-2 mb-3 font-semibold">
-          <Lock size={16} className="text-yellow-400" /> Result Controls
+          <Lock size={16} className="text-yellow-400" /> Result Status
         </div>
         <div className="grid md:grid-cols-3 gap-3 text-sm">
           <div>
@@ -283,59 +229,17 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
               {locked?.resultDeclared ? (
                 <span className="text-green-400">DECLARED</span>
               ) : locked?.lockedBtcPrice ? (
-                <span className="text-yellow-400">LOCKED — ready to declare</span>
+                <span className="text-yellow-400">LOCKED</span>
               ) : (
                 <span className="text-gray-400">PENDING</span>
               )}
             </div>
           </div>
         </div>
-
-        <div className="grid md:grid-cols-2 gap-3 mt-4">
-          <div className="bg-dark-900 border border-dark-600 rounded p-3">
-            <div className="text-xs text-gray-400 mb-2">Manual BTC price override</div>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                step="0.01"
-                min="1"
-                value={manualPrice}
-                onChange={(e) => setManualPrice(e.target.value)}
-                placeholder="e.g. 92850.50"
-                className="flex-1 px-3 py-2 rounded bg-dark-800 border border-dark-600 outline-none text-white"
-                disabled={busy || locked?.resultDeclared}
-              />
-              <button
-                onClick={() => lockPrice(true)}
-                disabled={busy || locked?.resultDeclared || !manualPrice}
-                className="px-3 py-2 rounded bg-yellow-500 text-black font-semibold disabled:opacity-60"
-              >
-                <Lock size={14} className="inline mr-1" /> Lock
-              </button>
-            </div>
-            <button
-              onClick={() => lockPrice(false)}
-              disabled={busy || locked?.resultDeclared}
-              className="mt-2 text-xs text-gray-300 hover:text-white flex items-center gap-1"
-            >
-              <Unlock size={12} /> Auto-fetch from Binance spot instead
-            </button>
-          </div>
-
-          <div className="bg-dark-900 border border-dark-600 rounded p-3">
-            <div className="text-xs text-gray-400 mb-2">Declare result (manual override)</div>
-            <button
-              onClick={declare}
-              disabled={busy || locked?.resultDeclared || !locked?.lockedBtcPrice}
-              className="w-full px-3 py-2 rounded bg-green-500 text-white font-semibold disabled:opacity-60"
-            >
-              <Trophy size={14} className="inline mr-1" /> Declare &amp; Distribute
-            </button>
-            <div className="text-[11px] text-gray-500 mt-2">
-              Scheduler auto-runs after today&apos;s bidding window ends (IST). If BTC Number is enabled too, the same job uses BTC Number&apos;s result time.
-            </div>
-          </div>
-        </div>
+        <p className="text-[11px] text-gray-500 mt-3">
+          BTC price lock and result declaration run automatically after the bidding window ends (IST).
+          If BTC Number is enabled, the same scheduler uses BTC Number&apos;s result time.
+        </p>
       </div>
 
       {/* Bids table */}
