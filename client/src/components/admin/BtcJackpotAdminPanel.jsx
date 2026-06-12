@@ -8,6 +8,7 @@ import {
   AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
+import GameReferralDistributionFields from './GameReferralDistributionFields.jsx';
 
 /**
  * BTC Jackpot admin panel — mounted inside AdminDashboard.
@@ -450,6 +451,19 @@ const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
               />
             </label>
           </div>
+
+          <GameReferralDistributionFields
+            gameKey="btcJackpot"
+            referralDistribution={settingsDraft?.referralDistribution}
+            onChange={(field, value) =>
+              setSettingsDraft((s) => ({
+                ...s,
+                referralDistribution: { ...(s?.referralDistribution || {}), [field]: value },
+              }))
+            }
+            disabled={busy}
+            className="mt-4"
+          />
         </div>
       )}
     </div>

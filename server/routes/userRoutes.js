@@ -188,6 +188,11 @@ import {
 } from '../utils/kiteNiftyQuote.js';
 import { closingPriceToLeftTwoDigits } from '../utils/niftyNumberResult.js';
 import {
+  assertQtyWithinPerNumberCap,
+  resolveMaxTicketsPerNumber,
+  userTicketsOnNumberFromBets,
+} from '../utils/numberGameTicketLimits.js';
+import {
   niftyResultSecForWindow,
 } from '../../lib/niftyUpDownWindows.js';
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
@@ -2625,6 +2630,7 @@ router.get('/game-settings', protectUser, async (req, res) => {
               game.resultTime != null && String(game.resultTime).trim() !== ''
                 ? game.resultTime
                 : '15:45',
+            maxTicketsPerNumber: resolveMaxTicketsPerNumber(game),
             ...(game.grossPrizeSubBrokerPercent !== undefined && {
               grossPrizeSubBrokerPercent: game.grossPrizeSubBrokerPercent,
             }),
@@ -2634,6 +2640,9 @@ router.get('/game-settings', protectUser, async (req, res) => {
             ...(game.grossPrizeAdminPercent !== undefined && {
               grossPrizeAdminPercent: game.grossPrizeAdminPercent,
             }),
+          }),
+          ...(key === 'btcNumber' && {
+            maxTicketsPerNumber: resolveMaxTicketsPerNumber(game),
           }),
         };
       }
@@ -3941,11 +3950,17 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
       return res.status(400).json({ message: `You can only place ${maxBetsPerDay} bets per day. You have ${remaining} remaining.` });
     }
 
-    // Check if user already bet on any of these numbers today
-    const existingBets = await NiftyNumberBet.find({ user: userId, betDate: today, selectedNumber: { $in: numbers } });
-    if (existingBets.length > 0) {
-      const dupes = existingBets.map(b => `.${b.selectedNumber.toString().padStart(2, '0')}`).join(', ');
-      return res.status(400).json({ message: `You already bet on ${dupes} today` });
+    const perNumberCap = resolveMaxTicketsPerNumber(gameConfig);
+    for (const num of numbers) {
+      const alreadyOnNumber = userTicketsOnNumberFromBets(todayBets, num);
+      const capErr = assertQtyWithinPerNumberCap({
+        qty,
+        cap: perNumberCap,
+        alreadyOnNumber,
+        selectedNumber: num,
+        btcStyle: false,
+      });
+      if (capErr) return res.status(400).json({ message: capErr });
     }
 
     // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
@@ -3972,19 +3987,34 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
     // Get user admin info for bet records after successful debit
     const user = await User.findById(userId).select('admin');
 
-    // Create bets for each number (single record per number with quantity)
-    const betDocs = numbers.map(num => ({
-      user: userId,
-      selectedNumber: num,
-      amount: perNumberTotal,
-      quantity: qty,
-      betDate: today,
-      admin: user?.admin || null,
-      status: 'pending'
-    }));
-    let bets;
+    // Create or top-up one pending row per number (quantity capped by maxTicketsPerNumber)
+    const bets = [];
     try {
-      bets = await NiftyNumberBet.insertMany(betDocs);
+      for (const num of numbers) {
+        const existing = await NiftyNumberBet.findOne({
+          user: userId,
+          betDate: today,
+          selectedNumber: num,
+          status: 'pending',
+        });
+        if (existing) {
+          existing.quantity = (existing.quantity || 1) + qty;
+          existing.amount = (existing.amount || 0) + perNumberTotal;
+          await existing.save();
+          bets.push(existing);
+        } else {
+          const created = await NiftyNumberBet.create({
+            user: userId,
+            selectedNumber: num,
+            amount: perNumberTotal,
+            quantity: qty,
+            betDate: today,
+            admin: user?.admin || null,
+            status: 'pending',
+          });
+          bets.push(created);
+        }
+      }
     } catch (innerErr) {
       if (saCredited) {
         await debitBtcUpDownSuperAdminPool(
@@ -3993,7 +4023,7 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
         );
       }
       await atomicGamesWalletUpdate(User, userId, { balance: totalCost, usedMargin: -totalCost });
-      console.error('Nifty Number insertMany error:', innerErr);
+      console.error('Nifty Number bet persist error:', innerErr);
       throw innerErr;
     }
 
@@ -4051,6 +4081,14 @@ router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
     const maxAmt = (gameConfig?.maxTickets || 100) * tValue;
     if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (${minAmt})` });
     if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (${maxAmt})` });
+
+    const perNumberCap = resolveMaxTicketsPerNumber(gameConfig);
+    const impliedQty = Math.max(1, Math.round(amount / tValue));
+    if (perNumberCap > 0 && impliedQty > perNumberCap) {
+      return res.status(400).json({
+        message: `Max ${perNumberCap} ticket(s) per number on .${String(bet.selectedNumber).padStart(2, '0')}.`,
+      });
+    }
 
     const oldAmount = bet.amount;
     const diff = amount - oldAmount;
@@ -4113,11 +4151,12 @@ router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
     }
 
     bet.amount = amount;
+    bet.quantity = impliedQty;
     await bet.save();
 
     res.json({
       message: `Bet updated to ${amount}`,
-      bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, status: bet.status },
+      bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, quantity: bet.quantity, status: bet.status },
       newBalance: gw.balance
     });
   } catch (error) {
@@ -4134,13 +4173,14 @@ router.get('/nifty-number/today', protectUser, async (req, res) => {
 
     const settings = await GameSettings.getSettings();
     const maxBetsPerDay = settings.games?.niftyNumber?.betsPerDay || 1;
-    const nnCfg = settings.games?.niftyNumber || {};
+    const maxTicketsPerNumber = resolveMaxTicketsPerNumber(settings.games?.niftyNumber);
 
     const totalBetsCount = bets.reduce((sum, b) => sum + (b.quantity || 1), 0);
     res.json({
       hasBet: bets.length > 0,
       betsCount: totalBetsCount,
       maxBetsPerDay,
+      maxTicketsPerNumber,
       remaining: Math.max(0, maxBetsPerDay - totalBetsCount),
       bets: bets.map(b => ({
         _id: b._id,
@@ -4303,10 +4343,17 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
       return res.status(400).json({ message: `You can only place ${maxBetsPerDay} bets per day. You have ${remaining} remaining.` });
     }
 
-    const existingBets = await BtcNumberBet.find({ user: userId, betDate: today, selectedNumber: { $in: numbers } });
-    if (existingBets.length > 0) {
-      const dupes = existingBets.map((b) => b.selectedNumber.toString().padStart(2, '0')).join(', ');
-      return res.status(400).json({ message: `You already bet on ${dupes} today` });
+    const perNumberCap = resolveMaxTicketsPerNumber(gameConfig);
+    for (const num of numbers) {
+      const alreadyOnNumber = userTicketsOnNumberFromBets(todayBets, num);
+      const capErr = assertQtyWithinPerNumberCap({
+        qty,
+        cap: perNumberCap,
+        alreadyOnNumber,
+        selectedNumber: num,
+        btcStyle: true,
+      });
+      if (capErr) return res.status(400).json({ message: capErr });
     }
 
     const gw = await atomicGamesWalletDebit(User, userId, totalCost, { usedMargin: totalCost });
@@ -4331,18 +4378,33 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
     }
 
     const user = await User.findById(userId).select('admin');
-    const betDocs = numbers.map((num) => ({
-      user: userId,
-      selectedNumber: num,
-      amount: perNumberTotal,
-      quantity: qty,
-      betDate: today,
-      admin: user?.admin || null,
-      status: 'pending',
-    }));
-    let bets;
+    const bets = [];
     try {
-      bets = await BtcNumberBet.insertMany(betDocs);
+      for (const num of numbers) {
+        const existing = await BtcNumberBet.findOne({
+          user: userId,
+          betDate: today,
+          selectedNumber: num,
+          status: 'pending',
+        });
+        if (existing) {
+          existing.quantity = (existing.quantity || 1) + qty;
+          existing.amount = (existing.amount || 0) + perNumberTotal;
+          await existing.save();
+          bets.push(existing);
+        } else {
+          const created = await BtcNumberBet.create({
+            user: userId,
+            selectedNumber: num,
+            amount: perNumberTotal,
+            quantity: qty,
+            betDate: today,
+            admin: user?.admin || null,
+            status: 'pending',
+          });
+          bets.push(created);
+        }
+      }
     } catch (innerErr) {
       if (saCredited) {
         await rollbackBtcJackpotStakeCredit(
@@ -4352,7 +4414,7 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
         );
       }
       await atomicGamesWalletUpdate(User, userId, { balance: totalCost, usedMargin: -totalCost });
-      console.error('BTC Number insertMany error:', innerErr);
+      console.error('BTC Number bet persist error:', innerErr);
       throw innerErr;
     }
 
@@ -4409,6 +4471,14 @@ router.put('/btc-number/bet/:id', protectUser, async (req, res) => {
     const maxAmt = (gameConfig?.maxTickets || 100) * tValue;
     if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (${minAmt})` });
     if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (${maxAmt})` });
+
+    const perNumberCap = resolveMaxTicketsPerNumber(gameConfig);
+    const impliedQty = Math.max(1, Math.round(amount / tValue));
+    if (perNumberCap > 0 && impliedQty > perNumberCap) {
+      return res.status(400).json({
+        message: `Max ${perNumberCap} ticket(s) per number on ${String(bet.selectedNumber).padStart(2, '0')}.`,
+      });
+    }
 
     const oldAmount = bet.amount;
     const diff = amount - oldAmount;
@@ -4474,11 +4544,12 @@ router.put('/btc-number/bet/:id', protectUser, async (req, res) => {
     }
 
     bet.amount = amount;
+    bet.quantity = impliedQty;
     await bet.save();
 
     res.json({
       message: `Bet updated to ${amount}`,
-      bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, status: bet.status },
+      bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, quantity: bet.quantity, status: bet.status },
       newBalance: gw.balance,
     });
   } catch (error) {
@@ -4493,11 +4564,13 @@ router.get('/btc-number/today', protectUser, async (req, res) => {
     const bets = await BtcNumberBet.find({ user: req.user._id, betDate: today }).sort({ createdAt: -1 });
     const settings = await GameSettings.getSettings();
     const maxBetsPerDay = settings.games?.btcNumber?.betsPerDay || 1;
+    const maxTicketsPerNumber = resolveMaxTicketsPerNumber(settings.games?.btcNumber);
     const totalBetsCount = bets.reduce((sum, b) => sum + (b.quantity || 1), 0);
     res.json({
       hasBet: bets.length > 0,
       betsCount: totalBetsCount,
       maxBetsPerDay,
+      maxTicketsPerNumber,
       remaining: Math.max(0, maxBetsPerDay - totalBetsCount),
       bets: bets.map((b) => ({
         _id: b._id,

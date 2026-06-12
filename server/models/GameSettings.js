@@ -113,6 +113,8 @@ const gameSettingsSchema = new mongoose.Schema({
       resultTime: { type: String, default: '15:45' }, // IST — shown to users; admin declare-result applies win/loss
       maxBidTime: { type: String, default: '15:40' }, // Last time users can place bets
       betsPerDay: { type: Number, default: 10 }, // Max bets per user per day
+      /** Max tickets per user on a single number (.00–.99) per IST day; 0 = unlimited */
+      maxTicketsPerNumber: { type: Number, default: 2 },
       biddingStartTime: { type: String, default: '09:15' },
       biddingEndTime: { type: String, default: '15:24' },
       startTime: { type: String, default: '09:15:15' },
@@ -359,6 +361,8 @@ const gameSettingsSchema = new mongoose.Schema({
       resultTime: { type: String, default: '23:30' },
       maxBidTime: { type: String, default: '23:25' },
       betsPerDay: { type: Number, default: 10 },
+      /** Max tickets per user on a single number (.00–.99) per IST day; 0 = unlimited */
+      maxTicketsPerNumber: { type: Number, default: 2 },
       biddingStartTime: { type: String, default: '00:00' },
       biddingEndTime: { type: String, default: '23:24' },
       startTime: { type: String, default: '00:00:01' },

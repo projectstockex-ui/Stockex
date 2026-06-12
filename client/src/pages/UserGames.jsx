@@ -5395,6 +5395,7 @@ const NiftyNumberScreen = ({
   const [todayBets, setTodayBets] = useState([]);
   const [remaining, setRemaining] = useState(0);
   const [maxBetsPerDay, setMaxBetsPerDay] = useState(10);
+  const [maxTicketsPerNumber, setMaxTicketsPerNumber] = useState(2);
   const [betHistory, setBetHistory] = useState([]);
   const [placing, setPlacing] = useState(false);
   const [loadingBet, setLoadingBet] = useState(true);
@@ -5423,6 +5424,8 @@ const NiftyNumberScreen = ({
         : 4000;
   const minTickets = settings?.minTickets || 1;
   const maxTickets = settings?.maxTickets || 100;
+  const perNumberTicketCap =
+    maxTicketsPerNumber > 0 ? maxTicketsPerNumber : (settings?.maxTicketsPerNumber > 0 ? settings.maxTicketsPerNumber : 0);
   const minBet = minTickets * actualTokenValue;
   const maxBet = maxTickets * actualTokenValue;
   const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
@@ -5497,8 +5500,17 @@ const NiftyNumberScreen = ({
     });
   };
 
-  // Numbers already bet on today (to disable in grid)
-  const todayNumbers = todayBets.map(b => b.selectedNumber);
+  const ticketsOnNumber = (num) =>
+    todayBets
+      .filter((b) => Number(b.selectedNumber) === Number(num) && b.status === 'pending')
+      .reduce((s, b) => s + (b.quantity || 1), 0);
+
+  const remainingTicketsOnNumber = (num) => {
+    if (!(perNumberTicketCap > 0)) return Infinity;
+    return Math.max(0, perNumberTicketCap - ticketsOnNumber(num));
+  };
+
+  const isNumberAtCap = (num) => perNumberTicketCap > 0 && remainingTicketsOnNumber(num) <= 0;
 
   // Ticket conversion helpers using correct token value
   const toTokens = (rs) => parseFloat((rs / actualTokenValue).toFixed(2));
@@ -5583,6 +5595,7 @@ const NiftyNumberScreen = ({
       setTodayBets(data.bets || []);
       setRemaining(data.remaining ?? 0);
       setMaxBetsPerDay(data.maxBetsPerDay ?? 10);
+      setMaxTicketsPerNumber(data.maxTicketsPerNumber ?? settings?.maxTicketsPerNumber ?? 2);
       try {
         const { data: dr } = await axios.get(`${apiBase}/daily-result`, {
           headers: { Authorization: `Bearer ${user.token}` },
@@ -5625,7 +5638,7 @@ const NiftyNumberScreen = ({
   };
 
   const toggleNumber = (num) => {
-    if (todayNumbers.includes(num)) return;
+    if (isNumberAtCap(num)) return;
     setSelectedNumbers(prev => {
       if (prev.includes(num)) return prev.filter(n => n !== num);
       if (prev.length >= remaining) {
@@ -5636,10 +5649,28 @@ const NiftyNumberScreen = ({
     });
   };
 
+  const maxTicketsForSelectedNumber =
+    selectedNumber == null
+      ? remaining
+      : Math.min(
+          remaining,
+          perNumberTicketCap > 0 ? remainingTicketsOnNumber(selectedNumber) : remaining,
+          maxTickets,
+        );
+
   const handlePlaceBet = async (betCount) => {
     const count = betCount || numberOfBets;
     console.log('Placing bet:', { selectedNumber, count, minBet, balance });
     if (selectedNumber == null || count <= 0) return;
+    if (count > maxTicketsForSelectedNumber) {
+      setMessage({
+        type: 'error',
+        text: perNumberTicketCap > 0
+          ? `Max ${perNumberTicketCap} ticket(s) on ${formatDisplayedPick(selectedNumber)} (${remainingTicketsOnNumber(selectedNumber)} left)`
+          : `You can place at most ${remaining} more ticket(s) today`,
+      });
+      return;
+    }
     const amt = minBet; // Use minimum bet amount
     const totalCost = amt * count;
     if (totalCost > balance) { setMessage({ type: 'error', text: `Insufficient balance. Need ${totalCost.toLocaleString()} for ${count} ticket(s)` }); return; }
@@ -5721,8 +5752,13 @@ const NiftyNumberScreen = ({
       setMessage({ type: 'error', text: '00 se 99 ke beech number daalen' });
       return;
     }
-    if (todayNumbers.includes(n)) {
-      setMessage({ type: 'error', text: 'Aaj is value par pehle se bet hai' });
+    if (isNumberAtCap(n)) {
+      setMessage({
+        type: 'error',
+        text: perNumberTicketCap > 0
+          ? `Is number par max ${perNumberTicketCap} ticket(s) allowed`
+          : 'Aaj is value par pehle se bet hai',
+      });
       return;
     }
     setMessage(null);
@@ -5732,7 +5768,7 @@ const NiftyNumberScreen = ({
 
   const handleBetCountSelect = async (count) => {
     console.log('Bet count selected:', count, 'remaining:', remaining, 'placing:', placing);
-    if (count > remaining || placing) return;
+    if (count > maxTicketsForSelectedNumber || placing) return;
     
     setNumberOfBets(count);
     // Auto place bet when count is selected - pass count directly to avoid stale state
@@ -6210,19 +6246,23 @@ const NiftyNumberScreen = ({
                           <div className="grid gap-1 grid-cols-5">
                             {Array.from({ length: 20 }, (_, idx) => {
                               const i = idx * 5;
-                              const isAlreadyBet = todayNumbers.includes(i);
+                              const atCap = isNumberAtCap(i);
+                              const onNumber = ticketsOnNumber(i);
                               return (
                                 <button
                                   key={i}
                                   onClick={() => handleNumberSelect(i)}
-                                  disabled={isAlreadyBet}
+                                  disabled={atCap}
                                   className={`rounded font-bold transition-all py-2 text-xs ${
-                                    isAlreadyBet
+                                    atCap
                                       ? 'bg-yellow-900/30 text-yellow-600 cursor-not-allowed ring-1 ring-yellow-500/30'
                                       : 'bg-dark-700 hover:bg-purple-600 hover:text-white text-gray-300'
                                   }`}
                                 >
                                   .{i.toString().padStart(2, '0')}
+                                  {onNumber > 0 && perNumberTicketCap > 0 && (
+                                    <span className="block text-[9px] text-yellow-500/80">{onNumber}/{perNumberTicketCap}</span>
+                                  )}
                                 </button>
                               );
                             })}
@@ -6243,9 +6283,9 @@ const NiftyNumberScreen = ({
                           <button
                             key={count}
                             onClick={() => handleBetCountSelect(count)}
-                            disabled={count > remaining || placing}
+                            disabled={count > maxTicketsForSelectedNumber || placing}
                             className={`py-2 rounded text-xs font-bold transition-all ${
-                              count > remaining
+                              count > maxTicketsForSelectedNumber
                                 ? 'bg-gray-700 text-gray-600 cursor-not-allowed'
                                 : placing
                                 ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
@@ -6258,6 +6298,9 @@ const NiftyNumberScreen = ({
                       </div>
                       <div className="mt-2 text-[10px] text-gray-500 text-center">
                         {remaining} tickets remaining today
+                        {perNumberTicketCap > 0 && selectedNumber != null && (
+                          <> · max {maxTicketsForSelectedNumber} on {formatDisplayedPick(selectedNumber)}</>
+                        )}
                       </div>
                     </div>
                   )}

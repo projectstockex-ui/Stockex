@@ -53,6 +53,7 @@ import { WALLET_LEDGER_GAME_OPTIONS } from '../constants/walletLedgerGames.js';
 import AdminFundTransfer from '../components/AdminFundTransfer';
 
 import BtcJackpotAdminPanel from '../components/admin/BtcJackpotAdminPanel.jsx';
+import GameReferralDistributionFields from '../components/admin/GameReferralDistributionFields.jsx';
 
 import AdminTradingTransactions from '../components/admin/AdminTradingTransactions.jsx';
 
@@ -787,8 +788,6 @@ const AdminDashboard = () => {
 
         { path: `${basePath}/security-settings`, icon: Lock, label: 'Security Settings' },
 
-        { path: `${basePath}/referral-distribution`, icon: Share2, label: 'Referral Distribution' },
-
         { path: `${basePath}/transaction-slips`, icon: Receipt, label: 'Transaction Slips' },
 
         { path: `${basePath}/bank-management`, icon: Building2, label: 'Bank Settings' },
@@ -1246,8 +1245,6 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="game-settings" element={<GameSettingsManagement />} />}
 
           {isSuperAdmin && <Route path="security-settings" element={<SecuritySettings />} />}
-
-          {isSuperAdmin && <Route path="referral-distribution" element={<ReferralDistributionSettings />} />}
 
           {isSuperAdmin && <Route path="transaction-slips" element={<TransactionSlipsManagement />} />}
 
@@ -41753,6 +41750,44 @@ const GameSettingsManagement = () => {
 
 
 
+  const updateGameReferralSetting = (gameId, field, value) => {
+
+    setSettings((prev) => {
+
+      const game = prev.games?.[gameId] || {};
+
+      return {
+
+        ...prev,
+
+        games: {
+
+          ...prev.games,
+
+          [gameId]: {
+
+            ...game,
+
+            referralDistribution: {
+
+              ...(game.referralDistribution || {}),
+
+              [field]: value,
+
+            },
+
+          },
+
+        },
+
+      };
+
+    });
+
+  };
+
+
+
   const updateGlobalSetting = (field, value) => {
 
     setSettings(prev => ({ ...prev, [field]: value }));
@@ -44056,7 +44091,7 @@ const GameSettingsManagement = () => {
 
                           value={currentGame?.betsPerDay || 100}
 
-                          onChange={e => updateGameSetting(selectedGame, 'betsPerDay', parseInt(e.target.value))}
+                          onChange={e => updateGameSetting(selectedGame, 'betsPerDay', parseInt(e.target.value, 10))}
 
                           className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
 
@@ -44065,6 +44100,34 @@ const GameSettingsManagement = () => {
                         />
 
                         <p className="text-xs text-gray-500 mt-1">Max bets a user can place per day (set 100 for unlimited)</p>
+
+                      </div>
+
+                      <div>
+
+                        <label className="block text-sm text-gray-400 mb-2">Max tickets per number</label>
+
+                        <input
+
+                          type="number"
+
+                          min="0"
+
+                          step="1"
+
+                          value={currentGame?.maxTicketsPerNumber ?? 2}
+
+                          onChange={(e) =>
+                            updateGameSetting(selectedGame, 'maxTicketsPerNumber', Math.max(0, parseInt(e.target.value, 10) || 0))
+                          }
+
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+
+                        />
+
+                        <p className="text-xs text-gray-500 mt-1">
+                          Per user, per number (.00–.99) per day — e.g. 2 = at most 2 tickets on .05. Use 0 for no limit.
+                        </p>
 
                       </div>
 
@@ -44247,6 +44310,34 @@ const GameSettingsManagement = () => {
 
                       <div>
 
+                        <label className="block text-sm text-gray-400 mb-2">Max tickets per number</label>
+
+                        <input
+
+                          type="number"
+
+                          min="0"
+
+                          step="1"
+
+                          value={currentGame?.maxTicketsPerNumber ?? 2}
+
+                          onChange={(e) =>
+                            updateGameSetting(selectedGame, 'maxTicketsPerNumber', Math.max(0, parseInt(e.target.value, 10) || 0))
+                          }
+
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+
+                        />
+
+                        <p className="text-xs text-gray-500 mt-1">
+                          Per user, per number (00–99) per day — e.g. 2 = at most 2 tickets on one pick. Use 0 for no limit.
+                        </p>
+
+                      </div>
+
+                      <div>
+
                         <label className="block text-sm text-gray-400 mb-2">Result Time (IST)</label>
 
                         <input
@@ -44274,6 +44365,20 @@ const GameSettingsManagement = () => {
                   </>
 
                 )}
+
+                <GameReferralDistributionFields
+
+                  gameKey={selectedGame}
+
+                  referralDistribution={currentGame?.referralDistribution}
+
+                  onChange={(field, value) => updateGameReferralSetting(selectedGame, field, value)}
+
+                  disabled={saving}
+
+                  className="md:col-span-2"
+
+                />
 
               </div>
 
@@ -45462,532 +45567,6 @@ const PlatformChargesManagement = () => {
           </table>
 
         </div>
-
-      </div>
-
-    </div>
-
-  );
-
-};
-
-
-
-// Referral Distribution Settings (Super Admin only)
-
-const ReferralDistributionSettings = () => {
-
-  const { admin, loading: authLoading } = useAuth();
-
-  const [settings, setSettings] = useState(null);
-
-  const [loading, setLoading] = useState(true);
-
-  const [saving, setSaving] = useState(false);
-
-  const [message, setMessage] = useState({ type: '', text: '' });
-
-
-
-  const games = [
-
-    { key: 'niftyUpDown', name: 'Nifty Up/Down', icon: '📈' },
-
-    { key: 'btcUpDown', name: 'BTC Up/Down', icon: '₿' },
-
-    { key: 'niftyBracket', name: 'Nifty Bracket', icon: '🎯' },
-
-    { key: 'niftyNumber', name: 'Nifty Number', icon: '🔢' },
-
-    { key: 'niftyJackpot', name: 'Nifty Jackpot', icon: '🎰' },
-
-    { key: 'btcJackpot', name: 'BTC Jackpot', icon: '₿' },
-
-    { key: 'btcNumber', name: 'BTC Number', icon: '🔢' },
-
-  ];
-
-
-
-  useEffect(() => {
-
-    if (authLoading) return;
-
-    if (!admin?.token) {
-
-      setLoading(false);
-
-      setMessage({ type: 'error', text: 'Super Admin login required to load referral settings.' });
-
-      return;
-
-    }
-
-    fetchSettings();
-
-  }, [admin?.token, authLoading]);
-
-
-
-  const fetchSettings = async () => {
-
-    if (!admin?.token) return;
-
-    try {
-
-      setLoading(true);
-
-      const { data } = await axios.get('/api/admin/manage/game-settings', {
-
-        headers: { Authorization: `Bearer ${admin.token}` }
-
-      });
-
-      setSettings(data);
-
-      setMessage({ type: '', text: '' });
-
-    } catch (error) {
-
-      console.error('Error fetching settings:', error);
-
-      const detail =
-
-        error.response?.data?.message ||
-
-        (error.response?.status === 403 ? 'Super Admin access required' : null) ||
-
-        error.message ||
-
-        'Unknown error';
-
-      setMessage({ type: 'error', text: `Failed to load settings: ${detail}` });
-
-      setSettings(null);
-
-    } finally {
-
-      setLoading(false);
-
-    }
-
-  };
-
-
-
-  const updateGameReferralSetting = (gameKey, field, value) => {
-
-    if (!settings) return;
-
-    const nextReferral = {
-
-      ...settings.games?.[gameKey]?.referralDistribution,
-
-      [field]: value,
-
-    };
-
-    setSettings({
-
-      ...settings,
-
-      games: {
-
-        ...settings.games,
-
-        [gameKey]: {
-
-          ...settings.games?.[gameKey],
-
-          referralDistribution: nextReferral,
-
-        },
-
-      },
-
-    });
-
-  };
-
-
-
-  const handleSave = async () => {
-
-    if (!settings || !admin?.token) return;
-
-    try {
-
-      setSaving(true);
-
-      await axios.put('/api/admin/manage/game-settings', settings, {
-
-        headers: { Authorization: `Bearer ${admin.token}` }
-
-      });
-
-
-
-      setMessage({ type: 'success', text: 'All game settings saved successfully' });
-
-      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
-
-    } catch (error) {
-
-      console.error('Error saving settings:', error);
-
-      const detail = error.response?.data?.message || error.message || 'Failed to save settings';
-
-      setMessage({ type: 'error', text: detail });
-
-      fetchSettings(); // Revert on error
-
-    } finally {
-
-      setSaving(false);
-
-    }
-
-  };
-
-
-
-  if (loading || authLoading) {
-
-    return (
-
-      <div className="flex items-center justify-center h-full">
-
-        <div className="text-gray-400">Loading referral distribution settings...</div>
-
-      </div>
-
-    );
-
-  }
-
-
-
-  if (!settings) {
-
-    return (
-
-      <div className="p-6">
-
-        <h2 className="text-2xl font-bold mb-4">Referral Amount Distribution System</h2>
-
-        {message.text && (
-
-          <div
-
-            className={`mb-4 px-4 py-3 rounded-lg ${message.type === 'success' ? 'bg-green-600' : 'bg-red-600'
-
-              }`}
-
-          >
-
-            {message.text}
-
-          </div>
-
-        )}
-
-        <button
-
-          type="button"
-
-          onClick={() => admin?.token && fetchSettings()}
-
-          className="px-4 py-2 bg-purple-600 rounded-lg font-semibold"
-
-        >
-
-          Retry load
-
-        </button>
-
-      </div>
-
-    );
-
-  }
-
-
-
-  return (
-
-    <div className="p-6">
-
-      <div className="flex items-center justify-between mb-6">
-
-        <div>
-
-          <h2 className="text-2xl font-bold flex items-center gap-3">
-
-            <Share2 className="text-purple-400" size={28} /> Referral Amount Distribution System
-
-          </h2>
-
-          <p className="text-gray-400 mt-1">
-
-            Configure referral reward percentages for each game. Edit the fields below, then click Save Settings.
-
-          </p>
-
-        </div>
-
-        <div className="flex items-center gap-4">
-
-          {message.text && (
-
-            <div className={`px-4 py-2 rounded-lg ${message.type === 'success' ? 'bg-green-600' : 'bg-red-600'
-
-              }`}>
-
-              {message.text}
-
-            </div>
-
-          )}
-
-          <button
-
-            onClick={handleSave}
-
-            disabled={saving}
-
-            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-semibold"
-
-          >
-
-            {saving ? 'Saving...' : 'Save Settings'}
-
-          </button>
-
-        </div>
-
-      </div>
-
-
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-
-        {games.map((game) => {
-
-          const isJackpotBankPercent =
-
-            game.key === 'niftyJackpot' || game.key === 'btcJackpot';
-
-          const isUpDownOneTicket = game.key === 'btcUpDown' || game.key === 'niftyUpDown';
-
-          const percentFieldLabel = isJackpotBankPercent
-
-            ? '% of the bank'
-
-            : isUpDownOneTicket
-
-              ? '% of one ticket (current price)'
-
-              : '% of ticket price';
-
-          const percentFieldHint = isJackpotBankPercent
-
-            ? 'Percentage of the total Bank (prize pool) to give to the referrer when applicable'
-
-            : isUpDownOneTicket
-
-              ? 'Uses the current ticket price from this game\'s settings (or global token value). Credited once when the referred user gets their first win in this game — not on every window.'
-
-              : 'Percentage of the ticket price (stake per ticket) to give to the referrer when applicable';
-
-          return (
-
-            <div key={game.key} className="bg-dark-800 rounded-lg p-6">
-
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-
-                <span className="text-2xl">{game.icon}</span>
-
-                {game.name}
-
-              </h3>
-
-              <div className="space-y-4">
-
-                <div>
-
-                  <label className="block text-sm text-gray-400 mb-2">
-
-                    {percentFieldLabel}
-
-                  </label>
-
-                  <input
-
-                    type="number"
-
-                    min="0"
-
-                    max="100"
-
-                    step="0.1"
-
-                    value={settings?.games?.[game.key]?.referralDistribution?.winPercent ?? 5}
-
-                    onChange={e => {
-
-                      const v = parseFloat(e.target.value);
-
-                      updateGameReferralSetting(game.key, 'winPercent', Number.isFinite(v) ? v : 0);
-
-                    }}
-
-                    disabled={saving}
-
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-
-                  />
-
-                  <p className="text-xs text-gray-500 mt-1">
-
-                    {percentFieldHint}
-
-                  </p>
-
-                </div>
-
-
-
-                {(game.key === 'niftyJackpot' || game.key === 'btcJackpot') && (
-
-                  <>
-
-                    <div>
-
-                      <label className="block text-sm text-gray-400 mb-2">
-
-                        Top Ranks Only
-
-                      </label>
-
-                      <select
-
-                        value={settings?.games?.[game.key]?.referralDistribution?.topRanksOnly ?? false}
-
-                        onChange={e => updateGameReferralSetting(game.key, 'topRanksOnly', e.target.value === 'true')}
-
-                        disabled={saving}
-
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-
-                      >
-
-                        <option value="true">Yes - Only top ranks</option>
-
-                        <option value="false">No - All winners</option>
-
-                      </select>
-
-                      <p className="text-xs text-gray-500 mt-1">
-
-                        Only apply referral bonus to top X ranks
-
-                      </p>
-
-                    </div>
-
-
-
-                    <div>
-
-                      <label className="block text-sm text-gray-400 mb-2">
-
-                        Top Ranks Count
-
-                      </label>
-
-                      <input
-
-                        type="number"
-
-                        min="1"
-
-                        max="20"
-
-                        step="1"
-
-                        value={settings?.games?.[game.key]?.referralDistribution?.topRanksCount ?? 3}
-
-                        onChange={e => {
-
-                          const v = parseInt(e.target.value, 10);
-
-                          updateGameReferralSetting(game.key, 'topRanksCount', Number.isFinite(v) ? v : 1);
-
-                        }}
-
-                        disabled={saving}
-
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-
-                      />
-
-                      <p className="text-xs text-gray-500 mt-1">
-
-                        Number of top ranks to apply referral bonus
-
-                      </p>
-
-                    </div>
-
-                  </>
-
-                )}
-
-              </div>
-
-            </div>
-
-          );
-
-        })}
-
-      </div>
-
-
-
-      <div className="mt-6 p-4 rounded-lg bg-purple-900/20 border border-purple-500/30">
-
-        <h4 className="font-bold text-purple-300 mb-2">How Referral Distribution Works</h4>
-
-        <ul className="text-sm text-gray-300 space-y-1">
-
-          <li>
-
-            • <span className="text-purple-200">BTC / Nifty Up/Down</span>: one payment per referred user on their{' '}
-
-            <span className="text-purple-200">first win in that game</span>; amount = % of the then-current one-ticket
-
-            price from game settings
-
-          </li>
-
-          <li>
-
-            • Other number/bracket games: percentage of the <span className="text-purple-200">ticket price</span> (stake
-
-            per ticket) as configured
-
-          </li>
-
-          <li>
-
-            • <span className="text-purple-200">Nifty / BTC Jackpot</span> use <span className="text-purple-200">% of the Bank</span>{' '}
-
-            (the prize pool), with optional &quot;Top Ranks Only&quot; limits
-
-          </li>
-
-        </ul>
 
       </div>
 
