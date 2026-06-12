@@ -45575,9 +45575,9 @@ const ReferralDistributionSettings = () => {
 
 
 
-  const updateGameReferralSetting = async (gameKey, field, value) => {
+  const updateGameReferralSetting = (gameKey, field, value) => {
 
-    if (!settings || !admin?.token) return;
+    if (!settings) return;
 
     const nextReferral = {
 
@@ -45587,7 +45587,7 @@ const ReferralDistributionSettings = () => {
 
     };
 
-    const updatedSettings = {
+    setSettings({
 
       ...settings,
 
@@ -45605,43 +45605,7 @@ const ReferralDistributionSettings = () => {
 
       },
 
-    };
-
-    setSettings(updatedSettings);
-
-    try {
-
-      setSaving(true);
-
-      await axios.put(
-
-        `/api/admin/manage/game-settings/game/${gameKey}`,
-
-        { referralDistribution: nextReferral },
-
-        { headers: { Authorization: `Bearer ${admin.token}` } }
-
-      );
-
-      setMessage({ type: 'success', text: 'Saved' });
-
-      setTimeout(() => setMessage({ type: '', text: '' }), 2500);
-
-    } catch (error) {
-
-      console.error('Error saving referral setting:', error);
-
-      const detail = error.response?.data?.message || error.message || 'Save failed';
-
-      setMessage({ type: 'error', text: detail });
-
-      fetchSettings();
-
-    } finally {
-
-      setSaving(false);
-
-    }
+    });
 
   };
 
@@ -45765,7 +45729,7 @@ const ReferralDistributionSettings = () => {
 
           <p className="text-gray-400 mt-1">
 
-            Configure referral reward percentages for each game. Changes apply when you edit a field (saved per game).
+            Configure referral reward percentages for each game. Edit the fields below, then click Save Settings.
 
           </p>
 
