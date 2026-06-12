@@ -42011,6 +42011,27 @@ const GameSettingsManagement = () => {
 
                   <h4 className="font-medium text-green-400">Ticket Limits</h4>
 
+                  {selectedGame === 'niftyJackpot' && (
+                    <div className="rounded-lg border-2 border-yellow-500/50 bg-yellow-950/30 p-3 space-y-2">
+                      <label className="block text-sm font-semibold text-yellow-300">
+                        1 Ticket Price (INR) — set here (e.g. 1100)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={currentGame?.ticketPrice ?? settings?.tokenValue ?? 300}
+                        onChange={(e) =>
+                          updateGameSetting(selectedGame, 'ticketPrice', parseFloat(e.target.value) || 0)
+                        }
+                        className="w-full bg-dark-700 border border-yellow-600/50 rounded px-4 py-2 text-lg font-semibold text-yellow-100"
+                      />
+                      <p className="text-xs text-gray-400">
+                        Each Nifty Jackpot bid costs this amount. Save Settings after changing.
+                      </p>
+                    </div>
+                  )}
+
                   <div>
 
                     <label className="block text-sm text-gray-400 mb-2">Minimum Tickets</label>
@@ -42029,7 +42050,7 @@ const GameSettingsManagement = () => {
 
                     />
 
-                    <p className="text-xs text-gray-500 mt-1">= {((currentGame?.minTickets || 1) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
+                    <p className="text-xs text-gray-500 mt-1">= {((currentGame?.minTickets || 1) * (currentGame?.ticketPrice ?? settings?.tokenValue ?? 300)).toLocaleString('en-IN')}</p>
 
                   </div>
 
@@ -42041,7 +42062,7 @@ const GameSettingsManagement = () => {
 
                       type="number"
 
-                      value={currentGame?.maxTickets || 500}
+                      value={currentGame?.maxTickets || (selectedGame === 'niftyJackpot' ? 100 : 500)}
 
                       onChange={e => updateGameSetting(selectedGame, 'maxTickets', parseFloat(e.target.value))}
 
@@ -42051,7 +42072,7 @@ const GameSettingsManagement = () => {
 
                     />
 
-                    <p className="text-xs text-gray-500 mt-1">= {((currentGame?.maxTickets || 500) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
+                    <p className="text-xs text-gray-500 mt-1">= {((currentGame?.maxTickets || (selectedGame === 'niftyJackpot' ? 100 : 500)) * (currentGame?.ticketPrice ?? settings?.tokenValue ?? 300)).toLocaleString('en-IN')}</p>
 
                   </div>
 
