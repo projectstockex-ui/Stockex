@@ -837,7 +837,7 @@ const AdminDashboard = () => {
 
         { path: `${basePath}/bank-accounts`, icon: Building2, label: 'Bank Accounts' },
 
-        { path: `${basePath}/ledger`, icon: FileText, label: 'Transactions' },
+        ...ledgerNavItems(basePath),
 
         { path: `${basePath}/transaction-slips`, icon: Receipt, label: 'Transaction Slips' },
 
@@ -883,7 +883,7 @@ const AdminDashboard = () => {
 
         { path: `${basePath}/bank-accounts`, icon: Building2, label: 'Bank Accounts' },
 
-        { path: `${basePath}/ledger`, icon: FileText, label: isDemo ? 'Demo Transactions' : 'Transactions' },
+        ...ledgerNavItems(basePath, { isDemo }),
 
         { path: `${basePath}/transaction-slips`, icon: Receipt, label: isDemo ? 'Demo Transaction Slips' : 'Transaction Slips' },
 
@@ -923,7 +923,7 @@ const AdminDashboard = () => {
 
       { path: `${basePath}/bank-accounts`, icon: Building2, label: 'Bank Accounts' },
 
-      { path: `${basePath}/ledger`, icon: FileText, label: 'Transactions' },
+      ...ledgerNavItems(basePath),
 
       { path: `${basePath}/transaction-slips`, icon: Receipt, label: 'Transaction Slips' },
 
@@ -938,6 +938,12 @@ const AdminDashboard = () => {
 
 
   const navItems = getNavItems();
+
+  const isNavItemActive = (item) => {
+    if (item.exact) return location.pathname === item.path;
+    return location.pathname === item.path
+      || (item.path !== `${basePath}/dashboard` && location.pathname.startsWith(item.path));
+  };
 
 
 
@@ -993,7 +999,7 @@ const AdminDashboard = () => {
 
               onClick={() => setShowMobileMenu(false)}
 
-              className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-2 ${location.pathname === item.path || (item.path !== `${basePath}/dashboard` && location.pathname.startsWith(item.path))
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-2 ${isNavItemActive(item)
 
                   ? (isSuperAdmin ? 'bg-yellow-600' : 'bg-purple-600') + ' text-white'
 
@@ -1123,7 +1129,7 @@ const AdminDashboard = () => {
 
               to={item.path}
 
-              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${location.pathname === item.path || (item.path !== `${basePath}/dashboard` && location.pathname.startsWith(item.path))
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${isNavItemActive(item)
 
                   ? (isSuperAdmin ? 'bg-yellow-600' : 'bg-purple-600') + ' text-white'
 
@@ -1272,6 +1278,10 @@ const AdminDashboard = () => {
           {!isSuperAdmin && <Route path="fund-transfer-to-admin" element={<AdminFundTransfer />} />}
 
           {!isSuperAdmin && <Route path="bank-accounts" element={<BankAccounts />} />}
+
+          {!isSuperAdmin && <Route path="ledger/trading" element={<LedgerView />} />}
+
+          {!isSuperAdmin && <Route path="ledger/games" element={<LedgerView />} />}
 
           {!isSuperAdmin && <Route path="ledger" element={<LedgerView />} />}
 
@@ -16895,19 +16905,62 @@ function formatLedgerSharePercent(entry) {
 
 
 
-// Ledger View (admin, broker, sub-broker — same route)
+function ledgerScopeFromPathname(pathname) {
+  if (pathname.endsWith('/ledger/trading')) return 'trading';
+  if (pathname.endsWith('/ledger/games')) return 'games';
+  return 'all';
+}
+
+function ledgerBasePathForRole(role) {
+  switch (role) {
+    case 'ADMIN': return '/admin';
+    case 'BROKER': return '/broker';
+    case 'SUB_BROKER': return '/subbroker';
+    default: return '/admin';
+  }
+}
+
+function ledgerPathForScope(role, scope) {
+  const base = ledgerBasePathForRole(role);
+  if (scope === 'trading') return `${base}/ledger/trading`;
+  if (scope === 'games') return `${base}/ledger/games`;
+  return `${base}/ledger`;
+}
+
+function ledgerNavItems(basePath, { isDemo = false } = {}) {
+  return [
+    { path: `${basePath}/ledger`, icon: FileText, label: isDemo ? 'Demo All Transactions' : 'All Transactions', exact: true },
+    { path: `${basePath}/ledger/trading`, icon: TrendingUp, label: isDemo ? 'Demo Trading Credits' : 'Trading Credits', exact: true },
+    { path: `${basePath}/ledger/games`, icon: Gamepad2, label: isDemo ? 'Demo Games Profit' : 'Games Profit', exact: true },
+  ];
+}
+
+function ledgerPageTitle(scope, isDemo) {
+  if (scope === 'trading') return isDemo ? 'Demo Trading Credits' : 'Trading Credits';
+  if (scope === 'games') return isDemo ? 'Demo Games Profit' : 'Games Profit';
+  return isDemo ? 'Demo All Transactions' : 'All Transactions';
+}
+
+// Ledger View (admin, broker, sub-broker — sidebar: All / Trading / Games)
 
 const LedgerView = () => {
 
   const { admin } = useAuth();
+
+  const location = useLocation();
+
+  const navigate = useNavigate();
+
+  const ledgerScope = useMemo(
+    () => ledgerScopeFromPathname(location.pathname),
+    [location.pathname],
+  );
 
   const [ledger, setLedger] = useState([]);
 
   const [loading, setLoading] = useState(true);
 
   const [gameOptions, setGameOptions] = useState(WALLET_LEDGER_GAME_OPTIONS);
-
-  const [ledgerScope, setLedgerScope] = useState('all');
 
   const [ledgerGameFilter, setLedgerGameFilter] = useState('all');
 
@@ -16999,6 +17052,10 @@ const LedgerView = () => {
     }
 
   }, [admin.token, ledgerScope, ledgerGameFilter]);
+
+  useEffect(() => {
+    if (ledgerScope !== 'games') setLedgerGameFilter('all');
+  }, [ledgerScope]);
 
 
 
@@ -17116,7 +17173,7 @@ const LedgerView = () => {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
 
-        <h1 className="text-2xl font-bold">Wallet Ledger</h1>
+        <h1 className="text-2xl font-bold">{ledgerPageTitle(ledgerScope, admin?.isDemo)}</h1>
 
         <div className="flex flex-wrap items-center gap-2">
 
@@ -17134,7 +17191,7 @@ const LedgerView = () => {
 
                 const v = e.target.value;
 
-                setLedgerScope(v);
+                navigate(ledgerPathForScope(admin?.role, v));
 
                 if (v !== 'games') setLedgerGameFilter('all');
 
