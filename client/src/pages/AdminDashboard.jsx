@@ -42233,7 +42233,7 @@ const GameSettingsManagement = () => {
 
 
 
-                {/* Ticket System - Per Game Ticket Price (Nifty Jackpot uses global token value) */}
+                {/* Ticket System - Per Game Ticket Price (Nifty Jackpot: see Nifty Jackpot Settings block) */}
 
                 {selectedGame !== 'niftyJackpot' && (
 
@@ -43002,6 +43002,50 @@ const GameSettingsManagement = () => {
                     <div className="space-y-4">
 
                       <h4 className="font-medium text-yellow-400">Nifty Jackpot Settings</h4>
+
+                      <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-3">
+
+                        <label className="block text-sm text-yellow-300 font-medium mb-2">1 Ticket Price (₹)</label>
+
+                        <input
+
+                          type="number"
+
+                          min="1"
+
+                          step="1"
+
+                          value={currentGame?.ticketPrice ?? settings?.tokenValue ?? 300}
+
+                          onChange={(e) =>
+
+                            updateGameSetting(selectedGame, 'ticketPrice', parseFloat(e.target.value) || 0)
+
+                          }
+
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+
+                        />
+
+                        <p className="text-xs text-gray-500 mt-1">
+
+                          Stake per bid ticket for Nifty Jackpot only (e.g. 1100). Users pay this amount per ticket when placing a prediction.
+
+                        </p>
+
+                        <p className="text-xs text-gray-400 mt-2">
+
+                          Min {currentGame?.minTickets || 1} ticket(s) ={' '}
+
+                          {((currentGame?.minTickets || 1) * (currentGame?.ticketPrice ?? settings?.tokenValue ?? 300)).toLocaleString('en-IN')}{' '}
+
+                          · Max {currentGame?.maxTickets || 100} ticket(s) ={' '}
+
+                          {((currentGame?.maxTickets || 100) * (currentGame?.ticketPrice ?? settings?.tokenValue ?? 300)).toLocaleString('en-IN')}
+
+                        </p>
+
+                      </div>
 
                       <div>
 
