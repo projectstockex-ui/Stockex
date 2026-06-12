@@ -54,6 +54,7 @@ const LedgerView = () => {
   const [ledger, setLedger] = useState([]);
   const [loading, setLoading] = useState(true);
   const [gameOptions, setGameOptions] = useState(WALLET_LEDGER_GAME_OPTIONS);
+  const [ledgerScope, setLedgerScope] = useState('all');
   const [ledgerGameFilter, setLedgerGameFilter] = useState('all');
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState(null);
@@ -81,7 +82,14 @@ const LedgerView = () => {
     setLoading(true);
     try {
       const params = {};
-      if (ledgerGameFilter && ledgerGameFilter !== 'all') params.gameKey = ledgerGameFilter;
+      if (ledgerScope === 'trading') {
+        params.scope = 'trading';
+      } else if (ledgerScope === 'games') {
+        params.scope = 'games';
+        if (ledgerGameFilter && ledgerGameFilter !== 'all') params.gameKey = ledgerGameFilter;
+      } else if (ledgerGameFilter && ledgerGameFilter !== 'all') {
+        params.gameKey = ledgerGameFilter;
+      }
       const { data } = await axios.get('/api/admin/manage/my-ledger', {
         headers: { Authorization: `Bearer ${admin.token}` },
         params,
@@ -93,7 +101,7 @@ const LedgerView = () => {
     } finally {
       setLoading(false);
     }
-  }, [admin.token, ledgerGameFilter]);
+  }, [admin.token, ledgerScope, ledgerGameFilter]);
 
   useEffect(() => {
     fetchLedger();
@@ -131,22 +139,44 @@ const LedgerView = () => {
     <div className="p-4 md:p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold">Wallet Ledger</h1>
-        <div className="flex items-center gap-2">
-          <label htmlFor="ledger-game-filter" className="text-sm text-gray-400 whitespace-nowrap">Game</label>
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="ledger-scope-filter" className="text-sm text-gray-400 whitespace-nowrap">View</label>
           <div className="relative">
             <select
-              id="ledger-game-filter"
-              value={ledgerGameFilter}
-              onChange={(e) => setLedgerGameFilter(e.target.value)}
-              className="appearance-none bg-dark-800 border border-dark-600 text-white text-sm rounded-lg pl-3 pr-10 py-2.5 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+              id="ledger-scope-filter"
+              value={ledgerScope}
+              onChange={(e) => {
+                const v = e.target.value;
+                setLedgerScope(v);
+                if (v !== 'games') setLedgerGameFilter('all');
+              }}
+              className="appearance-none bg-dark-800 border border-dark-600 text-white text-sm rounded-lg pl-3 pr-10 py-2.5 min-w-[180px] focus:outline-none focus:ring-2 focus:ring-cyan-600 focus:border-transparent"
             >
-              <option value="all">All games</option>
-              {gameOptions.map((g) => (
-                <option key={g.key} value={g.key}>{g.label}</option>
-              ))}
+              <option value="all">All transactions</option>
+              <option value="trading">Trading credits</option>
+              <option value="games">Games profit</option>
             </select>
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" aria-hidden />
           </div>
+          {ledgerScope === 'games' && (
+            <>
+              <label htmlFor="ledger-game-filter" className="text-sm text-gray-400 whitespace-nowrap">Game</label>
+              <div className="relative">
+                <select
+                  id="ledger-game-filter"
+                  value={ledgerGameFilter}
+                  onChange={(e) => setLedgerGameFilter(e.target.value)}
+                  className="appearance-none bg-dark-800 border border-dark-600 text-white text-sm rounded-lg pl-3 pr-10 py-2.5 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                >
+                  <option value="all">All games</option>
+                  {gameOptions.map((g) => (
+                    <option key={g.key} value={g.key}>{g.label}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" aria-hidden />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -154,7 +184,15 @@ const LedgerView = () => {
         <div className="text-center py-8"><RefreshCw className="animate-spin inline" /></div>
       ) : ledger.length === 0 ? (
         <div className="text-center py-8 text-gray-400">
-          {ledgerGameFilter === 'all' ? 'No transactions yet' : 'No transactions for this game'}
+          {ledgerScope === 'trading'
+            ? 'No trading credits yet (brokerage / trade P&L)'
+            : ledgerScope === 'games'
+              ? ledgerGameFilter === 'all'
+                ? 'No game profit entries yet'
+                : 'No transactions for this game'
+              : ledgerGameFilter === 'all'
+                ? 'No transactions yet'
+                : 'No transactions for this game'}
         </div>
       ) : (
         <div className="bg-dark-800 rounded-lg overflow-hidden">

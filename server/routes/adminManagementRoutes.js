@@ -198,7 +198,11 @@ import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate } from '..
 
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 
-import { matchAdminLedgerGameKey, WALLET_LEDGER_GAME_OPTIONS } from '../utils/walletLedgerGameFilter.js';
+import {
+  matchAdminLedgerGameKey,
+  matchAdminLedgerScope,
+  WALLET_LEDGER_GAME_OPTIONS,
+} from '../utils/walletLedgerGameFilter.js';
 
 import {
 
@@ -7314,7 +7318,12 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
   try {
 
-    const gameMatch = matchAdminLedgerGameKey(req.query.gameKey);
+    const scopeRaw = String(req.query.scope || '').trim().toLowerCase();
+    const scope = scopeRaw === 'trading' || scopeRaw === 'games' ? scopeRaw : 'all';
+    const scopeMatch =
+      scope === 'all'
+        ? matchAdminLedgerGameKey(req.query.gameKey)
+        : matchAdminLedgerScope(scope, req.query.gameKey);
 
     const ledger = await WalletLedger.find({
 
@@ -7322,7 +7331,7 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
       ownerId: req.admin._id,
 
-      ...gameMatch,
+      ...scopeMatch,
 
     })
 
@@ -11671,11 +11680,14 @@ router.get('/my-ledger/download', protectAdmin, async (req, res) => {
 
   try {
 
-    const { from, to, gameKey } = req.query;
+    const { from, to, gameKey, scope: scopeParam } = req.query;
 
-
-
-    const gameMatch = matchAdminLedgerGameKey(gameKey);
+    const scopeRaw = String(scopeParam || '').trim().toLowerCase();
+    const scope = scopeRaw === 'trading' || scopeRaw === 'games' ? scopeRaw : 'all';
+    const scopeMatch =
+      scope === 'all'
+        ? matchAdminLedgerGameKey(gameKey)
+        : matchAdminLedgerScope(scope, gameKey);
 
     const query = {
 
@@ -11683,7 +11695,7 @@ router.get('/my-ledger/download', protectAdmin, async (req, res) => {
 
       ownerId: req.admin._id,
 
-      ...gameMatch,
+      ...scopeMatch,
 
     };
 

@@ -29,6 +29,27 @@ function escapeRegex(s) {
 
 const KNOWN_KEYS = new Set(WALLET_LEDGER_GAME_OPTIONS.map((o) => o.key));
 
+/** Admin wallet ledger — trading brokerage / P&L / hierarchy profit share (not games, not fund transfers). */
+export const ADMIN_LEDGER_TRADING_REASONS = ['TRADE_PNL', 'BROKERAGE', 'PROFIT_SHARE'];
+
+/**
+ * Mongo fragment for admin my-ledger scope: all | trading | games (+ optional gameKey).
+ */
+export function matchAdminLedgerScope(scope, gameKey) {
+  const s = String(scope || 'all').trim().toLowerCase();
+  if (s === 'trading') {
+    return { reason: { $in: ADMIN_LEDGER_TRADING_REASONS } };
+  }
+  if (s === 'games') {
+    const gk = String(gameKey || '').trim();
+    if (!gk || gk === 'all') {
+      return { reason: 'GAME_PROFIT' };
+    }
+    return matchAdminLedgerGameKey(gk);
+  }
+  return {};
+}
+
 /**
  * Mongo fragment to AND with { ownerType, ownerId }.
  * Empty object = no game filter (all transactions).
