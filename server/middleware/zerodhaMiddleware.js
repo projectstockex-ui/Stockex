@@ -277,7 +277,7 @@ export const validateSyncOperation = (req, res, next) => {
   try {
     // Check if another sync is already running
     const runningJobs = zerodhaController.orchestrator?.progressService?.getRunningJobs()
-      ?.filter(job => job.type === 'full_sync') || [];
+      ?.filter(job => job.type === 'full_sync' || job.type === 'popular_sync') || [];
     
     if (runningJobs.length > 0) {
       return res.status(409).json({

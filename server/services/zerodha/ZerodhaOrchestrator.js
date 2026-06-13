@@ -124,6 +124,33 @@ export class ZerodhaOrchestrator {
   }
 
   /**
+   * Perform popular instrument sync (upsert only, no full reset)
+   */
+  async performPopularSync(apiKey, accessToken, options = {}) {
+    try {
+      this.loggerService.info('Starting popular instrument synchronization...');
+
+      const jobId = this.syncService.generateJobId();
+
+      void this.syncService.performPopularSync(apiKey, accessToken, {
+        ...options,
+        jobId,
+      }).catch((error) => {
+        this.loggerService.error('Background popular sync failed:', error);
+      });
+
+      return {
+        jobId,
+        message: 'Popular sync started in background',
+        statusUrl: `/api/zerodha/sync/status/${jobId}`,
+      };
+    } catch (error) {
+      this.loggerService.error('Failed to start popular sync:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get sync job status
    */
   getSyncStatus(jobId) {

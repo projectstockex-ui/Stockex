@@ -1,0 +1,22 @@
+/** Exchanges synced from Zerodha Kite — BINANCE/FOREX rows are preserved on reset. */
+export const ZERODHA_SYNC_EXCHANGES = ['NSE', 'BSE', 'NFO', 'BFO', 'MCX', 'CDS'];
+
+export const POPULAR_EQ_SYMBOLS = new Set([
+  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR', 'ITC', 'SBIN',
+  'BHARTIARTL', 'KOTAKBANK', 'LT', 'AXISBANK', 'ASIANPAINT', 'MARUTI', 'TATAMOTORS',
+  'SUNPHARMA', 'TITAN', 'BAJFINANCE', 'WIPRO', 'ULTRACEMCO', 'NESTLEIND', 'POWERGRID',
+  'NTPC', 'ONGC', 'JSWSTEEL', 'TATASTEEL', 'ADANIENT', 'ADANIPORTS', 'COALINDIA',
+  'HCLTECH', 'TECHM', 'INDUSINDBK', 'GRASIM', 'CIPLA', 'DRREDDY', 'EICHERMOT',
+  'HEROMOTOCO', 'BRITANNIA', 'DIVISLAB', 'APOLLOHOSP', 'BAJAJFINSV', 'TATACONSUM',
+]);
+
+export const POPULAR_INDEX_UNDERLYINGS = new Set([
+  'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY',
+]);
+
+export const POPULAR_MCX_PREFIXES = [
+  'GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'NICKEL', 'ALUMINIUM', 'LEAD',
+];
+
+/** Keep F&O contracts expiring within this many days for popular sync. */
+export const POPULAR_FNO_MAX_DAYS = 120;

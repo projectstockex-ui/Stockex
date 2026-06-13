@@ -6,6 +6,13 @@
  */
 
 import axios from 'axios';
+import {
+  ZERODHA_SYNC_EXCHANGES,
+  POPULAR_EQ_SYMBOLS,
+  POPULAR_INDEX_UNDERLYINGS,
+  POPULAR_MCX_PREFIXES,
+  POPULAR_FNO_MAX_DAYS,
+} from './zerodhaSyncConstants.js';
 
 export class ZerodhaSyncService {
   constructor(configService, loggerService, progressService) {
@@ -14,9 +21,134 @@ export class ZerodhaSyncService {
     this.progressService = progressService;
     this.syncConfig = {
       timeout: 300000, // 5 minutes
-      chunkSize: 2000,
+      chunkSize: 5000,
       maxRetries: 3,
-      retryDelay: 5000
+      retryDelay: 5000,
+    };
+  }
+
+  /**
+   * Upsert popular / high-traffic instruments only (no full reset).
+   */
+  async performPopularSync(apiKey, accessToken, options = {}) {
+    const jobId = options.jobId || this.generateJobId();
+    const config = { ...this.syncConfig, ...options };
+
+    try {
+      this.progressService.startJob(jobId, {
+        type: 'popular_sync',
+        totalSteps: 3,
+        description: 'Popular instrument sync from Zerodha',
+      });
+
+      const csvText = await this.downloadInstruments(apiKey, accessToken, config);
+      this.progressService.updateJob(jobId, { step: 1, message: 'Downloaded instrument master', progress: 25 });
+
+      const parsedInstruments = await this.parseInstruments(csvText, {
+        jobId,
+        filterMode: 'popular',
+        minCount: 10,
+      });
+      this.progressService.updateJob(jobId, {
+        step: 2,
+        message: `Parsed ${parsedInstruments.length} popular instruments`,
+        progress: 45,
+      });
+
+      const result = await this.upsertInstruments(parsedInstruments, config, jobId, {
+        progressBase: 45,
+        progressSpan: 50,
+      });
+
+      const counts = await this.buildExchangeCounts();
+      const verification = await this.verifySync(null);
+
+      const completionPayload = {
+        message: 'Popular instruments synced',
+        added: result.upserted,
+        updated: result.modified,
+        inserted: result.upserted,
+        total: parsedInstruments.length,
+        counts,
+        totalInDatabase: verification?.actual ?? null,
+        subscribedTokens: 0,
+      };
+
+      this.progressService.completeJob(jobId, { result: completionPayload });
+      return completionPayload;
+    } catch (error) {
+      this.progressService.failJob(jobId, { error: error.message });
+      this.loggerService.error('Popular sync failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Refresh lot sizes on existing DB instruments from Kite master (fast).
+   */
+  async performLotSizeSync(apiKey, accessToken, options = {}) {
+    const config = { ...this.syncConfig, ...options };
+    const csvText = await this.downloadInstruments(apiKey, accessToken, config);
+
+    const lotByToken = new Map();
+    const lines = csvText.split('\n');
+    const headers = this.parseCSVLine(lines[0]);
+
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      const values = this.parseCSVLine(lines[i]);
+      const row = {};
+      headers.forEach((header, idx) => {
+        row[header.trim()] = values[idx]?.trim();
+      });
+
+      const exchange = String(row.exchange || '').trim().toUpperCase();
+      if (!ZERODHA_SYNC_EXCHANGES.includes(exchange)) continue;
+
+      const tokenNum = parseInt(row.instrument_token, 10);
+      const token = Number.isFinite(tokenNum) ? String(tokenNum) : String(row.instrument_token || '');
+      const lotSize = parseInt(row.lot_size, 10);
+      if (!token || !Number.isFinite(lotSize) || lotSize < 1) continue;
+      lotByToken.set(token, lotSize);
+    }
+
+    const Instrument = (await import('../../models/Instrument.js')).default;
+    const existing = await Instrument.find({
+      exchange: { $in: ZERODHA_SYNC_EXCHANGES },
+    }).select('token lotSize').lean();
+
+    let updated = 0;
+    let notFound = 0;
+    const ops = [];
+
+    for (const inst of existing) {
+      const nextLot = lotByToken.get(String(inst.token));
+      if (nextLot == null) {
+        notFound += 1;
+        continue;
+      }
+      if (Number(inst.lotSize) === nextLot) continue;
+      ops.push({
+        updateOne: {
+          filter: { token: String(inst.token) },
+          update: { $set: { lotSize: nextLot, lastUpdated: new Date() } },
+        },
+      });
+    }
+
+    const chunkSize = config.chunkSize || 5000;
+    for (let i = 0; i < ops.length; i += chunkSize) {
+      const chunk = ops.slice(i, i + chunkSize);
+      const res = await Instrument.bulkWrite(chunk, { ordered: false });
+      updated += res.modifiedCount || 0;
+    }
+
+    return {
+      message: 'Lot sizes updated from Zerodha',
+      updated,
+      notFound,
+      total: existing.length,
+      kiteMasterRows: lotByToken.size,
     };
   }
 
@@ -31,24 +163,24 @@ export class ZerodhaSyncService {
       this.progressService.startJob(jobId, {
         type: 'full_sync',
         totalSteps: 5,
-        description: 'Full instrument synchronization from Zerodha'
+        description: 'Full instrument synchronization from Zerodha',
       });
 
       // Step 1: Download instruments
       const instruments = await this.downloadInstruments(apiKey, accessToken, config);
-      this.progressService.updateJob(jobId, { step: 1, message: 'Instruments downloaded' });
+      this.progressService.updateJob(jobId, { step: 1, message: 'Instruments downloaded', progress: 10 });
 
-      // Step 2: Parse and validate instruments
-      const parsedInstruments = await this.parseInstruments(instruments);
-      this.progressService.updateJob(jobId, { step: 2, message: 'Instruments parsed' });
+      // Step 2: Parse and validate instruments (Zerodha exchanges only)
+      const parsedInstruments = await this.parseInstruments(instruments, { jobId });
+      this.progressService.updateJob(jobId, { step: 2, message: `Parsed ${parsedInstruments.length} instruments`, progress: 35 });
 
-      // Step 3: Backup existing data
-      const backup = await this.backupExistingData();
-      this.progressService.updateJob(jobId, { step: 3, message: 'Existing data backed up' });
+      // Step 3: Count existing Zerodha instruments (no full DB load)
+      const backup = await this.countExistingZerodhaInstruments();
+      this.progressService.updateJob(jobId, { step: 3, message: `Replacing ${backup.count} Zerodha instruments`, progress: 40 });
 
-      // Step 4: Clear and insert new data
-      const result = await this.clearAndInsert(parsedInstruments, config, jobId);
-      this.progressService.updateJob(jobId, { step: 4, message: 'Database updated' });
+      // Step 4: Replace Zerodha instruments (preserves BINANCE / FOREX)
+      const result = await this.replaceZerodhaInstruments(parsedInstruments, config, jobId);
+      this.progressService.updateJob(jobId, { step: 4, message: 'Database updated', progress: 92 });
 
       // Step 5: Verify sync
       const verification = await this.verifySync(parsedInstruments.length);
@@ -131,13 +263,18 @@ export class ZerodhaSyncService {
   /**
    * Parse CSV instruments with validation
    */
-  async parseInstruments(csvText) {
+  async parseInstruments(csvText, options = {}) {
+    const { jobId, filterMode = 'full' } = options;
+
     try {
       const lines = csvText.split('\n');
       const headers = this.parseCSVLine(lines[0]);
       
       const instruments = [];
       let lineNumber = 1;
+      const fnoCutoff = filterMode === 'popular'
+        ? Date.now() + POPULAR_FNO_MAX_DAYS * 24 * 60 * 60 * 1000
+        : null;
 
       for (let i = 1; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
@@ -150,13 +287,30 @@ export class ZerodhaSyncService {
             instrument[header.trim()] = values[idx]?.trim();
           });
 
-          // Validate required fields
           if (!instrument.instrument_token || !instrument.tradingsymbol) {
             throw new Error(`Missing required fields at line ${lineNumber}`);
           }
 
+          const exchange = String(instrument.exchange || '').trim().toUpperCase();
+          if (!ZERODHA_SYNC_EXCHANGES.includes(exchange)) {
+            lineNumber++;
+            continue;
+          }
+
+          if (filterMode === 'popular' && !this.shouldIncludePopularInstrument(instrument, fnoCutoff)) {
+            lineNumber++;
+            continue;
+          }
+
           instruments.push(instrument);
           lineNumber++;
+
+          if (jobId && instruments.length % 15000 === 0) {
+            this.progressService.updateProgress(jobId, {
+              message: `Parsing… ${instruments.length.toLocaleString()} instruments`,
+              progress: filterMode === 'popular' ? 35 : 25,
+            });
+          }
 
         } catch (error) {
           this.loggerService.warn(`Skipping line ${lineNumber}: ${error.message}`);
@@ -164,11 +318,11 @@ export class ZerodhaSyncService {
         }
       }
 
-      if (instruments.length < 100) {
+      if (instruments.length < (options.minCount ?? 100)) {
         throw new Error(`Unexpected instrument count: ${instruments.length}. Check API credentials.`);
       }
 
-      this.loggerService.info(`Parsed ${instruments.length} valid instruments`);
+      this.loggerService.info(`Parsed ${instruments.length} valid instruments (${filterMode})`);
       return instruments;
 
     } catch (error) {
@@ -177,84 +331,157 @@ export class ZerodhaSyncService {
     }
   }
 
+  shouldIncludePopularInstrument(instrument, fnoCutoffMs) {
+    const exchange = String(instrument.exchange || '').trim().toUpperCase();
+    const type = String(instrument.instrument_type || '').trim().toUpperCase();
+    const symbol = String(instrument.tradingsymbol || '').trim().toUpperCase();
+    const name = String(instrument.name || '').trim().toUpperCase();
+
+    if (exchange === 'NSE' && type === 'EQ') {
+      if (POPULAR_EQ_SYMBOLS.has(symbol)) return true;
+      if (name.includes('NIFTY') || symbol.includes('NIFTY') || name.includes('INDIA VIX')) return true;
+      return false;
+    }
+
+    if (exchange === 'MCX') {
+      return POPULAR_MCX_PREFIXES.some((prefix) => symbol.startsWith(prefix));
+    }
+
+    if (exchange === 'NFO' || exchange === 'BFO' || exchange === 'CDS') {
+      const underlying = this.getUnderlyingFromSymbol(symbol);
+      const isIndex = POPULAR_INDEX_UNDERLYINGS.has(underlying);
+      const isPopularStock = POPULAR_EQ_SYMBOLS.has(underlying);
+      if (!isIndex && !isPopularStock) return false;
+
+      if (type === 'EQ') return true;
+      if (!instrument.expiry) return isIndex;
+
+      const expiry = new Date(instrument.expiry);
+      if (Number.isNaN(expiry.getTime())) return isIndex;
+      return expiry.getTime() <= fnoCutoffMs;
+    }
+
+    if (exchange === 'BSE' && type === 'EQ') {
+      return POPULAR_EQ_SYMBOLS.has(symbol);
+    }
+
+    return false;
+  }
+
   /**
-   * Backup existing data before clearing
+   * Count Zerodha-sourced instruments without loading documents into memory.
    */
-  async backupExistingData() {
+  async countExistingZerodhaInstruments() {
     try {
       const Instrument = (await import('../../models/Instrument.js')).default;
-      
-      const existing = await Instrument.find({}).lean();
-      const backup = {
-        count: existing.length,
-        timestamp: new Date(),
-        data: existing.slice(0, 1000) // Keep first 1000 for reference
-      };
+      const count = await Instrument.countDocuments({
+        exchange: { $in: ZERODHA_SYNC_EXCHANGES },
+      });
 
-      this.loggerService.info(`Backed up ${existing.length} existing instruments`);
-      return backup;
-
+      this.loggerService.info(`Found ${count} existing Zerodha instruments`);
+      return { count, timestamp: new Date() };
     } catch (error) {
-      this.loggerService.error('Failed to backup existing data:', error);
+      this.loggerService.error('Failed to count existing instruments:', error);
       throw error;
     }
   }
 
   /**
-   * Clear existing data and insert new instruments in chunks
+   * Delete Zerodha instruments and bulk-insert the fresh master (preserves crypto/forex).
    */
-  async clearAndInsert(instruments, config, jobId) {
+  async replaceZerodhaInstruments(instruments, config, jobId) {
     const Instrument = (await import('../../models/Instrument.js')).default;
-    const chunkSize = config.chunkSize || 2000;
-    
-    try {
-      // Clear existing data
-      const deleteResult = await Instrument.deleteMany({});
-      this.loggerService.info(`Deleted ${deleteResult.deletedCount} existing instruments`);
+    const chunkSize = config.chunkSize || 5000;
 
-      // Insert in chunks to avoid memory issues
+    try {
+      const deleteResult = await Instrument.deleteMany({
+        exchange: { $in: ZERODHA_SYNC_EXCHANGES },
+      });
+      this.loggerService.info(`Deleted ${deleteResult.deletedCount} Zerodha instruments`);
+
       let insertedCount = 0;
       const errors = [];
 
       for (let i = 0; i < instruments.length; i += chunkSize) {
         const chunk = instruments.slice(i, i + chunkSize);
-        
+
         try {
-          const processedChunk = await this.processInstrumentChunk(chunk);
+          const processedChunk = this.processInstrumentChunk(chunk);
           await Instrument.insertMany(processedChunk, { ordered: false });
           insertedCount += processedChunk.length;
-          
-          this.progressService.updateProgress(jobId, {
-            message: `Inserted ${insertedCount}/${instruments.length} instruments`,
-            progress: (insertedCount / instruments.length) * 100
-          });
 
+          const pct = 40 + Math.round((insertedCount / instruments.length) * 50);
+          this.progressService.updateProgress(jobId, {
+            message: `Inserted ${insertedCount.toLocaleString()}/${instruments.length.toLocaleString()} instruments`,
+            progress: Math.min(pct, 90),
+          });
         } catch (error) {
           this.loggerService.error(`Error inserting chunk ${Math.floor(i / chunkSize) + 1}:`, error.message);
           errors.push({
             chunk: Math.floor(i / chunkSize) + 1,
             error: error.message,
             startIndex: i,
-            endIndex: Math.min(i + chunkSize, instruments.length)
+            endIndex: Math.min(i + chunkSize, instruments.length),
           });
         }
       }
 
-      const result = {
+      return {
         deleted: deleteResult.deletedCount,
         inserted: insertedCount,
         total: instruments.length,
         errors,
-        success: errors.length === 0
+        success: errors.length === 0,
       };
-
-      this.loggerService.info(`Sync completed: deleted ${result.deleted}, inserted ${result.inserted}, errors ${errors.length}`);
-      return result;
-
     } catch (error) {
-      this.loggerService.error('Failed to clear and insert instruments:', error);
+      this.loggerService.error('Failed to replace Zerodha instruments:', error);
       throw error;
     }
+  }
+
+  /**
+   * Upsert instruments without deleting the collection (popular sync).
+   */
+  async upsertInstruments(instruments, config, jobId, progress = {}) {
+    const Instrument = (await import('../../models/Instrument.js')).default;
+    const chunkSize = config.chunkSize || 5000;
+    const progressBase = progress.progressBase ?? 40;
+    const progressSpan = progress.progressSpan ?? 50;
+
+    let upserted = 0;
+    let modified = 0;
+    const errors = [];
+
+    for (let i = 0; i < instruments.length; i += chunkSize) {
+      const chunk = instruments.slice(i, i + chunkSize);
+
+      try {
+        const processedChunk = this.processInstrumentChunk(chunk);
+        const ops = processedChunk.map((doc) => ({
+          replaceOne: {
+            filter: { token: doc.token },
+            replacement: doc,
+            upsert: true,
+          },
+        }));
+
+        const res = await Instrument.bulkWrite(ops, { ordered: false });
+        upserted += (res.upsertedCount || 0) + (res.modifiedCount || 0);
+        modified += res.modifiedCount || 0;
+
+        const done = Math.min(i + chunkSize, instruments.length);
+        const pct = progressBase + Math.round((done / instruments.length) * progressSpan);
+        this.progressService.updateProgress(jobId, {
+          message: `Upserted ${done.toLocaleString()}/${instruments.length.toLocaleString()} instruments`,
+          progress: Math.min(pct, 95),
+        });
+      } catch (error) {
+        this.loggerService.error(`Error upserting chunk ${Math.floor(i / chunkSize) + 1}:`, error.message);
+        errors.push({ chunk: Math.floor(i / chunkSize) + 1, error: error.message });
+      }
+    }
+
+    return { upserted, modified, total: instruments.length, errors, success: errors.length === 0 };
   }
 
   /**
@@ -323,10 +550,10 @@ export class ZerodhaSyncService {
       const verification = {
         expected: expectedCount,
         actual: actualCount,
-        success: actualCount >= expectedCount * 0.95 // Allow 5% tolerance
+        success: expectedCount == null || actualCount >= expectedCount * 0.95,
       };
 
-      this.loggerService.info(`Sync verification: expected ${expectedCount}, actual ${actualCount}`);
+      this.loggerService.info(`Sync verification: expected ${expectedCount ?? 'n/a'}, actual ${actualCount}`);
       return verification;
 
     } catch (error) {

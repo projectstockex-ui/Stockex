@@ -133,6 +133,25 @@ router.post('/sync/cancel/:jobId',
   zc(zerodhaController.cancelSyncJob)
 );
 
+// Sync popular instruments only (fast upsert, no full reset)
+router.post('/sync-all-instruments',
+  protectAdmin,
+  superAdminOnly,
+  requireZerodhaSession,
+  validateSyncOperation,
+  rateLimitZerodha(5, 300000),
+  zc(zerodhaController.syncAllInstruments)
+);
+
+// Refresh lot sizes from Kite master for existing DB instruments
+router.post('/sync-lot-sizes',
+  protectAdmin,
+  superAdminOnly,
+  requireZerodhaSession,
+  rateLimitZerodha(10, 300000),
+  zc(zerodhaController.syncLotSizes)
+);
+
 /**
  * Subscription Management Routes
  */

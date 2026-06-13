@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { TrendingUp, X, RefreshCw } from 'lucide-react';
 import axios from '../../../../config/axios';
 import { useAuth } from '../../../../context/AuthContext';
-import { pollZerodhaResetSyncResult, isNseCashMarketOpen } from '../utils';
+import { isNseCashMarketOpen, runZerodhaBackgroundSync } from '../utils';
+import ZerodhaSyncProgressBar from './ZerodhaSyncProgressBar.jsx';
 
 const MarketControl = () => {
   const { admin } = useAuth();
@@ -10,6 +11,8 @@ const MarketControl = () => {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [zerodhaStatus, setZerodhaStatus] = useState(null);
+  const [zerodhaSyncJob, setZerodhaSyncJob] = useState(null);
+  const [syncBusy, setSyncBusy] = useState(false);
   const [editingSegment, setEditingSegment] = useState(null);
   const [segmentForm, setSegmentForm] = useState({});
 
@@ -189,69 +192,55 @@ const MarketControl = () => {
             {zerodhaStatus?.connected ? (
               <>
                 <div className="text-xs text-gray-400 mb-3">User ID: {zerodhaStatus.userId}</div>
+                <ZerodhaSyncProgressBar
+                  job={zerodhaSyncJob}
+                  hint={syncBusy ? 'Full reset takes 2–5 min. Use Sync Popular for a faster daily refresh.' : null}
+                />
                 <div className="flex gap-2 mb-2">
-                  <button onClick={async (ev) => {
-                    if (!confirm('This will DELETE all instruments and resync from Zerodha. Continue?')) return;
+                  <button disabled={syncBusy} onClick={async (ev) => {
+                    if (!confirm('This will DELETE all Zerodha instruments (NSE/NFO/MCX etc.) and resync from Kite. Crypto/Forex rows are kept. Continue?')) return;
                     const btn = ev.currentTarget;
                     btn.disabled = true;
-                    btn.textContent = 'Resetting...';
+                    setSyncBusy(true);
+                    setZerodhaSyncJob({ progress: 0, message: 'Starting reset & sync…' });
                     try {
-                      let data;
-                      try {
-                        const res = await axios.post(
-                          '/api/zerodha/reset-and-sync',
-                          {},
-                          { headers: { Authorization: `Bearer ${admin.token}` } }
-                        );
-                        if (res.status === 202 && res.data?.statusUrl) {
-                          btn.textContent = 'Syncing…';
-                          data = await pollZerodhaResetSyncResult(admin.token, res.data.statusUrl);
-                        } else if (
-                          res.data?.counts != null ||
-                          res.data?.deleted !== undefined ||
-                          res.data?.totalInDatabase != null
-                        ) {
-                          data = res.data;
-                        } else {
-                          throw new Error('Unexpected reset-and-sync response');
-                        }
-                      } catch (err) {
-                        if (err.response?.status === 409 && admin?.token) {
-                          btn.textContent = 'Syncing…';
-                          data = await pollZerodhaResetSyncResult(
-                            admin.token,
-                            err.response?.data?.statusUrl || '/api/zerodha/sync/jobs',
-                          );
-                        } else {
-                          throw err;
-                        }
-                      }
+                      const data = await runZerodhaBackgroundSync(
+                        admin.token,
+                        '/api/zerodha/reset-and-sync',
+                        { onProgress: setZerodhaSyncJob },
+                      );
                       const countsStr = Object.entries(data.counts || {})
                         .map(([k, v]) => `${k}: ${v}`)
                         .join('\n');
                       alert(
-                        `${data.message}\n\nDeleted: ${data.deleted}\n\n${countsStr}\n\nAdded: ${data.added}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens}`
+                        `${data.message}\n\nDeleted: ${data.deleted}\n\n${countsStr}\n\nAdded: ${data.added}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens ?? 0}`
                       );
                     } catch (error) {
                       alert(error.response?.data?.message || error.message || 'Error resetting');
                     } finally {
                       btn.disabled = false;
-                      btn.textContent = 'Reset & Sync';
+                      setSyncBusy(false);
+                      setZerodhaSyncJob(null);
                     }
                   }} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm disabled:opacity-50">Reset & Sync</button>
-                  <button onClick={async () => {
+                  <button disabled={syncBusy} onClick={async (ev) => {
+                    const btn = ev.currentTarget;
+                    btn.disabled = true;
+                    setSyncBusy(true);
+                    setZerodhaSyncJob({ progress: 0, message: 'Syncing popular instruments…' });
                     try {
-                      const btn = document.activeElement;
-                      btn.disabled = true;
-                      btn.textContent = 'Syncing...';
-                      const { data } = await axios.post('/api/zerodha/sync-all-instruments', {}, { headers: { Authorization: `Bearer ${admin.token}` } });
-                      alert(`${data.message}\n\nAdded: ${data.added}\nUpdated: ${data.updated}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens}`);
+                      const data = await runZerodhaBackgroundSync(
+                        admin.token,
+                        '/api/zerodha/sync-all-instruments',
+                        { onProgress: setZerodhaSyncJob },
+                      );
+                      alert(`${data.message}\n\nAdded/Updated: ${data.added ?? data.inserted}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens ?? 0}`);
+                    } catch (error) {
+                      alert(error.response?.data?.message || error.message || 'Error syncing instruments');
+                    } finally {
                       btn.disabled = false;
-                      btn.textContent = 'Sync Popular';
-                    } catch (error) { 
-                      alert(error.response?.data?.message || 'Error syncing instruments'); 
-                      const btn = document.activeElement;
-                      if (btn) { btn.disabled = false; btn.textContent = 'Sync Popular'; }
+                      setSyncBusy(false);
+                      setZerodhaSyncJob(null);
                     }
                   }} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm disabled:opacity-50">Sync Popular</button>
                 </div>

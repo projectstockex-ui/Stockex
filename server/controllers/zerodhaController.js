@@ -1064,7 +1064,7 @@ class ZerodhaController {
 
       const runningJobs = this.orchestrator.progressService.getRunningJobs()
 
-        .filter(job => job.type === 'full_sync');
+        .filter(job => job.type === 'full_sync' || job.type === 'popular_sync');
 
       
 
@@ -1112,7 +1112,7 @@ class ZerodhaController {
 
         statusUrl: `/api/zerodha/sync/status/${result.jobId}`,
 
-        estimatedTime: '5-10 minutes'
+        estimatedTime: '2-5 minutes'
 
       });
 
@@ -1242,6 +1242,8 @@ class ZerodhaController {
 
       const jobs = (this.orchestrator.progressService.getJobsByType('full_sync') || [])
 
+        .concat(this.orchestrator.progressService.getJobsByType('popular_sync') || [])
+
         .map((j) => this._withLiveSubscriptionStats(j));
 
       return sendJson(res, { jobs });
@@ -1301,6 +1303,150 @@ class ZerodhaController {
         message: 'Failed to cancel sync job',
 
         error: error.message
+
+      });
+
+    }
+
+  }
+
+
+
+  /**
+
+   * Sync popular / high-traffic instruments only (background job, ~30-90s)
+
+   */
+
+  async syncAllInstruments(req, res) {
+
+    try {
+
+      if (!this.session.accessToken) {
+
+        return res.status(401).json({ message: 'Not logged in to Zerodha. Please connect first.' });
+
+      }
+
+
+
+      const runningJobs = this.orchestrator.progressService.getRunningJobs()
+
+        .filter((job) => job.type === 'full_sync' || job.type === 'popular_sync');
+
+
+
+      if (runningJobs.length > 0) {
+
+        return res.status(409).json({
+
+          message: 'Sync is already running',
+
+          job: runningJobs[0],
+
+          statusUrl: `/api/zerodha/sync/status/${runningJobs[0].id}`,
+
+        });
+
+      }
+
+
+
+      const result = await this.orchestrator.performPopularSync(
+
+        this.session.apiKey,
+
+        this.session.accessToken,
+
+        {
+
+          timeout: this.config.getSyncTimeout(),
+
+          maxRetries: this.config.getMaxRetries(),
+
+        },
+
+      );
+
+
+
+      return res.status(202).json({
+
+        message: 'Popular sync started in background',
+
+        jobId: result.jobId,
+
+        statusUrl: result.statusUrl,
+
+        estimatedTime: '30-90 seconds',
+
+      });
+
+    } catch (error) {
+
+      this.logger.error('Failed to start popular sync:', error);
+
+      return res.status(500).json({
+
+        message: 'Failed to start popular instrument sync',
+
+        error: error.message,
+
+      });
+
+    }
+
+  }
+
+
+
+  /**
+
+   * Update lot sizes on existing instruments from Kite master
+
+   */
+
+  async syncLotSizes(req, res) {
+
+    try {
+
+      if (!this.session.accessToken) {
+
+        return res.status(401).json({ message: 'Not logged in to Zerodha. Please connect first.' });
+
+      }
+
+
+
+      const result = await this.orchestrator.syncService.performLotSizeSync(
+
+        this.session.apiKey,
+
+        this.session.accessToken,
+
+        {
+
+          timeout: this.config.getSyncTimeout(),
+
+          maxRetries: this.config.getMaxRetries(),
+
+        },
+
+      );
+
+
+
+      return res.json(result);
+
+    } catch (error) {
+
+      this.logger.error('Failed to sync lot sizes:', error);
+
+      return res.status(500).json({
+
+        message: 'Failed to sync lot sizes',
+
+        error: error.message,
 
       });
 

@@ -3,11 +3,19 @@
  */
 import axios from '../../../../config/axios';
 
+/** Human-readable label for a running Zerodha sync job. */
+export function formatZerodhaSyncProgress(job) {
+  const pct = Math.round(Number(job?.progress) || 0);
+  const msg = job?.message || 'Syncing…';
+  return pct > 0 ? `${msg} (${pct}%)` : msg;
+}
+
 /** Polls background Zerodha reset-and-sync until completed/failed (POST returns 202/409). */
 export async function pollZerodhaResetSyncResult(authToken, statusUrl, options = {}) {
   const intervalMs = options.intervalMs ?? 2000;
   const maxAttempts = options.maxAttempts ?? 300;
   const pollUrl = statusUrl || '/api/zerodha/sync/jobs';
+  const onProgress = options.onProgress;
 
   const normalizeResult = (jobData) => {
     const payload = jobData?.result ?? null;
@@ -30,6 +38,10 @@ export async function pollZerodhaResetSyncResult(authToken, statusUrl, options =
         continue;
       }
 
+      if (job.status === 'running' && onProgress) {
+        onProgress(job);
+      }
+
       if (job.status === 'completed') {
         const normalized = normalizeResult(job);
         if (normalized) return normalized;
@@ -49,6 +61,40 @@ export async function pollZerodhaResetSyncResult(authToken, statusUrl, options =
   throw new Error(
     'Reset & sync is still running after a long wait. Check server logs or refresh later.',
   );
+}
+
+/** POST a background Zerodha sync endpoint and poll until completion. */
+export async function runZerodhaBackgroundSync(authToken, postUrl, options = {}) {
+  const headers = { Authorization: `Bearer ${authToken}` };
+  const pollOpts = { onProgress: options.onProgress };
+
+  try {
+    const res = await axios.post(postUrl, {}, { headers });
+
+    if (res.status === 202 && res.data?.statusUrl) {
+      return pollZerodhaResetSyncResult(authToken, res.data.statusUrl, pollOpts);
+    }
+
+    if (
+      res.data?.counts != null ||
+      res.data?.deleted !== undefined ||
+      res.data?.added !== undefined ||
+      res.data?.totalInDatabase != null
+    ) {
+      return res.data;
+    }
+
+    throw new Error('Unexpected sync response');
+  } catch (err) {
+    if (err.response?.status === 409 && authToken) {
+      return pollZerodhaResetSyncResult(
+        authToken,
+        err.response?.data?.statusUrl || '/api/zerodha/sync/jobs',
+        pollOpts,
+      );
+    }
+    throw err;
+  }
 }
 
 /**
