@@ -1,5 +1,6 @@
 import TradeService from '../services/tradeService.js';
-import Admin from '../models/Admin.js';
+import SystemSettings from '../models/SystemSettings.js';
+import { plainSegmentDefaultsMap } from './commissionTypeUnit.js';
 import {
   istClockToSeconds,
   nowIstSecondsOfDay,
@@ -31,58 +32,25 @@ export function stripMcxKeysFromSegmentExplicitKeys(explicitKeys) {
   return out;
 }
 
-function segmentMapPlain(segmentMap) {
-  if (!segmentMap) return {};
-  if (segmentMap instanceof Map) return Object.fromEntries(segmentMap);
-  return typeof segmentMap === 'object' ? segmentMap : {};
-}
-
-function mcxSliceFromPerms(perms) {
-  const plain = segmentMapPlain(perms);
-  return plain.MCXFUT || plain.MCX || {};
-}
-
-function readMcxTimingFromSlice(slice) {
-  if (!slice || typeof slice !== 'object') return { start: '', close: '' };
-  return {
-    start: String(slice.mcxStartTime || slice.startTime || '').trim(),
-    close: String(slice.mcxClosingTime || slice.closingTime || '').trim(),
-  };
-}
-
-/** Walk direct parent + hierarchyPath admins until both MCX start/close are found. */
-export async function resolveMcxTimingFromAdminChain(user) {
-  if (!user) return { mcxStartTime: '', mcxClosingTime: '' };
-
-  const chainIds = [];
-  const seen = new Set();
-  const push = (id) => {
-    if (!id) return;
-    const s = String(id);
-    if (seen.has(s)) return;
-    seen.add(s);
-    chainIds.push(id);
-  };
-
-  push(user.admin?._id || user.admin);
-  if (Array.isArray(user.hierarchyPath)) {
-    for (let i = user.hierarchyPath.length - 1; i >= 0; i--) {
-      push(user.hierarchyPath[i]);
-    }
+/** Platform-wide MCX session timing from SystemSettings (same for all admins/users). */
+export async function resolveMcxTimingFromSystem() {
+  try {
+    const sysLean = await SystemSettings.findOne({ settingsType: 'global' })
+      .select('adminSegmentDefaults')
+      .lean();
+    const defaults = plainSegmentDefaultsMap(sysLean?.adminSegmentDefaults || {});
+    return {
+      mcxStartTime: resolveSystemMcxStartTime(defaults),
+      mcxClosingTime: resolveSystemMcxClosingTime(defaults),
+    };
+  } catch {
+    return { mcxStartTime: '', mcxClosingTime: '' };
   }
+}
 
-  let start = '';
-  let close = '';
-
-  for (const adminId of chainIds) {
-    const doc = await Admin.findById(adminId).select('segmentPermissions').lean();
-    const { start: s, close: c } = readMcxTimingFromSlice(mcxSliceFromPerms(doc?.segmentPermissions));
-    if (s && !start) start = s;
-    if (c && !close) close = c;
-    if (start && close) break;
-  }
-
-  return { mcxStartTime: start, mcxClosingTime: close };
+/** @deprecated Use resolveMcxTimingFromSystem — per-admin chain timing removed. */
+export async function resolveMcxTimingFromAdminChain(_user) {
+  return resolveMcxTimingFromSystem();
 }
 
 export function isMcxSegmentKey(segKey) {
@@ -153,4 +121,43 @@ export function isPastSystemMcxClose(sysSegDefaults = {}) {
 
 export function resolveMcxCloseFromSegSettings(segSettings = {}) {
   return String(segSettings.mcxClosingTime || segSettings.closingTime || '').trim();
+}
+
+/** Persist MCXFUT session clocks onto SystemSettings.adminSegmentDefaults (Super Admin source of truth). */
+export async function propagateMcxTimingToSystemDefaults(mcxFutData) {
+  if (!mcxFutData || typeof mcxFutData !== 'object') return;
+
+  const mcxStart =
+    mcxFutData.mcxStartTime !== undefined ? mcxFutData.mcxStartTime : mcxFutData.startTime;
+  const mcxClose =
+    mcxFutData.mcxClosingTime !== undefined ? mcxFutData.mcxClosingTime : mcxFutData.closingTime;
+  if (mcxStart === undefined && mcxClose === undefined) return;
+
+  const settings = await SystemSettings.findOne({ settingsType: 'global' });
+  if (!settings?.adminSegmentDefaults) return;
+
+  const updateMcxTiming = (segMap, segName) => {
+    if (segMap instanceof Map) {
+      const seg = segMap.get(segName) || {};
+      if (mcxStart !== undefined) seg.mcxStartTime = mcxStart;
+      if (mcxClose !== undefined) {
+        seg.mcxClosingTime = mcxClose;
+        seg.closingTime = mcxClose;
+      }
+      segMap.set(segName, seg);
+    } else if (segMap && typeof segMap === 'object') {
+      segMap[segName] = segMap[segName] || {};
+      if (mcxStart !== undefined) segMap[segName].mcxStartTime = mcxStart;
+      if (mcxClose !== undefined) {
+        segMap[segName].mcxClosingTime = mcxClose;
+        segMap[segName].closingTime = mcxClose;
+      }
+    }
+  };
+
+  for (const segName of ['MCXFUT', 'MCX', 'MCXOPT']) {
+    updateMcxTiming(settings.adminSegmentDefaults, segName);
+  }
+  settings.markModified('adminSegmentDefaults');
+  await settings.save();
 }

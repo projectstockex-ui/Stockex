@@ -244,6 +244,8 @@ import {
 
   alignSegmentDefaultsMap,
 
+  alignSegmentDefaultsMapPreservingSessionTiming,
+
   mergeSegmentDefaultsMaps,
 
   normalizeLegacySystemSegmentDefaultsSlice,
@@ -642,13 +644,9 @@ router.get('/admins', ...adminAuth, async (req, res) => {
 
     if (req.admin.role === 'SUPER_ADMIN') {
 
-      // Super Admin sees all non-super-admin roles
-
       query = { role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] } };
 
     } else if (allowedChildRoles.length > 0) {
-
-      // Other roles see their direct children AND descendants in hierarchy
 
       query = { 
 
@@ -666,94 +664,13 @@ router.get('/admins', ...adminAuth, async (req, res) => {
 
     } else {
 
-      // SUB_BROKER has no subordinates
-
       return res.json([]);
 
     }
 
-    
+    const { fetchAdminHierarchyList } = await import('../utils/adminListQuery.js');
 
-    console.log(`[AdminManagement] Query for admins:`, JSON.stringify(query, null, 2));
-
-    
-
-    const admins = await Admin.find(query)
-
-      .select('-password -pin')
-
-      .populate('parentId', 'name adminCode role')
-
-      .sort({ createdAt: -1 });
-
-    
-
-    console.log(`[AdminManagement] Found ${admins.length} admins`);
-
-    
-
-    // Get user counts for each admin
-
-    const adminData = await Promise.all(admins.map(async (admin) => {
-
-      try {
-
-        const userCount = await User.countDocuments({ admin: admin._id });
-
-        const activeUsers = await User.countDocuments({ admin: admin._id, isActive: true });
-
-        const { isAdminInActiveFranchiseSubtree } = await import('../utils/franchiseBrokerage.js');
-        const { isAdminInActivePattiSubtree } = await import('../utils/pattiSubtree.js');
-        const franchiseSubtreeActive = await isAdminInActiveFranchiseSubtree(admin);
-        const pattiSubtreeActive = await isAdminInActivePattiSubtree(admin);
-
-        return {
-
-          ...admin.toObject(),
-
-          franchiseSubtreeActive,
-          pattiSubtreeActive,
-
-          stats: {
-
-            ...admin.stats,
-
-            totalUsers: userCount,
-
-            activeUsers
-
-          }
-
-        };
-
-      } catch (userError) {
-
-        console.error(`[AdminManagement] Error getting user counts for admin ${admin._id}:`, userError);
-
-        return {
-
-          ...admin.toObject(),
-
-          franchiseSubtreeActive: false,
-          pattiSubtreeActive: false,
-
-          stats: {
-
-            ...admin.stats,
-
-            totalUsers: 0,
-
-            activeUsers: 0
-
-          }
-
-        };
-
-      }
-
-    }));
-
-    
+    const adminData = await fetchAdminHierarchyList(query);
 
     res.json(adminData);
 
@@ -3721,6 +3638,30 @@ router.post('/users/:userId/transfer', protectAdmin, superAdminOnly, async (req,
       }
 
     });
+
+  } catch (error) {
+
+    res.status(500).json({ message: error.message });
+
+  }
+
+});
+
+
+
+// Lightweight active-users panel for Super Admin dashboard (top N — not full user export)
+
+router.get('/active-users-panel', protectAdmin, superAdminOnly, async (req, res) => {
+
+  try {
+
+    const limit = req.query.limit;
+
+    const { fetchActiveUsersPanel } = await import('../utils/activeUsersPanelQuery.js');
+
+    const users = await fetchActiveUsersPanel(limit);
+
+    res.json(users);
 
   } catch (error) {
 
@@ -13686,7 +13627,7 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
 
       const rawPlain = plainSegmentDefaultsMap(raw);
 
-      const incomingAligned = alignSegmentDefaultsMap(rawPlain);
+      const incomingAligned = alignSegmentDefaultsMapPreservingSessionTiming(rawPlain);
 
       const existingPlain = plainSegmentDefaultsMap(settings.adminSegmentDefaults);
 

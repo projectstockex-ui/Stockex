@@ -40,6 +40,15 @@ import {
   optionCommissionBelowParent,
 } from '../utils/hierarchyOptionCommission.js';
 import {
+  canViewerEnableSegment,
+  clampSegmentEnabledToParentBaseline,
+  clampSegmentIntradayOnlyToParentBaseline,
+  canViewerToggleDefaultIntradayOnly,
+  canViewerManageLotQtySettings,
+  INTRADAY_ONLY_LOCKED_LOT_QTY_MESSAGE,
+  INTRADAY_ONLY_LOCKED_DISABLE_MESSAGE,
+} from '../utils/segmentHierarchyGate.js';
+import {
   defaultIndividualPattiSegments,
   labelForPattiSegment,
   mergeBrokerPattiSegments,
@@ -58,6 +67,7 @@ import GameReferralDistributionFields from '../components/admin/GameReferralDist
 import AdminTradingTransactions from '../components/admin/AdminTradingTransactions.jsx';
 
 import OptionBuySellFields, { isSimplifiedHierarchyOptSegment } from '../components/admin/segment/OptionBuySellFields.jsx';
+import CryptoClientSpreadFields from '../components/admin/segment/CryptoClientSpreadFields.jsx';
 import SegmentBrokerageFields from '../components/admin/segment/SegmentBrokerageFields.jsx';
 import FranchiseSegmentBrokerageNotice from '../components/admin/segment/FranchiseSegmentBrokerageNotice.jsx';
 import {
@@ -66,6 +76,7 @@ import {
 } from '../utils/franchiseSegmentBrokerage.js';
 import { numInputValue, parseNumInput, parseIntInput, parseNonNegativeNumInput, patchSegmentField } from '../utils/segmentFormValues.js';
 import SegmentNumberInput from '../components/admin/segment/SegmentNumberInput.jsx';
+import SegmentLotQtyToggle from '../components/admin/segment/SegmentLotQtyToggle.jsx';
 import { normalizeSegmentCommissionFields } from '../utils/segmentCommissionType.js';
 
 import InstrumentSegmentDefaultsModal from '../components/admin/instruments/InstrumentSegmentDefaultsModal.jsx';
@@ -1336,13 +1347,13 @@ const SuperAdminDashboard = () => {
 
 
 
-    // Auto-refresh stats every 5 seconds for live M2M data
+    // Refresh stats periodically (avoid hammering DB every 5s on small VPS)
 
-    const statsInterval = setInterval(fetchStats, 5000);
+    const STATS_REFRESH_MS = 30_000;
 
-    // Auto-refresh active users every 5 seconds for live wallet balances
+    const statsInterval = setInterval(fetchStats, STATS_REFRESH_MS);
 
-    const activeUsersInterval = setInterval(fetchActiveUsers, 5000);
+    const activeUsersInterval = setInterval(fetchActiveUsers, STATS_REFRESH_MS);
 
 
 
@@ -1430,47 +1441,15 @@ const SuperAdminDashboard = () => {
 
     try {
 
-      const { data } = await axios.get('/api/admin/manage/all-users', {
+      const { data } = await axios.get('/api/admin/manage/active-users-panel', {
+
+        params: { limit: 50 },
 
         headers: { Authorization: `Bearer ${admin?.token}` }
 
       });
 
-      const active = data.filter(user => user.isActive);
-
-
-
-      // Debug: Log Suresh's wallet data
-
-      const suresh = active.find(u => u.name?.toLowerCase().includes('suresh'));
-
-      if (suresh) {
-
-        console.log('Suresh Wallet Data:', {
-
-          name: suresh.name,
-
-          cashBalance: suresh.wallet?.cashBalance || 0,
-
-          tradingBalance: suresh.wallet?.tradingBalance || 0,
-
-          gamesWallet: suresh.gamesWallet?.balance || 0,
-
-          cryptoWallet: suresh.cryptoWallet?.balance || 0,
-
-          mcxWallet: suresh.mcxWallet?.balance || 0,
-
-          equity: suresh.wallet?.equity || 0,
-
-          freeMargin: suresh.wallet?.freeMargin || 0
-
-        });
-
-      }
-
-
-
-      setActiveUsers(active);
+      setActiveUsers(Array.isArray(data) ? data : []);
 
     } catch (error) {
 
@@ -3919,6 +3898,20 @@ const AdminManagement = () => {
 
 
 
+      {loading ? (
+
+        <div className="text-center py-12">
+
+          <RefreshCw className="animate-spin inline text-yellow-400" size={32} />
+
+          <p className="text-gray-500 text-sm mt-3">Loading hierarchy…</p>
+
+        </div>
+
+      ) : (
+
+      <>
+
       {/* Stats Summary */}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
@@ -3975,11 +3968,7 @@ const AdminManagement = () => {
 
 
 
-      {loading ? (
-
-        <div className="text-center py-8"><RefreshCw className="animate-spin inline" /></div>
-
-      ) : totalItems === 0 ? (
+      {totalItems === 0 ? (
 
         <div className="text-center py-8 text-gray-400">No admins found</div>
 
@@ -4482,6 +4471,10 @@ const AdminManagement = () => {
           />
 
         </div>
+
+      )}
+
+      </>
 
       )}
 
@@ -9913,21 +9906,28 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
   const handleSegDefChange = (seg, field, value) => {
 
-    // Hierarchy check: if parent has disabled enableLotSettings, child cannot enable it
-    if (field === 'enableLotSettings' && value === true) {
-      const parentSetting = systemSegBaseline[seg]?.enableLotSettings;
-      if (parentSetting === false) {
-        setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
-        return; // Prevent child from enabling if parent has disabled
-      }
+    if (field === 'enabled' && value === true && !canViewerEnableSegment(viewerRole, parentSegBaseline, seg)) {
+      setMessage({
+        type: 'error',
+        text: `You cannot enable ${seg}. Enable it for yourself first in My Settings.`,
+      });
+      return;
     }
 
-    // Hierarchy check: if parent has disabled enableQuantitySettings, child cannot enable it
-    if (field === 'enableQuantitySettings' && value === true) {
-      const parentSetting = systemSegBaseline[seg]?.enableQuantitySettings;
+    if (field === 'defaultIntradayOnly' && !canViewerToggleDefaultIntradayOnly(viewerRole, parentSegBaseline, seg)) {
+      setMessage({ type: 'error', text: INTRADAY_ONLY_LOCKED_DISABLE_MESSAGE });
+      return;
+    }
+
+    if ((field === 'enableLotSettings' || field === 'enableQuantitySettings') && value === true) {
+      if (!canViewerManageLotQtySettings(viewerRole, parentSegBaseline, seg)) {
+        setMessage({ type: 'error', text: INTRADAY_ONLY_LOCKED_LOT_QTY_MESSAGE });
+        return;
+      }
+      const parentSetting = parentSegBaseline[seg]?.[field] ?? systemSegBaseline[seg]?.[field];
       if (parentSetting === false) {
         setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
-        return; // Prevent child from enabling if parent has disabled
+        return;
       }
     }
 
@@ -10018,7 +10018,15 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
         const segPayload =
           viewerRole === 'SUPER_ADMIN'
             ? segDefs
-            : clampSegmentPermissionsOptionCommissions(segDefs, parentSegBaseline);
+            : clampSegmentIntradayOnlyToParentBaseline(
+                clampSegmentEnabledToParentBaseline(
+                  clampSegmentPermissionsOptionCommissions(segDefs, parentSegBaseline),
+                  parentSegBaseline,
+                  viewerRole
+                ),
+                parentSegBaseline,
+                viewerRole
+              );
         const segmentExplicitKeys = computeSegmentExplicitKeys(segPayload, systemSegBaseline, viewerRole);
 
         const response = await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
@@ -10183,6 +10191,9 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                     const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT', 'FOREXOPT', 'CRYPTOOPT'].includes(expandedSeg);
                     const simplifiedOpt = isSimplifiedHierarchyOptSegment(expandedSeg);
+                    const canToggleSegment = canViewerEnableSegment(viewerRole, parentSegBaseline, expandedSeg) || s.enabled === true;
+                    const canToggleIntradayOnly = canViewerToggleDefaultIntradayOnly(viewerRole, parentSegBaseline, expandedSeg);
+                    const showLotQtySettings = canViewerManageLotQtySettings(viewerRole, parentSegBaseline, expandedSeg);
 
                     return (
 
@@ -10192,9 +10203,13 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                           <h3 className="text-sm font-bold text-cyan-400">{expandedSeg} Settings</h3>
 
-                          <button type="button" onClick={() => handleSegDefChange(expandedSeg, 'enabled', !s.enabled)}
+                          <button
+                            type="button"
+                            disabled={!canToggleSegment}
+                            title={!canToggleSegment ? 'You do not have this segment enabled for yourself' : undefined}
+                            onClick={() => handleSegDefChange(expandedSeg, 'enabled', !s.enabled)}
 
-                            className={`px-3 py-1 rounded text-xs font-medium ${s.enabled ? 'bg-green-600' : 'bg-red-600'}`}>
+                            className={`px-3 py-1 rounded text-xs font-medium ${s.enabled ? 'bg-green-600' : 'bg-red-600'} ${!canToggleSegment ? 'opacity-50 cursor-not-allowed' : ''}`}>
 
                             {s.enabled ? 'Enabled' : 'Disabled'}
 
@@ -10206,7 +10221,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
                         <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
 
-                          <label className="flex cursor-pointer items-start gap-3">
+                          <label className={`flex items-start gap-3 ${canToggleIntradayOnly ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}>
 
                             <input
 
@@ -10215,6 +10230,8 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               className="mt-1 shrink-0"
 
                               checked={s.defaultIntradayOnly === true}
+
+                              disabled={!canToggleIntradayOnly}
 
                               onChange={(e) =>
 
@@ -10317,29 +10334,25 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
 
 
-                        {!simplifiedOpt && (
+                        {!simplifiedOpt && showLotQtySettings && (
                         <>
                         {/* Lot/Quantity Mode Settings */}
                         <div className="flex gap-6 items-center mb-4">
                           <div className="flex items-center gap-3">
-                            <button
-                              type="button"
-                              onClick={() => handleSegDefChange(expandedSeg, 'enableLotSettings', !s.enableLotSettings)}
-                              className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableLotSettings ? 'bg-yellow-600' : 'bg-dark-600'}`}
-                            >
-                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableLotSettings ? 'translate-x-6' : 'translate-x-0'}`} />
-                            </button>
-                            <span className="text-xs text-gray-400">Settings in Lot</span>
+                            <SegmentLotQtyToggle
+                              variant="lot"
+                              enabled={s.enableLotSettings === true}
+                              onToggle={() => handleSegDefChange(expandedSeg, 'enableLotSettings', !s.enableLotSettings)}
+                            />
+                            <span className="text-xs text-gray-300">Settings in Lot</span>
                           </div>
                           <div className="flex items-center gap-3">
-                            <button
-                              type="button"
-                              onClick={() => handleSegDefChange(expandedSeg, 'enableQuantitySettings', !s.enableQuantitySettings)}
-                              className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableQuantitySettings ? 'bg-blue-600' : 'bg-dark-600'}`}
-                            >
-                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableQuantitySettings ? 'translate-x-6' : 'translate-x-0'}`} />
-                            </button>
-                            <span className="text-xs text-gray-400">Settings in Qty</span>
+                            <SegmentLotQtyToggle
+                              variant="qty"
+                              enabled={s.enableQuantitySettings === true}
+                              onToggle={() => handleSegDefChange(expandedSeg, 'enableQuantitySettings', !s.enableQuantitySettings)}
+                            />
+                            <span className="text-xs text-gray-300">Settings in Qty</span>
                           </div>
                         </div>
 
@@ -10549,32 +10562,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                         </>
                         )}
 
-                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
-                          <CryptoSegmentAdminExtras
-                            segmentKey={expandedSeg}
-                            slice={s}
-                            canEdit={canEditCryptoSessionTiming(viewerRole)}
-                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
-                          />
-                        )}
-
-                        {['MCXFUT', 'MCX', 'MCXOPT'].includes(expandedSeg) && (
-                          <McxSegmentAdminExtras
-                            segmentKey={expandedSeg}
-                            slice={s}
-                            canEdit={canEditMcxSessionTiming(viewerRole)}
-                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
-                          />
-                        )}
-
-                        {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(expandedSeg) && (
-                          <NseBseSegmentAdminExtras
-                            segmentKey={expandedSeg}
-                            slice={s}
-                            canEdit={canEditNseBseSessionTiming(viewerRole)}
-                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
-                          />
-                        )}
+                        {/* Session timing: System Settings only (adminDefExpandedSeg section) */}
 
                         {/* Super Admin Brokerage & Incentive - Only for MCX FUT segments */}
 
@@ -10613,88 +10601,6 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                             </div>
 
                           </>
-
-                        )}
-
-
-
-                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
-
-                          <div className="mb-4">
-
-                            <h4 className="text-xs font-semibold text-orange-300 mb-2">Client spread (Binance crypto)</h4>
-
-                            <p className="text-[11px] text-gray-500 mb-2">
-
-                              Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy  total width per coin applies (half bid / half ask). 0 / 0 = exchange prices.
-
-                            </p>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
-
-                                <input
-
-                                  type="number"
-
-                                  min={0}
-
-                                  step={0.01}
-
-                                  value={numInputValue(s.cryptoSpreadUsdPerSide)}
-
-                                  onChange={(e) =>
-
-                                    handleSegDefChange(
-
-                                      expandedSeg,
-
-                                      'cryptoSpreadUsdPerSide',
-
-                                      parseNonNegativeNumInput(e.target.value)
-
-                                    )
-
-                                  }
-
-                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                                />
-
-                              </div>
-
-                              <div>
-
-                                <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
-
-                                <input
-
-                                  type="number"
-
-                                  min={0}
-
-                                  step={1}
-
-                                  value={numInputValue(s.cryptoSpreadInr)}
-
-                                  onChange={(e) =>
-
-                                    handleSegDefChange(expandedSeg, 'cryptoSpreadInr', parseNonNegativeNumInput(e.target.value))
-
-                                  }
-
-                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                                />
-
-                              </div>
-
-                            </div>
-
-                          </div>
 
                         )}
 
@@ -36217,89 +36123,13 @@ const SystemDefaultSettings = () => {
 
                     {['CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
 
-                      <div className="mb-6">
+                      <CryptoClientSpreadFields
 
-                        <h4 className="text-sm font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h4>
+                        slice={s}
 
-                        <p className="text-[11px] text-gray-500 mb-2">
+                        onFieldChange={(field, value) => handleAdminSegDefChange(adminDefExpandedSeg, field, value)}
 
-                          Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy  total width per coin applies. 0 / 0 = exchange prices.
-
-                        </p>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
-
-                            <input
-
-                              type="number"
-
-                              min={0}
-
-                              step={0.01}
-
-                              value={numInputValue(s.cryptoSpreadUsdPerSide)}
-
-                              onChange={(e) =>
-
-                                handleAdminSegDefChange(
-
-                                  adminDefExpandedSeg,
-
-                                  'cryptoSpreadUsdPerSide',
-
-                                  parseNonNegativeNumInput(e.target.value)
-
-                                )
-
-                              }
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                            />
-
-                          </div>
-
-                          <div>
-
-                            <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
-
-                            <input
-
-                              type="number"
-
-                              min={0}
-
-                              step={1}
-
-                              value={numInputValue(s.cryptoSpreadInr)}
-
-                              onChange={(e) =>
-
-                                handleAdminSegDefChange(
-
-                                  adminDefExpandedSeg,
-
-                                  'cryptoSpreadInr',
-
-                                  parseNonNegativeNumInput(e.target.value)
-
-                                )
-
-                              }
-
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                            />
-
-                          </div>
-
-                        </div>
-
-                      </div>
+                      />
 
                     )}
 
@@ -41324,18 +41154,6 @@ const GameSettingsManagement = () => {
 
 
 
-  const [bracketTestPrice, setBracketTestPrice] = useState('');
-
-  const [bracketTradeId, setBracketTradeId] = useState('');
-
-  const [bracketForceMidExpired, setBracketForceMidExpired] = useState(true);
-
-  const [bracketSettling, setBracketSettling] = useState(false);
-
-  const [bracketTestMessage, setBracketTestMessage] = useState(null);
-
-
-
   const gamesList = [
 
     { id: 'niftyUpDown', name: 'Nifty Up/Down', icon: TrendingUp, color: 'text-green-400', needsZerodha: true },
@@ -41465,70 +41283,6 @@ const GameSettingsManagement = () => {
     } finally {
 
       setLockingPrice(false);
-
-    }
-
-  };
-
-
-
-  const handleBracketManualSettle = async () => {
-
-    const p = parseFloat(bracketTestPrice);
-
-    if (!Number.isFinite(p) || p <= 0) {
-
-      setBracketTestMessage({ type: 'error', text: 'Enter a valid Nifty LTP (e.g. 24030.50)' });
-
-      return;
-
-    }
-
-    if (!confirm('Settle all active Nifty Bracket trades at this price? Wallet and history will update. This cannot be undone.')) return;
-
-    setBracketSettling(true);
-
-    setBracketTestMessage(null);
-
-    try {
-
-      const { data } = await axios.post('/api/admin/manage/nifty-bracket/manual-settle', {
-
-        currentPrice: p,
-
-        tradeId: bracketTradeId.trim() || undefined,
-
-        forceMidRangeAsExpired: bracketForceMidExpired,
-
-      }, {
-
-        headers: { Authorization: `Bearer ${admin.token}` }
-
-      });
-
-      const failed = (data.results || []).filter((r) => !r.ok);
-
-      setBracketTestMessage({
-
-        type: failed.length ? 'error' : 'success',
-
-        text: failed.length
-
-          ? `${data.message} — ${failed.length} failed (see console)`
-
-          : data.message,
-
-      });
-
-      if (failed.length) console.warn('Nifty Bracket manual settle failures:', failed);
-
-    } catch (error) {
-
-      setBracketTestMessage({ type: 'error', text: error.response?.data?.message || 'Manual settle failed' });
-
-    } finally {
-
-      setBracketSettling(false);
 
     }
 
@@ -42369,6 +42123,34 @@ const GameSettingsManagement = () => {
 
                       </div>
 
+                      <div>
+
+                        <label className="block text-sm text-gray-400 mb-2">Max tickets per order</label>
+
+                        <input
+
+                          type="number"
+
+                          min="0"
+
+                          step="1"
+
+                          value={currentGame?.maxTicketsPerNumber ?? 2}
+
+                          onChange={(e) =>
+                            updateGameSetting(selectedGame, 'maxTicketsPerNumber', Math.max(0, parseInt(e.target.value, 10) || 0))
+                          }
+
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+
+                        />
+
+                        <p className="text-xs text-gray-500 mt-1">
+                          Per single BUY/SELL order — e.g. 2 = at most 2 tickets at once. Use 0 for no limit.
+                        </p>
+
+                      </div>
+
                     </div>
 
                   )}
@@ -43071,104 +42853,6 @@ const GameSettingsManagement = () => {
 
                     </div>
 
-                    <div className="p-4 rounded-lg border border-amber-600/40 bg-amber-950/20 space-y-3">
-
-                      <h5 className="text-sm font-medium text-amber-200">Manual test settle (super admin)</h5>
-
-                      <p className="text-xs text-gray-400">
-
-                        Settles active bracket trades at the Nifty price you enter. If LTP is between bands, trades settle as loss (no stake refund) when mid-range settle is enabled.
-
-                      </p>
-
-                      <div>
-
-                        <label className="block text-xs text-gray-500 mb-1">Nifty LTP ()</label>
-
-                        <input
-
-                          type="number"
-
-                          step="0.01"
-
-                          value={bracketTestPrice}
-
-                          onChange={e => setBracketTestPrice(e.target.value)}
-
-                          placeholder="e.g. 24030.77"
-
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-
-                        />
-
-                      </div>
-
-                      <div>
-
-                        <label className="block text-xs text-gray-500 mb-1">Optional: single trade MongoDB id</label>
-
-                        <input
-
-                          type="text"
-
-                          value={bracketTradeId}
-
-                          onChange={e => setBracketTradeId(e.target.value)}
-
-                          placeholder="Leave empty to settle all active trades"
-
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2 text-sm"
-
-                        />
-
-                      </div>
-
-                      <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-
-                        <input
-
-                          type="checkbox"
-
-                          checked={bracketForceMidExpired}
-
-                          onChange={e => setBracketForceMidExpired(e.target.checked)}
-
-                          className="rounded border-dark-600"
-
-                        />
-
-                        Mid-range → settle as loss (no refund)
-
-                      </label>
-
-                      <button
-
-                        type="button"
-
-                        onClick={handleBracketManualSettle}
-
-                        disabled={bracketSettling}
-
-                        className="w-full py-2 rounded-lg bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-medium"
-
-                      >
-
-                        {bracketSettling ? 'Settling…' : 'Settle at this price'}
-
-                      </button>
-
-                      {bracketTestMessage && (
-
-                        <p className={`text-sm ${bracketTestMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-
-                          {bracketTestMessage.text}
-
-                        </p>
-
-                      )}
-
-                    </div>
-
                   </div>
 
                 )}
@@ -43470,7 +43154,7 @@ const GameSettingsManagement = () => {
 
                             type="time"
 
-                            value={currentGame?.biddingStartTime || '09:15'}
+                            value={currentGame?.biddingStartTime || '00:00'}
 
                             onChange={e => updateGameSetting(selectedGame, 'biddingStartTime', e.target.value)}
 
@@ -43488,7 +43172,7 @@ const GameSettingsManagement = () => {
 
                             type="time"
 
-                            value={currentGame?.biddingEndTime || '14:59'}
+                            value={currentGame?.biddingEndTime || '23:59'}
 
                             onChange={e => updateGameSetting(selectedGame, 'biddingEndTime', e.target.value)}
 
@@ -43500,7 +43184,7 @@ const GameSettingsManagement = () => {
 
                       </div>
 
-                      <p className="text-xs text-gray-500">Bidding allowed from {currentGame?.biddingStartTime || '09:15'} to {currentGame?.biddingEndTime || '14:59'} IST</p>
+                      <p className="text-xs text-gray-500">Bidding allowed from {currentGame?.biddingStartTime || '00:00'} to {currentGame?.biddingEndTime || '23:59'} IST (24 hours)</p>
 
                     </div>
 
@@ -47086,21 +46770,21 @@ const MySegmentSettings = () => {
 
   const handleSegmentChange = (segment, field, value) => {
 
-    // Hierarchy check: if parent has disabled enableLotSettings, child cannot enable it
-    if (field === 'enableLotSettings' && value === true) {
-      const parentSetting = systemSegBaseline[segment]?.enableLotSettings;
-      if (parentSetting === false) {
-        setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
-        return; // Prevent child from enabling if parent has disabled
-      }
+    // Hierarchy check: lot/qty and intraday-only inheritance
+    if (field === 'defaultIntradayOnly' && !canViewerToggleDefaultIntradayOnly(admin?.role, systemSegBaseline, segment)) {
+      setMessage({ type: 'error', text: INTRADAY_ONLY_LOCKED_DISABLE_MESSAGE });
+      return;
     }
 
-    // Hierarchy check: if parent has disabled enableQuantitySettings, child cannot enable it
-    if (field === 'enableQuantitySettings' && value === true) {
-      const parentSetting = systemSegBaseline[segment]?.enableQuantitySettings;
+    if ((field === 'enableLotSettings' || field === 'enableQuantitySettings') && value === true) {
+      if (!canViewerManageLotQtySettings(admin?.role, systemSegBaseline, segment)) {
+        setMessage({ type: 'error', text: INTRADAY_ONLY_LOCKED_LOT_QTY_MESSAGE });
+        return;
+      }
+      const parentSetting = systemSegBaseline[segment]?.[field];
       if (parentSetting === false) {
         setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
-        return; // Prevent child from enabling if parent has disabled
+        return;
       }
     }
 
@@ -47585,89 +47269,13 @@ const MySegmentSettings = () => {
 
               {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
 
-                <div className="mb-6">
+                <CryptoClientSpreadFields
 
-                  <h4 className="text-sm font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h4>
+                  slice={segmentPermissions[expandedSegment]}
 
-                  <p className="text-xs text-gray-500 mb-2">
+                  onFieldChange={(field, value) => handleSegmentChange(expandedSegment, field, value)}
 
-                    Primary: USDT per side (bid −, ask +). If $ is 0, legacy  total width per coin applies.
-
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
-
-                      <input
-
-                        type="number"
-
-                        min={0}
-
-                        step={0.01}
-
-                        value={numInputValue(segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide)}
-
-                        onChange={(e) =>
-
-                          handleSegmentChange(
-
-                            expandedSegment,
-
-                            'cryptoSpreadUsdPerSide',
-
-                            parseNonNegativeNumInput(e.target.value)
-
-                          )
-
-                        }
-
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
-
-                      <input
-
-                        type="number"
-
-                        min={0}
-
-                        step={1}
-
-                        value={numInputValue(segmentPermissions[expandedSegment].cryptoSpreadInr)}
-
-                        onChange={(e) =>
-
-                          handleSegmentChange(
-
-                            expandedSegment,
-
-                            'cryptoSpreadInr',
-
-                            parseNonNegativeNumInput(e.target.value)
-
-                          )
-
-                        }
-
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-
-                      />
-
-                    </div>
-
-                  </div>
-
-                </div>
+                />
 
               )}
 
@@ -50349,17 +49957,17 @@ const AllUsersManagement = () => {
     }
 
     // Hierarchy check: if parent has disabled enableLotSettings, child cannot enable it
-    if (field === 'enableLotSettings' && value === true) {
-      const parentSetting = segmentDefaultsBaseline[segment]?.enableLotSettings;
-      if (parentSetting === false) {
-        alert("You don't have permission to enable this setting. Your parent has disabled it.");
-        return;
-      }
+    if (field === 'defaultIntradayOnly' && !canViewerToggleDefaultIntradayOnly(admin?.role, segmentDefaultsBaseline, segment)) {
+      alert(INTRADAY_ONLY_LOCKED_DISABLE_MESSAGE);
+      return;
     }
 
-    // Hierarchy check: if parent has disabled enableQuantitySettings, child cannot enable it
-    if (field === 'enableQuantitySettings' && value === true) {
-      const parentSetting = segmentDefaultsBaseline[segment]?.enableQuantitySettings;
+    if ((field === 'enableLotSettings' || field === 'enableQuantitySettings') && value === true) {
+      if (!canViewerManageLotQtySettings(admin?.role, segmentDefaultsBaseline, segment)) {
+        alert(INTRADAY_ONLY_LOCKED_LOT_QTY_MESSAGE);
+        return;
+      }
+      const parentSetting = segmentDefaultsBaseline[segment]?.[field];
       if (parentSetting === false) {
         alert("You don't have permission to enable this setting. Your parent has disabled it.");
         return;
@@ -50473,15 +50081,6 @@ const AllUsersManagement = () => {
       const parentSetting = segmentDefaultsBaseline[segment]?.allowLimitPendingOrders;
       if (parentSetting === false) {
         alert("You don't have permission to enable Limit Pending Orders. Your parent has disabled it.");
-        return;
-      }
-    }
-
-    // Hierarchy check: child cannot set cryptoSpreadInr higher than parent's value
-    if (field === 'cryptoSpreadInr') {
-      const parentValue = segmentDefaultsBaseline[segment]?.cryptoSpreadInr;
-      if (parentValue !== undefined && value > parentValue) {
-        alert(`You cannot set Crypto Spread INR higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
         return;
       }
     }
@@ -50619,9 +50218,17 @@ const AllUsersManagement = () => {
 
     try {
 
-      const segPermissions = clampSegmentPermissionsOptionCommissions(
-        editFormData.segmentPermissions,
-        segmentDefaultsBaseline
+      const segPermissions = clampSegmentIntradayOnlyToParentBaseline(
+        clampSegmentEnabledToParentBaseline(
+          clampSegmentPermissionsOptionCommissions(
+            editFormData.segmentPermissions,
+            segmentDefaultsBaseline
+          ),
+          segmentDefaultsBaseline,
+          admin?.role
+        ),
+        segmentDefaultsBaseline,
+        admin?.role
       );
 
       const segmentExplicitKeys = computeSegmentExplicitKeys(
@@ -52079,89 +51686,19 @@ const AllUsersManagement = () => {
 
                   {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
 
-                    <div className="mb-4">
+                    <CryptoClientSpreadFields
 
-                      <h5 className="text-xs font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h5>
+                      compact
 
-                      <p className="text-[11px] text-gray-500 mb-2">
+                      slice={editFormData.segmentPermissions[expandedSegment]}
 
-                        Primary: USDT per side (bid −, ask +). If $ is 0, legacy  total width applies.
+                      onFieldChange={(field, value) =>
 
-                      </p>
+                        handleEditSegmentPermissionChange(expandedSegment, field, value)
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+                      }
 
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
-
-                          <input
-
-                            type="number"
-
-                            min={0}
-
-                            step={0.01}
-
-                            value={numInputValue(editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadUsdPerSide)}
-
-                            onChange={(e) =>
-
-                              handleEditSegmentPermissionChange(
-
-                                expandedSegment,
-
-                                'cryptoSpreadUsdPerSide',
-
-                                parseNonNegativeNumInput(e.target.value)
-
-                              )
-
-                            }
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          />
-
-                        </div>
-
-                        <div>
-
-                          <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin)</label>
-
-                          <input
-
-                            type="number"
-
-                            min={0}
-
-                            step={1}
-
-                            value={numInputValue(editFormData.segmentPermissions[expandedSegment]?.cryptoSpreadInr)}
-
-                            onChange={(e) =>
-
-                              handleEditSegmentPermissionChange(
-
-                                expandedSegment,
-
-                                'cryptoSpreadInr',
-
-                                parseNonNegativeNumInput(e.target.value)
-
-                              )
-
-                            }
-
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-
-                          />
-
-                        </div>
-
-                      </div>
-
-                    </div>
+                    />
 
                   )}
 
@@ -56389,15 +55926,6 @@ const UserManagement = () => {
       }
     }
 
-    // Hierarchy check: child cannot set cryptoSpreadInr higher than parent's value
-    if (field === 'cryptoSpreadInr') {
-      const parentValue = segmentDefaultsBaseline[segment]?.cryptoSpreadInr;
-      if (parentValue !== undefined && value > parentValue) {
-        alert(`You cannot set Crypto Spread INR higher than ${parentValue}. Your parent's limit is ${parentValue}.`);
-        return;
-      }
-    }
-
     // Hierarchy check: child cannot set cryptoSpreadUsdPerSide higher than parent's value
     if (field === 'cryptoSpreadUsdPerSide') {
       const parentValue = segmentDefaultsBaseline[segment]?.cryptoSpreadUsdPerSide;
@@ -56531,9 +56059,17 @@ const UserManagement = () => {
 
     try {
 
-      const segPermissions = clampSegmentPermissionsOptionCommissions(
-        editFormData.segmentPermissions,
-        segmentDefaultsBaseline
+      const segPermissions = clampSegmentIntradayOnlyToParentBaseline(
+        clampSegmentEnabledToParentBaseline(
+          clampSegmentPermissionsOptionCommissions(
+            editFormData.segmentPermissions,
+            segmentDefaultsBaseline
+          ),
+          segmentDefaultsBaseline,
+          admin?.role
+        ),
+        segmentDefaultsBaseline,
+        admin?.role
       );
 
       const segmentExplicitKeys = computeSegmentExplicitKeys(
@@ -57676,6 +57212,8 @@ const UserManagement = () => {
                 if (!expandedSegment) return null;
                 const s = editFormData.segmentPermissions?.[segmentKey] || {};
                 const simplifiedOpt = isSimplifiedHierarchyOptSegment(segmentKey);
+                const canToggleIntradayOnly = canViewerToggleDefaultIntradayOnly(admin?.role, segmentDefaultsBaseline, segmentKey);
+                const showLotQtySettings = canViewerManageLotQtySettings(admin?.role, segmentDefaultsBaseline, segmentKey);
                 return (
                   <div className="bg-dark-700/50 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-4">
@@ -57689,9 +57227,10 @@ const UserManagement = () => {
                     </div>
 
                     <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
-                      <label className="flex cursor-pointer items-start gap-3">
+                      <label className={`flex items-start gap-3 ${canToggleIntradayOnly ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}>
                         <input type="checkbox" className="mt-1 shrink-0"
                           checked={s.defaultIntradayOnly === true}
+                          disabled={!canToggleIntradayOnly}
                           onChange={(e) => handleEditSegmentPermissionChange(segmentKey, 'defaultIntradayOnly', e.target.checked)}
                         />
                         <span>
@@ -57753,27 +57292,25 @@ const UserManagement = () => {
                       </div>
                     )}
 
-                    {!simplifiedOpt && (
+                    {!simplifiedOpt && showLotQtySettings && (
                     <>
                     {/* Lot/Quantity Mode Settings */}
                     <div className="flex gap-6 items-center mb-4">
                       <div className="flex items-center gap-3">
-                        <button type="button"
-                          onClick={() => handleEditSegmentPermissionChange(segmentKey, 'enableLotSettings', !s.enableLotSettings)}
-                          className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableLotSettings ? 'bg-yellow-600' : 'bg-dark-600'}`}
-                        >
-                          <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableLotSettings ? 'translate-x-6' : 'translate-x-0'}`} />
-                        </button>
-                        <span className="text-xs text-gray-400">Settings in Lot</span>
+                        <SegmentLotQtyToggle
+                          variant="lot"
+                          enabled={s.enableLotSettings === true}
+                          onToggle={() => handleEditSegmentPermissionChange(segmentKey, 'enableLotSettings', !s.enableLotSettings)}
+                        />
+                        <span className="text-xs text-gray-300">Settings in Lot</span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button type="button"
-                          onClick={() => handleEditSegmentPermissionChange(segmentKey, 'enableQuantitySettings', !s.enableQuantitySettings)}
-                          className={`w-12 h-6 rounded-full p-1 transition-colors ${s.enableQuantitySettings ? 'bg-blue-600' : 'bg-dark-600'}`}
-                        >
-                          <div className={`w-4 h-4 rounded-full bg-white transition-transform ${s.enableQuantitySettings ? 'translate-x-6' : 'translate-x-0'}`} />
-                        </button>
-                        <span className="text-xs text-gray-400">Settings in Qty</span>
+                        <SegmentLotQtyToggle
+                          variant="qty"
+                          enabled={s.enableQuantitySettings === true}
+                          onToggle={() => handleEditSegmentPermissionChange(segmentKey, 'enableQuantitySettings', !s.enableQuantitySettings)}
+                        />
+                        <span className="text-xs text-gray-300">Settings in Qty</span>
                       </div>
                     </div>
 

@@ -517,20 +517,34 @@ async function creditWinnings(userId, amount, description, referenceId) {
  * Validate jackpot access
  */
 async function validateJackpotAccess(userId, gameId) {
-  // Check if bidding hours are valid
-  const isBypassed = gameId === 'niftyJackpot' 
-    ? isNiftyJackpotBiddingHoursBypassedForTesting()
-    : true; // BTC jackpot might have different rules
-  
-  if (!isBypassed) {
-    // Add time validation logic here
-    const now = new Date();
-    const hour = now.getHours();
-    
-    // Example: Jackpot bidding only allowed during specific hours
-    if (hour < 9 || hour > 17) {
-      throw new Error('Jackpot bidding is only allowed between 9 AM and 5 PM');
-    }
+  const isBypassed =
+    gameId === 'niftyJackpot'
+      ? isNiftyJackpotBiddingHoursBypassedForTesting()
+      : false;
+
+  if (isBypassed) return;
+
+  const settings = await GameSettings.getSettings();
+  const gameConfig = settings?.games?.[gameId];
+  if (!gameConfig) return;
+
+  const biddingStartTime = gameConfig.biddingStartTime || '00:00';
+  const biddingEndTime = gameConfig.biddingEndTime || '23:59';
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istNow = new Date(now.getTime() + istOffset);
+  const currentHours = istNow.getUTCHours();
+  const currentMinutes = istNow.getUTCMinutes();
+  const currentTimeMinutes = currentHours * 60 + currentMinutes;
+  const [startH, startM] = String(biddingStartTime).split(':').map(Number);
+  const [endH, endM] = String(biddingEndTime).split(':').map(Number);
+  const startTimeMinutes = startH * 60 + startM;
+  const endTimeMinutes = endH * 60 + endM + 1;
+
+  if (currentTimeMinutes < startTimeMinutes || currentTimeMinutes > endTimeMinutes) {
+    throw new Error(
+      `Jackpot bidding is only allowed from ${biddingStartTime} to ${biddingEndTime} IST`
+    );
   }
 }
 

@@ -47,3 +47,12 @@ export function assertQtyWithinPerNumberCap({ qty, cap, alreadyOnNumber, selecte
   }
   return null;
 }
+
+/** Nifty Bracket / single-order games — max tickets per one POST. */
+export function assertTicketsWithinPerOrderCap({ qty, cap }) {
+  if (!(cap > 0)) return null;
+  if (qty > cap) {
+    return `Cannot place more than ${cap} ticket(s) in a single order.`;
+  }
+  return null;
+}

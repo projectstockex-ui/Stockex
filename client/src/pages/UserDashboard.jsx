@@ -11,6 +11,12 @@ import {
   primeTradingSounds,
 } from '../utils/tradingAlertSound';
 import {
+  applyCryptoUsdSpreadPerSide,
+  isBinanceCryptoInstrument,
+  pickCryptoUsdSpreadPerSide,
+  widenBinanceCryptoQuote,
+} from '../utils/cryptoClientSpread.js';
+import {
   getPriceAlert,
   savePriceAlert,
   clearPriceAlert,
@@ -539,14 +545,18 @@ function isMcxTradeItem(item) {
 }
 
 /** Mark price for open-position P&L (same unit as entryPrice). */
-function getPositionMarkPrice(position, marketData) {
+function getPositionMarkPrice(position, marketData, options = {}) {
   const side = position?.side;
   if (isUsdSpotInstrument(position)) {
     const q = getCryptoMarketQuote(marketData, position);
     if (!q) return 0;
-    return side === 'BUY'
-      ? Number(q.bid || q.ltp || q.close || 0)
-      : Number(q.ask || q.ltp || q.close || 0);
+    const bid = Number(q.bid || q.ltp || q.close || 0);
+    const ask = Number(q.ask || q.ltp || q.close || 0);
+    if (isBinanceCryptoInstrument(position)) {
+      const w = widenBinanceCryptoQuote(bid, ask, options.segmentPermissions);
+      return side === 'BUY' ? w.bidUsd : w.askUsd;
+    }
+    return side === 'BUY' ? bid : ask;
   }
 
   const token = position?.token;
@@ -579,11 +589,11 @@ function computePositionUnrealizedPnL(position, markPrice) {
   return (entry - ltp) * qty;
 }
 
-function computeLiveUnrealizedPnL(positions, marketData) {
+function computeLiveUnrealizedPnL(positions, marketData, options = {}) {
   if (!positions?.length) return 0;
   return positions.reduce((sum, pos) => {
     const mark =
-      getPositionMarkPrice(pos, marketData) ||
+      getPositionMarkPrice(pos, marketData, options) ||
       Number(pos.currentPrice) ||
       Number(pos.entryPrice) ||
       0;
@@ -813,8 +823,8 @@ function alignIndianBookBidAskWithLtp(liveData, item, options = {}) {
   return { bid: ltp - half, ask: ltp + half };
 }
 
-/** Bid/ask in USD for crypto/forex (server close path multiplies by FX); else token feed prices. */
-function getUsdSpotBidAsk(marketData, item, options) {
+/** Bid/ask in USD for crypto/forex; Binance crypto applies segment $-per-side spread. */
+function getUsdSpotBidAsk(marketData, item, options = {}) {
   if (isUsdSpotInstrument(item)) {
     const q = getCryptoMarketQuote(marketData, item) || {};
     const ltp = Number(q.ltp || q.close || 0);
@@ -822,39 +832,19 @@ function getUsdSpotBidAsk(marketData, item, options) {
     let ask = Number(q.ask || ltp || 0);
     if (!(bid > 0)) bid = ltp;
     if (!(ask > 0)) ask = ltp;
+    if (isBinanceCryptoInstrument(item)) {
+      const sp =
+        options.cryptoUsdPerSide != null
+          ? Number(options.cryptoUsdPerSide)
+          : pickCryptoUsdSpreadPerSide(options.segmentPermissions);
+      const w = applyCryptoUsdSpreadPerSide(bid, ask, sp);
+      return { bidPrice: w.bidUsd, askPrice: w.askUsd };
+    }
     return { bidPrice: bid, askPrice: ask };
   }
   const liveData = marketDataRowForInstrumentToken(marketData, item?.token, item) || {};
   const { bid, ask } = alignIndianBookBidAskWithLtp(liveData, item, options);
   return { bidPrice: bid, askPrice: ask };
-}
-
-/** Segment `cryptoSpreadInr` = total numeric width per coin on quote; half widens bid/ask in USDT before FX display. */
-function adjustUsdSpotBidAskForSegmentSpread(bidUsd, askUsd, spreadInrTotal, inrPerUsd) {
-  const fx = Number(inrPerUsd);
-  const w = Number(spreadInrTotal);
-  const b = Number(bidUsd);
-  const a = Number(askUsd);
-  if (!(fx > 0) || !(w > 0) || !Number.isFinite(b) || !Number.isFinite(a)) {
-    return { bidUsd: b, askUsd: a };
-  }
-  const halfUsd = (w / 2) / fx;
-  return { bidUsd: b - halfUsd, askUsd: a + halfUsd };
-}
-
-/** Binance USD crypto: `cryptoSpreadUsdPerSide` widens bid (−) / ask (+) in USDT; else INR total width via adjustUsdSpotBidAskForSegmentSpread. */
-function resolveUsdSpotCryptoDisplayBidAsk(bidUsd, askUsd, cryptoUsdPerSide, cryptoSpreadInr, usdRate) {
-  const us = Number(cryptoUsdPerSide);
-  const b = Number(bidUsd);
-  const a = Number(askUsd);
-  if (Number.isFinite(us) && us > 0 && Number.isFinite(b) && Number.isFinite(a)) {
-    return { bidUsd: b - us, askUsd: a + us };
-  }
-  const inr = Number(cryptoSpreadInr);
-  if (Number.isFinite(inr) && inr > 0) {
-    return adjustUsdSpotBidAskForSegmentSpread(bidUsd, askUsd, inr, usdRate);
-  }
-  return { bidUsd: b, askUsd: a };
 }
 
 const DEFAULT_FOREX_INSTRUMENTS = [
@@ -967,7 +957,6 @@ const UserDashboard = () => {
   const [activeSegment, setActiveSegment] = useState(() => localStorage.getItem('stockex_active_segment') || 'FAVORITES'); // Track active segment for currency display
   const [usdRate, setUsdRate] = useState(83.50); // USD to INR rate (default fallback)
   const [usdSpotClientSpreads, setUsdSpotClientSpreads] = useState({
-    cryptoInr: 0,
     cryptoUsdPerSide: 0,
     forex: 0,
   });
@@ -1260,32 +1249,16 @@ const UserDashboard = () => {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       const sp = data?.segmentPermissions || {};
-      const pickCryptoSpreadInr = () => {
-        for (const seg of ['CRYPTOFUT', 'CRYPTOOPT']) {
-          const v = Number(sp[seg]?.cryptoSpreadInr);
-          if (Number.isFinite(v) && v > 0) return v;
-        }
-        return 0;
-      };
-      const pickCryptoUsdPerSide = () => {
-        for (const seg of ['CRYPTOFUT', 'CRYPTOOPT']) {
-          const v = Number(sp[seg]?.cryptoSpreadUsdPerSide);
-          if (Number.isFinite(v) && v > 0) return v;
-        }
-        return 0;
-      };
-      const cInr = pickCryptoSpreadInr();
-      const cUsd = pickCryptoUsdPerSide();
+      const cUsd = pickCryptoUsdSpreadPerSide(sp);
       const f = Number(
         sp.FOREXFUT?.cryptoSpreadInr ?? sp.FOREXOPT?.cryptoSpreadInr ?? sp.FOREX?.cryptoSpreadInr
       );
       setUsdSpotClientSpreads({
-        cryptoInr: Number.isFinite(cInr) && cInr > 0 ? cInr : 0,
         cryptoUsdPerSide: Number.isFinite(cUsd) && cUsd > 0 ? cUsd : 0,
         forex: Number.isFinite(f) && f > 0 ? f : 0,
       });
     } catch {
-      setUsdSpotClientSpreads({ cryptoInr: 0, cryptoUsdPerSide: 0, forex: 0 });
+      setUsdSpotClientSpreads({ cryptoUsdPerSide: 0, forex: 0 });
     }
   }, [user]);
 
@@ -4577,7 +4550,9 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
   const handleClosePosition = async (tradeId, position) => {
     try {
       setLoading(true);
-      const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, position);
+      const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, position, {
+        segmentPermissions: segmentPermissionsGate,
+      });
       
       // Handle netted positions (multiple _ids) - close all underlying positions
       const idsToClose = position?._ids || [tradeId];
@@ -4619,7 +4594,9 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     setLoading(true);
     try {
       for (const pos of profitPositions) {
-        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos);
+        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos, {
+          segmentPermissions: segmentPermissionsGate,
+        });
         const ids = pos._ids || [pos._id];
         for (const id of ids) {
           await axios.post(`/api/trading/close/${id}`, { bidPrice, askPrice }, { headers: { Authorization: `Bearer ${user.token}` } });
@@ -4653,7 +4630,9 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     setLoading(true);
     try {
       for (const pos of lossPositions) {
-        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos);
+        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos, {
+          segmentPermissions: segmentPermissionsGate,
+        });
         const ids = pos._ids || [pos._id];
         for (const id of ids) {
           await axios.post(`/api/trading/close/${id}`, { bidPrice, askPrice }, { headers: { Authorization: `Bearer ${user.token}` } });
@@ -4679,7 +4658,9 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     setLoading(true);
     try {
       for (const pos of positions) {
-        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos);
+        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos, {
+          segmentPermissions: segmentPermissionsGate,
+        });
         const ids = pos._ids || [pos._id];
         for (const id of ids) {
           await axios.post(`/api/trading/close/${id}`, { bidPrice, askPrice }, { headers: { Authorization: `Bearer ${user.token}` } });
@@ -4780,7 +4761,9 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     setLoading(true);
     try {
       for (const pos of instrumentPositions) {
-        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos);
+        const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData, pos, {
+          segmentPermissions: segmentPermissionsGate,
+        });
         const ids = pos._ids || [pos._id];
         for (const id of ids) {
           await axios.post(`/api/trading/close/${id}`, {
@@ -4921,11 +4904,13 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
     if (isC) {
       const q = getCryptoMarketQuote(marketData, position);
       if (!q) return 0;
-      const raw =
-        side === 'BUY'
-          ? Number(q.bid || q.ltp || q.close || 0)
-          : Number(q.ask || q.ltp || q.close || 0);
-      return raw;
+      const bid = Number(q.bid || q.ltp || q.close || 0);
+      const ask = Number(q.ask || q.ltp || q.close || 0);
+      if (isBinanceCryptoInstrument(position)) {
+        const w = widenBinanceCryptoQuote(bid, ask, segmentPermissionsGate);
+        return side === 'BUY' ? w.bidUsd : w.askUsd;
+      }
+      return side === 'BUY' ? bid : ask;
     }
 
     const token = position.token;
@@ -4996,6 +4981,12 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       (order.symbol && marketData?.[order.symbol]) ||
       null;
     if (!data) return getCurrentPrice(order);
+    if (isBinanceCryptoInstrument(order)) {
+      const bid = Number(data.bid || data.ltp || data.close || data.last_price || 0);
+      const ask = Number(data.ask || data.ltp || data.close || data.last_price || 0);
+      const w = widenBinanceCryptoQuote(bid, ask, segmentPermissionsGate);
+      return order.side === 'BUY' ? w.bidUsd : w.askUsd;
+    }
     if (order.side === 'BUY') {
       return data.bid || data.ltp || data.close || data.last_price || 0;
     }
@@ -5681,7 +5672,7 @@ const TradingPanel = ({
   onRefreshWallet,
   onRefreshPositions,
   usdRate = 83.5,
-  usdSpotClientSpreads = { cryptoInr: 0, cryptoUsdPerSide: 0, forex: 0 },
+  usdSpotClientSpreads = { cryptoUsdPerSide: 0, forex: 0 },
   /** Optional chart reference LTP; bid/ask use Kite book from marketData, not LTP. */
   chartAnchorLtp = null,
   segmentPermissionsGate = {},
@@ -5849,19 +5840,31 @@ const TradingPanel = ({
   const indianBook = !isUsdSpot
     ? alignIndianBookBidAskWithLtp(liveData, instrument, { chartAnchorLtp })
     : null;
-  const displayBid = isUsdSpot
-    ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
-    : indianBook.bid;
-  const displayAsk = isUsdSpot
-    ? (Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
-    : indianBook.ask;
-  // Execution must use raw websocket bid/ask (never synthetic UI prices).
-  const execBid = isUsdSpot
-    ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
-    : (Number(liveData.rawBid) || Number(liveData.bid) || Number(liveData.lastBid) || livePrice || Number(instrument?.ltp) || 0);
-  const execAsk = isUsdSpot
-    ? (Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
-    : (Number(liveData.rawAsk) || Number(liveData.ask) || Number(liveData.lastAsk) || livePrice || Number(instrument?.ltp) || 0);
+  const rawUsdBid = Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0;
+  const rawUsdAsk = Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0;
+  const cryptoWidened = isCryptoOnly
+    ? widenBinanceCryptoQuote(rawUsdBid, rawUsdAsk, segmentPermissionsGate)
+    : null;
+  const displayBid = isCryptoOnly
+    ? cryptoWidened.bidUsd
+    : isUsdSpot
+      ? rawUsdBid
+      : indianBook.bid;
+  const displayAsk = isCryptoOnly
+    ? cryptoWidened.askUsd
+    : isUsdSpot
+      ? rawUsdAsk
+      : indianBook.ask;
+  const execBid = isCryptoOnly
+    ? cryptoWidened.bidUsd
+    : isUsdSpot
+      ? rawUsdBid
+      : (Number(liveData.rawBid) || Number(liveData.bid) || Number(liveData.lastBid) || livePrice || Number(instrument?.ltp) || 0);
+  const execAsk = isCryptoOnly
+    ? cryptoWidened.askUsd
+    : isUsdSpot
+      ? rawUsdAsk
+      : (Number(liveData.rawAsk) || Number(liveData.ask) || Number(liveData.lastAsk) || livePrice || Number(instrument?.ltp) || 0);
 
   livePriceRef.current = Number(livePrice) || 0;
 
@@ -6117,8 +6120,11 @@ const TradingPanel = ({
   );
 
   const liveUnrealizedPnL = useMemo(
-    () => computeLiveUnrealizedPnL(segmentOpenPositions, marketData),
-    [segmentOpenPositions, marketData]
+    () =>
+      computeLiveUnrealizedPnL(segmentOpenPositions, marketData, {
+        segmentPermissions: segmentPermissionsGate,
+      }),
+    [segmentOpenPositions, marketData, segmentPermissionsGate]
   );
 
   const baseAvailableMargin = isUsdSpot
@@ -10787,7 +10793,7 @@ const BuySellModal = ({
   onRefreshWallet,
   onRefreshPositions,
   usdRate = 83.5,
-  usdSpotClientSpreads = { cryptoInr: 0, cryptoUsdPerSide: 0, forex: 0 },
+  usdSpotClientSpreads = { cryptoUsdPerSide: 0, forex: 0 },
   chartAnchorLtp = null,
   segmentPermissionsGate = {},
 }) => {
@@ -10931,19 +10937,31 @@ const BuySellModal = ({
   const indianBookModal = !isUsdSpot
     ? alignIndianBookBidAskWithLtp(liveData, effectiveInstrument, { chartAnchorLtp })
     : null;
-  const displayBid = isUsdSpot
-    ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0)
-    : indianBookModal.bid;
-  const displayAsk = isUsdSpot
-    ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0)
-    : indianBookModal.ask;
-  // Keep order payload on websocket feed prices only.
-  const execBid = isUsdSpot
-    ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0)
-    : (Number(liveData.rawBid) || Number(liveData.bid) || Number(liveData.lastBid) || ltp || Number(effectiveInstrument?.ltp) || 0);
-  const execAsk = isUsdSpot
-    ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0)
-    : (Number(liveData.rawAsk) || Number(liveData.ask) || Number(liveData.lastAsk) || ltp || Number(effectiveInstrument?.ltp) || 0);
+  const rawUsdBidModal = Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0;
+  const rawUsdAskModal = Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0;
+  const cryptoWidenedModal = isCryptoOnly
+    ? widenBinanceCryptoQuote(rawUsdBidModal, rawUsdAskModal, segmentPermissionsGate)
+    : null;
+  const displayBid = isCryptoOnly
+    ? cryptoWidenedModal.bidUsd
+    : isUsdSpot
+      ? rawUsdBidModal
+      : indianBookModal.bid;
+  const displayAsk = isCryptoOnly
+    ? cryptoWidenedModal.askUsd
+    : isUsdSpot
+      ? rawUsdAskModal
+      : indianBookModal.ask;
+  const execBid = isCryptoOnly
+    ? cryptoWidenedModal.bidUsd
+    : isUsdSpot
+      ? rawUsdBidModal
+      : (Number(liveData.rawBid) || Number(liveData.bid) || Number(liveData.lastBid) || ltp || Number(effectiveInstrument?.ltp) || 0);
+  const execAsk = isCryptoOnly
+    ? cryptoWidenedModal.askUsd
+    : isUsdSpot
+      ? rawUsdAskModal
+      : (Number(liveData.rawAsk) || Number(liveData.ask) || Number(liveData.lastAsk) || ltp || Number(effectiveInstrument?.ltp) || 0);
 
   const feedRow = effectiveInstrument?.token
     ? marketDataRowForInstrumentToken(marketData, effectiveInstrument.token, effectiveInstrument)

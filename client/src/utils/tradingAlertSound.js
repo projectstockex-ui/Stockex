@@ -7,6 +7,7 @@ let lastRejectAt = 0;
 let lastSuccessAt = 0;
 let lastSlTpAt = 0;
 let lastPriceAlertAt = 0;
+let lastMarginWarningAt = 0;
 
 function getAudioContext() {
   if (typeof window === 'undefined') return null;
@@ -76,6 +77,24 @@ export function triggerAutosquareSound() {
   if (now - lastAutosquareAt < 2500) return;
   lastAutosquareAt = now;
   playAutosquareAlert();
+}
+
+/** Yellow margin cushion warning (segment notification %, e.g. 70%). */
+export function playMarginWarningSound() {
+  runWithAudioContext((ctx) => {
+    const t = ctx.currentTime;
+    playTone(ctx, 659, t, 0.11, 0.26);
+    playTone(ctx, 523, t + 0.14, 0.11, 0.24);
+    playTone(ctx, 659, t + 0.3, 0.14, 0.26);
+    playTone(ctx, 784, t + 0.46, 0.1, 0.22);
+  });
+}
+
+export function triggerMarginWarningSound() {
+  const now = Date.now();
+  if (now - lastMarginWarningAt < 15000) return;
+  lastMarginWarningAt = now;
+  playMarginWarningSound();
 }
 
 /** Short low tone when order is rejected (validation / API error). */

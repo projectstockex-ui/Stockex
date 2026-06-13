@@ -189,6 +189,7 @@ import {
 import { closingPriceToLeftTwoDigits } from '../utils/niftyNumberResult.js';
 import {
   assertQtyWithinPerNumberCap,
+  assertTicketsWithinPerOrderCap,
   resolveMaxTicketsPerNumber,
   userTicketsOnNumberFromBets,
 } from '../utils/numberGameTicketLimits.js';
@@ -1862,16 +1863,20 @@ router.get('/settings', protectUser, async (req, res) => {
       });
     }
 
-    // Ensure MCX session timing reaches user UI even if populate/merge missed parent admin slice
+    // Platform-wide session timing from SystemSettings (same for all admins/users)
     try {
-      const { resolveMcxTimingFromAdminChain } = await import('../utils/mcxSessionTiming.js');
-      const chainMcx = await resolveMcxTimingFromAdminChain(user);
+      const {
+        resolveSystemMcxStartTime,
+        resolveSystemMcxClosingTime,
+      } = await import('../utils/mcxSessionTiming.js');
+      const mcxStart = resolveSystemMcxStartTime(adminSegmentDefaultsPlain);
+      const mcxClose = resolveSystemMcxClosingTime(adminSegmentDefaultsPlain);
       for (const mcxSeg of ['MCXFUT', 'MCXOPT']) {
         if (!segmentPermissions[mcxSeg]) continue;
-        if (chainMcx.mcxStartTime) segmentPermissions[mcxSeg].mcxStartTime = chainMcx.mcxStartTime;
-        if (chainMcx.mcxClosingTime) {
-          segmentPermissions[mcxSeg].mcxClosingTime = chainMcx.mcxClosingTime;
-          segmentPermissions[mcxSeg].closingTime = chainMcx.mcxClosingTime;
+        if (mcxStart) segmentPermissions[mcxSeg].mcxStartTime = mcxStart;
+        if (mcxClose) {
+          segmentPermissions[mcxSeg].mcxClosingTime = mcxClose;
+          segmentPermissions[mcxSeg].closingTime = mcxClose;
         }
       }
     } catch (mcxOverlayErr) {
@@ -1879,16 +1884,16 @@ router.get('/settings', protectUser, async (req, res) => {
     }
 
     try {
-      const { resolveCryptoTimingFromAdminChain } = await import('../utils/cryptoSessionTiming.js');
-      const chainCrypto = await resolveCryptoTimingFromAdminChain(user);
+      const {
+        resolveSystemCryptoStartTime,
+        resolveSystemCryptoClosingTime,
+      } = await import('../utils/cryptoSessionTiming.js');
+      const cryptoStart = resolveSystemCryptoStartTime(adminSegmentDefaultsPlain);
+      const cryptoClose = resolveSystemCryptoClosingTime(adminSegmentDefaultsPlain);
       for (const cryptoSeg of ['CRYPTOFUT', 'CRYPTOOPT']) {
         if (!segmentPermissions[cryptoSeg]) continue;
-        if (chainCrypto.cryptoStartTime) {
-          segmentPermissions[cryptoSeg].cryptoStartTime = chainCrypto.cryptoStartTime;
-        }
-        if (chainCrypto.cryptoClosingTime) {
-          segmentPermissions[cryptoSeg].cryptoClosingTime = chainCrypto.cryptoClosingTime;
-        }
+        if (cryptoStart) segmentPermissions[cryptoSeg].cryptoStartTime = cryptoStart;
+        if (cryptoClose) segmentPermissions[cryptoSeg].cryptoClosingTime = cryptoClose;
       }
     } catch (cryptoOverlayErr) {
       console.warn('[user/settings] Crypto timing overlay failed:', cryptoOverlayErr?.message);
@@ -2593,6 +2598,7 @@ router.get('/game-settings', protectUser, async (req, res) => {
                 ? game.resultTime
                 : '15:31',
             settleAtResultTime: game.settleAtResultTime !== false,
+            maxTicketsPerNumber: resolveMaxTicketsPerNumber(game),
             ...(game.bracketAnchorToSpot !== undefined && { bracketAnchorToSpot: game.bracketAnchorToSpot }),
             ...(game.bracketStrictLtpComparison !== undefined && {
               bracketStrictLtpComparison: game.bracketStrictLtpComparison,
@@ -4809,13 +4815,19 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
       return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 250} ticket(s) (${maxAmt})` });
     }
 
+    const newBracketTickets = betAmount / tValue;
+    const perOrderCap = resolveMaxTicketsPerNumber(gameConfig);
+    const perOrderErr = assertTicketsWithinPerOrderCap({ qty: newBracketTickets, cap: perOrderCap });
+    if (perOrderErr) {
+      return res.status(400).json({ message: perOrderErr });
+    }
+
     const bracketDayKey = getTodayISTString();
     const capBuyDay = Math.max(0, Number(gameConfig.maxTicketsBuyPerDay) || 0);
     const capSellDay = Math.max(0, Number(gameConfig.maxTicketsSellPerDay) || 0);
     const bracketSideCap = prediction === 'SELL' ? capSellDay : capBuyDay;
     if (bracketSideCap > 0) {
       const usedBracket = await sumBracketSideTicketsInDay(userId, prediction, bracketDayKey, tValue);
-      const newBracketTickets = betAmount / tValue;
       if (usedBracket + newBracketTickets > bracketSideCap + 1e-6) {
         const leftB = Math.max(0, bracketSideCap - usedBracket);
         return res.status(400).json({
@@ -5527,9 +5539,9 @@ router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
 
     if (await rejectIfHierarchyGameDenied(res, userId, 'niftyJackpot')) return;
 
-    // Check bidding time window (default: 09:15 to 14:59 IST)
-    const biddingStartTime = gameConfig?.biddingStartTime || '09:15';
-    const biddingEndTime = gameConfig?.biddingEndTime || '14:59';
+    // Check bidding time window (default: 00:00 to 23:59 IST — full day)
+    const biddingStartTime = gameConfig?.biddingStartTime || '00:00';
+    const biddingEndTime = gameConfig?.biddingEndTime || '23:59';
     const now = new Date();
     const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
     const istNow = new Date(now.getTime() + istOffset);
@@ -5731,8 +5743,8 @@ router.put('/nifty-jackpot/bid/:id', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'Nifty Jackpot game is currently disabled' });
     }
 
-    const biddingStartTime = gameConfig?.biddingStartTime || '09:15';
-    const biddingEndTime = gameConfig?.biddingEndTime || '14:59';
+    const biddingStartTime = gameConfig?.biddingStartTime || '00:00';
+    const biddingEndTime = gameConfig?.biddingEndTime || '23:59';
     const now = new Date();
     const istOffset = 5.5 * 60 * 60 * 1000;
     const istNow = new Date(now.getTime() + istOffset);

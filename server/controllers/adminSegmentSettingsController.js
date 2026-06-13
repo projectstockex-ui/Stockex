@@ -5,6 +5,12 @@ import {
   clampOptionCommissionToParentFloor,
   optionCommissionHierarchyError,
 } from '../utils/hierarchyOptionCommission.js';
+import {
+  plainSegmentPermissionsMap,
+  validateEditorCanEnableSegmentForChild,
+  validateSegmentIntradayOnlyHierarchy,
+  enforceIntradayOnlyHierarchyOnSegment,
+} from '../utils/segmentHierarchyGate.js';
 
 /**
  * Admin Segment Settings Controller
@@ -140,19 +146,16 @@ class AdminSegmentSettingsController {
           segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions
         );
 
-        if (currentAdmin.role !== 'SUPER_ADMIN') {
-          const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
-          const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
-          const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
-          plain = stripMcxSessionTimingFromSegmentMap(plain);
-          plain = stripNseBseSessionTimingFromSegmentMap(plain);
-          plain = stripCryptoSessionTimingFromSegmentMap(plain);
-        }
+        // Session timing is platform-wide (SystemSettings) — never store on child admin profiles
+        const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
+        const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
+        const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
+        plain = stripMcxSessionTimingFromSegmentMap(plain);
+        plain = stripNseBseSessionTimingFromSegmentMap(plain);
+        plain = stripCryptoSessionTimingFromSegmentMap(plain);
 
-        // Validate all segment permission fields against parent's limits
-        const parentSegPerms = currentAdmin.segmentPermissions instanceof Map
-          ? Object.fromEntries(currentAdmin.segmentPermissions)
-          : (currentAdmin.segmentPermissions || {});
+        // Validate all segment permission fields against editor's own enabled segments
+        const parentSegPerms = plainSegmentPermissionsMap(currentAdmin.segmentPermissions);
 
         // Get grandparent segment permissions to check if parent has the segment enabled by their parent
         let grandParentSegPerms = {};
@@ -169,17 +172,21 @@ class AdminSegmentSettingsController {
 
           const parentSeg = parentSegPerms[segName] || {};
 
-          // Check if current admin has the segment enabled before enabling it for child
-          if (segData.enabled === true) {
-            const currentAdminHasSegment = parentSeg.enabled ?? false;
-            console.log('[AdminSegmentSettings] Checking if current admin has', segName, 'enabled:', currentAdminHasSegment);
-            console.log('[AdminSegmentSettings] Current admin:', currentAdmin.name, 'has segments:', Object.keys(parentSegPerms).filter(k => parentSegPerms[k]?.enabled));
-            if (!currentAdminHasSegment && currentAdmin.role !== 'SUPER_ADMIN') {
-              console.log('[AdminSegmentSettings] BLOCKING:', segName, '- current admin does not have this segment');
-              return res.status(400).json({
-                message: `Cannot enable ${segName} - you do not have this segment enabled. Enable it for yourself first.`
-              });
-            }
+          const enableCheck = validateEditorCanEnableSegmentForChild(
+            parentSegPerms,
+            segName,
+            segData.enabled,
+            currentAdmin.role
+          );
+          if (!enableCheck.allowed) {
+            console.log('[AdminSegmentSettings] BLOCKING:', segName, '-', enableCheck.message);
+            return res.status(400).json({ message: enableCheck.message });
+          }
+
+          const intradayOnlyCheck = validateSegmentIntradayOnlyHierarchy(parentSeg, segData, currentAdmin.role);
+          if (!intradayOnlyCheck.allowed) {
+            console.log('[AdminSegmentSettings] BLOCKING:', segName, '-', intradayOnlyCheck.message);
+            return res.status(400).json({ message: intradayOnlyCheck.message });
           }
 
           // Validate enabled field using hierarchy validation service
@@ -321,6 +328,14 @@ class AdminSegmentSettingsController {
 
         }
 
+        if (currentAdmin.role !== 'SUPER_ADMIN') {
+          for (const [segName, segData] of Object.entries(plain)) {
+            if (!segData || typeof segData !== 'object') continue;
+            const parentSeg = parentSegPerms[segName] || {};
+            plain[segName] = enforceIntradayOnlyHierarchyOnSegment(parentSeg, segData, currentAdmin.role);
+          }
+        }
+
         if (currentAdmin.role === 'BROKER' || currentAdmin.role === 'SUB_BROKER') {
           const existingSeg =
             childAdmin.segmentPermissions instanceof Map
@@ -406,40 +421,6 @@ class AdminSegmentSettingsController {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].commissionUnit = segData.commissionUnit;
           }
-          if (currentAdmin.role === 'SUPER_ADMIN') {
-            if (segData.cryptoStartTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].cryptoStartTime = segData.cryptoStartTime;
-            }
-            if (segData.cryptoClosingTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].cryptoClosingTime = segData.cryptoClosingTime;
-            }
-            if (segData.mcxStartTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].mcxStartTime = segData.mcxStartTime;
-            }
-            if (segData.mcxClosingTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].mcxClosingTime = segData.mcxClosingTime;
-            }
-            if (segData.nseStartTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].nseStartTime = segData.nseStartTime;
-            }
-            if (segData.nseClosingTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].nseClosingTime = segData.nseClosingTime;
-            }
-            if (segData.closingTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].closingTime = segData.closingTime;
-            }
-            if (segData.startTime !== undefined) {
-              aligned[segName] = aligned[segName] || {};
-              aligned[segName].startTime = segData.startTime;
-            }
-          }
           if (segData.cryptoSpreadInr !== undefined) {
             aligned[segName] = aligned[segName] || {};
             aligned[segName].cryptoSpreadInr = segData.cryptoSpreadInr;
@@ -480,7 +461,7 @@ class AdminSegmentSettingsController {
       if (segmentExplicitKeys !== undefined) {
         const { sanitizeSegmentExplicitKeysForSave } = await import('../utils/commissionTypeUnit.js');
         let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
-        if (currentAdmin.role !== 'SUPER_ADMIN' && sanitized) {
+        if (sanitized) {
           const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
           const { stripNseBseKeysFromSegmentExplicitKeys } = await import('../utils/nseBseSessionTiming.js');
           const { stripCryptoKeysFromSegmentExplicitKeys } = await import('../utils/cryptoSessionTiming.js');
@@ -530,154 +511,6 @@ class AdminSegmentSettingsController {
       console.log('[AdminSegmentSettings] Total enabled segments:', enabledSegments);
 
       await Admin.updateOne({ _id: childAdmin._id }, { $set: updateFields });
-
-      // If Super Admin is updating CRYPTOFUT timing, propagate to SystemSettings CRYPTOFUT
-      // and Super Admin's own segmentPermissions. CRYPTOFUT is the single source of truth for timing.
-      if (currentAdmin.role === 'SUPER_ADMIN' && updateFields.segmentPermissions) {
-        const cryptoFutData = updateFields.segmentPermissions.CRYPTOFUT;
-        if (cryptoFutData && (cryptoFutData.cryptoStartTime !== undefined || cryptoFutData.cryptoClosingTime !== undefined)) {
-          console.log(`[AdminSegmentSettings] Super Admin updating CRYPTOFUT timing: start=${cryptoFutData.cryptoStartTime}, close=${cryptoFutData.cryptoClosingTime}`);
-          
-          const SystemSettings = (await import('../models/SystemSettings.js')).default;
-          const settings = await SystemSettings.findOne({ settingsType: 'global' });
-          
-          if (settings && settings.adminSegmentDefaults) {
-            // Update SystemSettings CRYPTOFUT timing
-            const updateCryptoTiming = (segMap, segName) => {
-              if (segMap instanceof Map) {
-                const seg = segMap.get(segName);
-                if (seg) {
-                  if (cryptoFutData.cryptoStartTime !== undefined) seg.cryptoStartTime = cryptoFutData.cryptoStartTime;
-                  if (cryptoFutData.cryptoClosingTime !== undefined) seg.cryptoClosingTime = cryptoFutData.cryptoClosingTime;
-                  segMap.set(segName, seg);
-                }
-              } else if (segMap && typeof segMap === 'object' && segMap[segName]) {
-                if (cryptoFutData.cryptoStartTime !== undefined) segMap[segName].cryptoStartTime = cryptoFutData.cryptoStartTime;
-                if (cryptoFutData.cryptoClosingTime !== undefined) segMap[segName].cryptoClosingTime = cryptoFutData.cryptoClosingTime;
-              }
-            };
-
-            updateCryptoTiming(settings.adminSegmentDefaults, 'CRYPTOFUT');
-            settings.markModified('adminSegmentDefaults');
-            await settings.save();
-            console.log('[AdminSegmentSettings] Updated SystemSettings CRYPTOFUT timing');
-          }
-
-          // Update Super Admin's own CRYPTOFUT segmentPermissions
-          const updateSuperAdmin = (segMap) => {
-            if (segMap instanceof Map) {
-              const seg = segMap.get('CRYPTOFUT');
-              if (seg) {
-                if (cryptoFutData.cryptoStartTime !== undefined) seg.cryptoStartTime = cryptoFutData.cryptoStartTime;
-                if (cryptoFutData.cryptoClosingTime !== undefined) seg.cryptoClosingTime = cryptoFutData.cryptoClosingTime;
-                segMap.set('CRYPTOFUT', seg);
-              }
-            } else if (segMap && typeof segMap === 'object' && segMap.CRYPTOFUT) {
-              if (cryptoFutData.cryptoStartTime !== undefined) segMap.CRYPTOFUT.cryptoStartTime = cryptoFutData.cryptoStartTime;
-              if (cryptoFutData.cryptoClosingTime !== undefined) segMap.CRYPTOFUT.cryptoClosingTime = cryptoFutData.cryptoClosingTime;
-            }
-          };
-          updateSuperAdmin(currentAdmin.segmentPermissions);
-          currentAdmin.markModified('segmentPermissions');
-          await currentAdmin.save();
-          console.log('[AdminSegmentSettings] Updated Super Admin CRYPTOFUT timing');
-        }
-
-        const mcxFutData = updateFields.segmentPermissions.MCXFUT || updateFields.segmentPermissions.MCX;
-        if (
-          mcxFutData &&
-          (mcxFutData.mcxStartTime !== undefined ||
-            mcxFutData.mcxClosingTime !== undefined ||
-            mcxFutData.startTime !== undefined ||
-            mcxFutData.closingTime !== undefined)
-        ) {
-          const mcxStart =
-            mcxFutData.mcxStartTime !== undefined ? mcxFutData.mcxStartTime : mcxFutData.startTime;
-          const mcxClose =
-            mcxFutData.mcxClosingTime !== undefined ? mcxFutData.mcxClosingTime : mcxFutData.closingTime;
-          console.log(
-            `[AdminSegmentSettings] Super Admin updating MCXFUT timing: start=${mcxStart}, close=${mcxClose}`
-          );
-
-          const SystemSettings = (await import('../models/SystemSettings.js')).default;
-          const settings = await SystemSettings.findOne({ settingsType: 'global' });
-
-          if (settings && settings.adminSegmentDefaults) {
-            const updateMcxTiming = (segMap, segName) => {
-              if (segMap instanceof Map) {
-                const seg = segMap.get(segName) || {};
-                if (mcxStart !== undefined) seg.mcxStartTime = mcxStart;
-                if (mcxClose !== undefined) {
-                  seg.mcxClosingTime = mcxClose;
-                  seg.closingTime = mcxClose;
-                }
-                segMap.set(segName, seg);
-              } else if (segMap && typeof segMap === 'object') {
-                segMap[segName] = segMap[segName] || {};
-                if (mcxStart !== undefined) segMap[segName].mcxStartTime = mcxStart;
-                if (mcxClose !== undefined) {
-                  segMap[segName].mcxClosingTime = mcxClose;
-                  segMap[segName].closingTime = mcxClose;
-                }
-              }
-            };
-
-            updateMcxTiming(settings.adminSegmentDefaults, 'MCXFUT');
-            updateMcxTiming(settings.adminSegmentDefaults, 'MCX');
-            settings.markModified('adminSegmentDefaults');
-            await settings.save();
-            console.log('[AdminSegmentSettings] Updated SystemSettings MCXFUT timing');
-          }
-        }
-
-        const nseFutData = updateFields.segmentPermissions.NSEFUT;
-        if (
-          nseFutData &&
-          (nseFutData.nseStartTime !== undefined ||
-            nseFutData.nseClosingTime !== undefined ||
-            nseFutData.startTime !== undefined ||
-            nseFutData.closingTime !== undefined)
-        ) {
-          const nseStart =
-            nseFutData.nseStartTime !== undefined ? nseFutData.nseStartTime : nseFutData.startTime;
-          const nseClose =
-            nseFutData.nseClosingTime !== undefined ? nseFutData.nseClosingTime : nseFutData.closingTime;
-          console.log(
-            `[AdminSegmentSettings] Super Admin updating NSEFUT timing: start=${nseStart}, close=${nseClose}`
-          );
-
-          const SystemSettings = (await import('../models/SystemSettings.js')).default;
-          const settings = await SystemSettings.findOne({ settingsType: 'global' });
-
-          if (settings && settings.adminSegmentDefaults) {
-            const updateNseTiming = (segMap, segName) => {
-              if (segMap instanceof Map) {
-                const seg = segMap.get(segName) || {};
-                if (nseStart !== undefined) seg.nseStartTime = nseStart;
-                if (nseClose !== undefined) {
-                  seg.nseClosingTime = nseClose;
-                  seg.closingTime = nseClose;
-                }
-                segMap.set(segName, seg);
-              } else if (segMap && typeof segMap === 'object') {
-                segMap[segName] = segMap[segName] || {};
-                if (nseStart !== undefined) segMap[segName].nseStartTime = nseStart;
-                if (nseClose !== undefined) {
-                  segMap[segName].nseClosingTime = nseClose;
-                  segMap[segName].closingTime = nseClose;
-                }
-              }
-            };
-
-            for (const segName of ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT']) {
-              updateNseTiming(settings.adminSegmentDefaults, segName);
-            }
-            settings.markModified('adminSegmentDefaults');
-            await settings.save();
-            console.log('[AdminSegmentSettings] Updated SystemSettings NSEFUT timing');
-          }
-        }
-      }
 
       const updatedAdmin = await Admin.findById(childAdmin._id).select('-password');
 

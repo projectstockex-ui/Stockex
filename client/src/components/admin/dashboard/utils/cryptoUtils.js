@@ -36,6 +36,15 @@ export function formatStoredCryptoIstClock(raw) {
   return n ?? s;
 }
 
+/** Push a valid HH:mm[:ss] draft into parent state when complete (not only on blur). */
+export function tryCommitSessionClockDraft(draft, storedRaw, onCommit) {
+  const n = normalizeCryptoIstClock24(draft);
+  if (n === null) return false;
+  const prev = storedRaw != null ? String(storedRaw).trim() : '';
+  if ((n || '') !== prev) onCommit(n);
+  return true;
+}
+
 /**
  * Binance crypto segment keys — UI is quantity-only (limits map to exchange step multiples on server).
  * @param {string} seg - Segment name

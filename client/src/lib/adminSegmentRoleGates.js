@@ -3,19 +3,24 @@ export function canManageLimitPendingSegmentGate(role) {
   return role === 'SUPER_ADMIN' || role === 'ADMIN';
 }
 
-/** MCX session start/close — Super Admin only (flows to full hierarchy). */
+/** MCX session start/close — Super Admin only, platform-wide (System Settings). */
 export function canEditMcxSessionTiming(role) {
   return role === 'SUPER_ADMIN';
 }
 
-/** NSE/BSE session start/close — Super Admin only. */
+/** NSE/BSE session start/close — Super Admin only, platform-wide. */
 export function canEditNseBseSessionTiming(role) {
   return role === 'SUPER_ADMIN';
 }
 
-/** Crypto session start/close — Super Admin only. */
+/** Crypto session start/close — Super Admin only, platform-wide (System Settings). */
 export function canEditCryptoSessionTiming(role) {
   return role === 'SUPER_ADMIN';
+}
+
+/** Session timing fields only on System Settings → Admin Segment Defaults (not per-admin hierarchy). */
+export function showSessionTimingInHierarchy() {
+  return false;
 }
 
 /** Session timing is never shown on client/user segment settings — admin hierarchy SA screens only. */

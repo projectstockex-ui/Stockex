@@ -6,6 +6,10 @@ import {
   canManageUserSegmentSettings,
   getAllowEditSubordinateClientValues,
 } from '../utils/adminClientSettingsAccess.js';
+import {
+  validateSegmentIntradayOnlyHierarchy,
+  enforceIntradayOnlyHierarchyOnSegment,
+} from '../utils/segmentHierarchyGate.js';
 
 /**
  * User Segment Settings Controller
@@ -217,6 +221,11 @@ class UserSegmentSettingsController {
             return res.status(400).json({ message: segmentValidation.message });
           }
 
+          const intradayOnlyCheck = validateSegmentIntradayOnlyHierarchy(parentSeg, segData, parentAdmin.role);
+          if (!intradayOnlyCheck.allowed) {
+            return res.status(400).json({ message: intradayOnlyCheck.message });
+          }
+
           // Validate leverage fields
           const intraday = segData.intradayLeverage || segData.exposureIntraday;
           const parentIntraday = parentSeg.intradayLeverage || parentSeg.exposureIntraday || parentMaxLeverage;
@@ -354,6 +363,14 @@ class UserSegmentSettingsController {
                 });
               }
             }
+          }
+        }
+
+        if (parentAdmin.role !== 'SUPER_ADMIN') {
+          for (const [segName, segData] of Object.entries(plain)) {
+            if (!segData || typeof segData !== 'object') continue;
+            const parentSeg = parentSegPerms[segName] || {};
+            plain[segName] = enforceIntradayOnlyHierarchyOnSegment(parentSeg, segData, parentAdmin.role);
           }
         }
 

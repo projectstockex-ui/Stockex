@@ -109,6 +109,7 @@ export default function InstrumentSegmentDefaultsModal({
               segmentKey={segmentKey}
               slice={slice}
               onChange={setSlice}
+              showSessionTiming
             />
           )}
           {message ? (

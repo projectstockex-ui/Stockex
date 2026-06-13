@@ -22,6 +22,18 @@ import FranchiseSegmentBrokerageNotice from '../../segment/FranchiseSegmentBroke
 import { isAdminFranchiseBrokerageActive } from '../../../../utils/franchiseSegmentBrokerage.js';
 import { normalizeSegmentCommissionFields } from '../../../../utils/segmentCommissionType.js';
 import {
+  canViewerEnableSegment,
+  clampSegmentEnabledToParentBaseline,
+  clampSegmentIntradayOnlyToParentBaseline,
+  canViewerToggleDefaultIntradayOnly,
+  canViewerManageLotQtySettings,
+  INTRADAY_ONLY_LOCKED_LOT_QTY_MESSAGE,
+  INTRADAY_ONLY_LOCKED_DISABLE_MESSAGE,
+} from '../../../../utils/segmentHierarchyGate.js';
+import {
+  clampSegmentPermissionsOptionCommissions,
+} from '../../../../utils/hierarchyOptionCommission.js';
+import {
   numInputValue,
   parseNumInput,
   parseIntInput,
@@ -107,6 +119,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
   // Segment permissions state
   const [segDefs, setSegDefs] = useState({});
   const [systemSegBaseline, setSystemSegBaseline] = useState({});
+  const [parentSegBaseline, setParentSegBaseline] = useState({});
   const [expandedSeg, setExpandedSeg] = useState('NSEFUT');
 
   // Script settings state
@@ -171,6 +184,32 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
   }, [targetAdmin._id, token]);
 
   useEffect(() => {
+    if (viewerRole === 'SUPER_ADMIN') {
+      setParentSegBaseline({});
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data } = await axios.get('/api/admin/my-settings', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (cancelled) return;
+        const sp = data.segmentPermissions || {};
+        const plain = sp instanceof Map ? Object.fromEntries(sp) : sp;
+        setParentSegBaseline(plain);
+      } catch (err) {
+        console.error('Error fetching parent segment baseline:', err);
+        if (!cancelled) setParentSegBaseline({});
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [viewerRole, token]);
+
+  useEffect(() => {
     if (activeTab !== 'scripts') return;
     let cancelled = false;
     (async () => {
@@ -219,6 +258,31 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
   };
 
   const handleSegDefChange = (seg, field, value) => {
+    if (field === 'enabled' && value === true && !canViewerEnableSegment(viewerRole, parentSegBaseline, seg)) {
+      setMessage({
+        type: 'error',
+        text: `You cannot enable ${seg}. Enable it for yourself first in My Settings.`,
+      });
+      return;
+    }
+
+    if (field === 'defaultIntradayOnly' && !canViewerToggleDefaultIntradayOnly(viewerRole, parentSegBaseline, seg)) {
+      setMessage({ type: 'error', text: INTRADAY_ONLY_LOCKED_DISABLE_MESSAGE });
+      return;
+    }
+
+    if ((field === 'enableLotSettings' || field === 'enableQuantitySettings') && value === true) {
+      if (!canViewerManageLotQtySettings(viewerRole, parentSegBaseline, seg)) {
+        setMessage({ type: 'error', text: INTRADAY_ONLY_LOCKED_LOT_QTY_MESSAGE });
+        return;
+      }
+      const parentSetting = parentSegBaseline[seg]?.[field];
+      if (parentSetting === false) {
+        setMessage({ type: 'error', text: "You don't have permission to enable this setting. Your parent has disabled it." });
+        return;
+      }
+    }
+
     setSegDefs((prev) => ({
       ...prev,
       [seg]: patchSegmentField(prev[seg] || {}, field, value),
@@ -268,11 +332,22 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
           text: 'General settings updated successfully',
         });
       } else if (activeTab === 'segments' || activeTab === 'scripts') {
-        // Save segment permissions and script settings
-        const segmentExplicitKeys = computeSegmentExplicitKeys(segDefs, systemSegBaseline, viewerRole);
+        const segPayload =
+          viewerRole === 'SUPER_ADMIN'
+            ? segDefs
+            : clampSegmentIntradayOnlyToParentBaseline(
+                clampSegmentEnabledToParentBaseline(
+                  clampSegmentPermissionsOptionCommissions(segDefs, parentSegBaseline),
+                  parentSegBaseline,
+                  viewerRole
+                ),
+                parentSegBaseline,
+                viewerRole
+              );
+        const segmentExplicitKeys = computeSegmentExplicitKeys(segPayload, systemSegBaseline, viewerRole);
 
         const response = await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
-          segmentPermissions: segDefs,
+          segmentPermissions: segPayload,
           scriptSettings: scriptDefs,
           segmentExplicitKeys,
         }, { headers: { Authorization: `Bearer ${token}` } });
@@ -360,12 +435,17 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                   {expandedSeg && (() => {
                     const s = segDefs[expandedSeg] || {};
                     const isOpt = ['NSEOPT', 'MCXOPT', 'CRYPTOOPT', 'BSE-OPT', 'FOREXOPT'].includes(expandedSeg);
+                    const canToggleSegment = canViewerEnableSegment(viewerRole, parentSegBaseline, expandedSeg) || s.enabled === true;
                     return (
                       <div className="bg-dark-700/50 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="text-sm font-bold text-cyan-400">{expandedSeg} Settings</h3>
-                          <button type="button" onClick={() => handleSegDefChange(expandedSeg, 'enabled', !s.enabled)}
-                            className={`px-3 py-1 rounded text-xs font-medium ${s.enabled ? 'bg-green-600' : 'bg-red-600'}`}>
+                          <button
+                            type="button"
+                            disabled={!canToggleSegment}
+                            title={!canToggleSegment ? 'You do not have this segment enabled for yourself' : undefined}
+                            onClick={() => handleSegDefChange(expandedSeg, 'enabled', !s.enabled)}
+                            className={`px-3 py-1 rounded text-xs font-medium ${s.enabled ? 'bg-green-600' : 'bg-red-600'} ${!canToggleSegment ? 'opacity-50 cursor-not-allowed' : ''}`}>
                             {s.enabled ? 'Enabled' : 'Disabled'}
                           </button>
                         </div>
@@ -539,32 +619,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           </div>
                         </div>
 
-                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
-                          <CryptoSegmentAdminExtras
-                            segmentKey={expandedSeg}
-                            slice={s}
-                            canEdit={canEditCryptoSessionTiming(viewerRole)}
-                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
-                          />
-                        )}
-
-                        {['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
-                          <McxSegmentAdminExtras
-                            segmentKey={expandedSeg}
-                            slice={s}
-                            canEdit={canEditMcxSessionTiming(viewerRole)}
-                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
-                          />
-                        )}
-
-                        {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(expandedSeg) && (
-                          <NseBseSegmentAdminExtras
-                            segmentKey={expandedSeg}
-                            slice={s}
-                            canEdit={canEditNseBseSessionTiming(viewerRole)}
-                            onFieldChange={(field, value) => handleSegDefChange(expandedSeg, field, value)}
-                          />
-                        )}
+                        {/* Session timing: System Settings only */}
 
                         {hideSegmentBrokerage ? (
                           <FranchiseSegmentBrokerageNotice compact />
@@ -599,47 +654,6 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                               </div>
                             </div>
                           </>
-                        )}
-
-                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
-                          <div className="mb-4">
-                            <h4 className="text-xs font-semibold text-orange-300 mb-2">Client spread (Binance crypto)</h4>
-                            <p className="text-[11px] text-gray-500 mb-2">
-                              Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy  total width per coin applies (half bid / half ask). 0 / 0 = exchange prices.
-                            </p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step={0.01}
-                                  value={numInputValue(s.cryptoSpreadUsdPerSide)}
-                                  onChange={(e) =>
-                                    handleSegDefChange(
-                                      expandedSeg,
-                                      'cryptoSpreadUsdPerSide',
-                                      parseNonNegativeNumInput(e.target.value)
-                                    )
-                                  }
-                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step={1}
-                                  value={numInputValue(s.cryptoSpreadInr)}
-                                  onChange={(e) =>
-                                    handleSegDefChange(expandedSeg, 'cryptoSpreadInr', parseNonNegativeNumInput(e.target.value))
-                                  }
-                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                                />
-                              </div>
-                            </div>
-                          </div>
                         )}
 
                         {/* Option Buy/Sell - only for OPT segments */}

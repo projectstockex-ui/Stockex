@@ -1323,8 +1323,8 @@ const UserGames = () => {
                     <div>
                       <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Bidding Window</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
-                        <li>1. Bidding opens at <span className="text-cyan-400 font-bold">{gs.biddingStartTime || gs.startTime || '09:15'} IST</span>.</li>
-                        <li>2. Bidding closes at <span className="text-cyan-400 font-bold">{gs.biddingEndTime || '14:59'} IST</span>.</li>
+                        <li>1. Bidding opens at <span className="text-cyan-400 font-bold">{gs.biddingStartTime || '00:00'} IST</span>.</li>
+                        <li>2. Bidding closes at <span className="text-cyan-400 font-bold">{gs.biddingEndTime || '23:59'} IST</span>.</li>
                         <li>3. Results declared at <span className="text-green-400 font-bold">{gs.resultTime || '15:45'} IST</span> (top {gs.topWinners || 10} winners by rank).</li>
                       </ul>
                     </div>
@@ -6484,7 +6484,12 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
   const balanceTokens = toTokens(balance);
   const minBetTokens = settings?.minTickets || 1;
-  const maxBetTokens = settings?.maxTickets || 250;
+  const perOrderTicketCap =
+    settings?.maxTicketsPerNumber > 0 ? Number(settings.maxTicketsPerNumber) : 0;
+  const maxBetTokens =
+    perOrderTicketCap > 0
+      ? Math.min(settings?.maxTickets || 250, perOrderTicketCap)
+      : (settings?.maxTickets || 250);
   const resultTimeDisplay = formatBracketResultTimeIST(settings?.resultTime);
   const settleAtResultTime = settings?.settleAtResultTime !== false;
 
@@ -6589,7 +6594,15 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
     const tokenAmt = parseFloat(betAmount);
     const amt = toRupees(tokenAmt);
     if (tokenAmt < minBetTokens) { setMessage({ type: 'error', text: `Minimum bet is ${minBetTokens} tickets` }); return; }
-    if (tokenAmt > maxBetTokens) { setMessage({ type: 'error', text: `Maximum bet is ${maxBetTokens} tickets` }); return; }
+    if (tokenAmt > maxBetTokens) {
+      setMessage({
+        type: 'error',
+        text: perOrderTicketCap > 0
+          ? `Maximum ${maxBetTokens} ticket(s) per order`
+          : `Maximum bet is ${maxBetTokens} tickets`,
+      });
+      return;
+    }
     if (amt > balance) { setMessage({ type: 'error', text: 'Insufficient balance' }); return; }
     if (!gameEnabled) { setMessage({ type: 'error', text: 'Game is currently disabled' }); return; }
 
@@ -6616,7 +6629,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
     }
   };
 
-  const quickAmounts = [1, 2, 3, 5, 10, 20];
+  const quickAmounts = [1, 2, 3, 5, 10, 20].filter((amt) => amt <= maxBetTokens);
 
   const formatTimeLeft = (expiresAt) => {
     const diff = new Date(expiresAt) - new Date();
@@ -6973,7 +6986,10 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   step="0.01"
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xl font-bold text-center focus:border-cyan-500 focus:outline-none"
                 />
-                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = {tokenValue})</div>
+                <div className="text-[10px] text-gray-500 mt-1 text-center">
+                  Min {minBetTokens} • Max {maxBetTokens} Tickets per order
+                  {perOrderTicketCap > 0 ? ` (cap ${perOrderTicketCap})` : ''} (1Tkt = {tokenValue})
+                </div>
                 <div className="grid grid-cols-3 gap-1.5 mt-2">
                   {quickAmounts.map(amt => (
                     <button

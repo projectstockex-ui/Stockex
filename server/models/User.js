@@ -991,6 +991,7 @@ userSchema.index({ adminCode: 1, tradingStatus: 1 });
 userSchema.index({ hierarchyPath: 1 });
 userSchema.index({ creatorRole: 1 });
 userSchema.index({ admin: 1, creatorRole: 1 });
+userSchema.index({ isActive: 1, updatedAt: -1 });
 userSchema.index({ isDemo: 1, demoExpiresAt: 1 });
 
 userSchema.methods.comparePassword = async function(candidatePassword) {

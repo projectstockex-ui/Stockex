@@ -849,7 +849,7 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
             : (current?.segmentPermissions || {});
         plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
       }
-      if (req.admin.role !== 'SUPER_ADMIN') {
+      {
         const { stripMcxSessionTimingFromSegmentMap } = await import('../utils/mcxSessionTiming.js');
         const { stripNseBseSessionTimingFromSegmentMap } = await import('../utils/nseBseSessionTiming.js');
         const { stripCryptoSessionTimingFromSegmentMap } = await import('../utils/cryptoSessionTiming.js');
@@ -857,14 +857,14 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
         plain = stripNseBseSessionTimingFromSegmentMap(plain);
         plain = stripCryptoSessionTimingFromSegmentMap(plain);
       }
-      updateFields.segmentPermissions = alignSegmentDefaultsMapPreservingSessionTiming(plain);
+      updateFields.segmentPermissions = alignSegmentDefaultsMap(plain);
     }
     if (scriptSettings) {
       updateFields.scriptSettings = scriptSettings;
     }
     if (segmentExplicitKeys !== undefined) {
       let sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
-      if (req.admin.role !== 'SUPER_ADMIN' && sanitized) {
+      if (sanitized) {
         const { stripMcxKeysFromSegmentExplicitKeys } = await import('../utils/mcxSessionTiming.js');
         const { stripNseBseKeysFromSegmentExplicitKeys } = await import('../utils/nseBseSessionTiming.js');
         const { stripCryptoKeysFromSegmentExplicitKeys } = await import('../utils/cryptoSessionTiming.js');

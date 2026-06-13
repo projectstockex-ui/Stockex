@@ -11,6 +11,7 @@ import CryptoSegmentAdminExtras from '../dashboard/ui/CryptoSegmentAdminExtras.j
 import McxSegmentAdminExtras from '../dashboard/ui/McxSegmentAdminExtras.jsx';
 import NseBseSegmentAdminExtras from '../dashboard/ui/NseBseSegmentAdminExtras.jsx';
 import OptionBuySellFields, { isSimplifiedHierarchyOptSegment } from '../segment/OptionBuySellFields.jsx';
+import CryptoClientSpreadFields from '../segment/CryptoClientSpreadFields.jsx';
 import SegmentBrokerageFields from '../segment/SegmentBrokerageFields.jsx';
 import {
   numInputValue,
@@ -20,11 +21,12 @@ import {
   patchSegmentField,
 } from '../../../utils/segmentFormValues.js';
 import SegmentNumberInput from '../segment/SegmentNumberInput.jsx';
+import SegmentLotQtyToggle from '../segment/SegmentLotQtyToggle.jsx';
 
 /**
  * Segment settings fields copied from Hierarchy Management → Settings (admin segment defaults panel).
  */
-export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange }) {
+export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange, showSessionTiming = false }) {
   const s = slice || {};
   const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT', 'FOREXOPT', 'CRYPTOOPT'].includes(segmentKey);
   const simplifiedOpt = isSimplifiedHierarchyOptSegment(segmentKey);
@@ -48,22 +50,18 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
         <div className="flex items-center gap-3">
           {!simplifiedOpt && (
           <div className="flex gap-4 items-center">
-            <button
-              type="button"
-              onClick={() => setShowLotSettingsButton(!showLotSettingsButton)}
-              className={`w-12 h-6 rounded-full p-1 transition-colors ${showLotSettingsButton ? 'bg-yellow-600' : 'bg-dark-600'}`}
-            >
-              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${showLotSettingsButton ? 'translate-x-6' : 'translate-x-0'}`} />
-            </button>
-            <span className="text-xs text-gray-400">Lot</span>
-            <button
-              type="button"
-              onClick={() => setShowQtySettingsButton(!showQtySettingsButton)}
-              className={`w-12 h-6 rounded-full p-1 transition-colors ${showQtySettingsButton ? 'bg-blue-600' : 'bg-dark-600'}`}
-            >
-              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${showQtySettingsButton ? 'translate-x-6' : 'translate-x-0'}`} />
-            </button>
-            <span className="text-xs text-gray-400">Qty</span>
+            <SegmentLotQtyToggle
+              variant="lot"
+              enabled={showLotSettingsButton}
+              onToggle={() => setShowLotSettingsButton(!showLotSettingsButton)}
+            />
+            <span className="text-xs text-gray-300">Lot</span>
+            <SegmentLotQtyToggle
+              variant="qty"
+              enabled={showQtySettingsButton}
+              onToggle={() => setShowQtySettingsButton(!showQtySettingsButton)}
+            />
+            <span className="text-xs text-gray-300">Qty</span>
           </div>
           )}
         </div>
@@ -280,15 +278,15 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
         </>
       )}
 
-      {['CRYPTOFUT', 'CRYPTOOPT'].includes(segmentKey) && (
+      {showSessionTiming && ['CRYPTOFUT', 'CRYPTOOPT'].includes(segmentKey) && (
         <CryptoSegmentAdminExtras segmentKey={segmentKey} slice={s} canEdit onFieldChange={handleChange} />
       )}
 
-      {['MCXFUT', 'MCXOPT', 'MCX'].includes(segmentKey) && (
+      {showSessionTiming && ['MCXFUT', 'MCXOPT', 'MCX'].includes(segmentKey) && (
         <McxSegmentAdminExtras segmentKey={segmentKey} slice={s} canEdit onFieldChange={handleChange} />
       )}
 
-      {['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(segmentKey) && (
+      {showSessionTiming && ['NSEFUT', 'NSEOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'].includes(segmentKey) && (
         <NseBseSegmentAdminExtras segmentKey={segmentKey} slice={s} canEdit onFieldChange={handleChange} />
       )}
 
@@ -379,36 +377,10 @@ export default function AdminSegmentDefaultsFields({ segmentKey, slice, onChange
       )}
 
       {['CRYPTOFUT', 'CRYPTOOPT'].includes(segmentKey) && (
-        <div>
-          <h4 className="text-sm font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h4>
-          <p className="text-[11px] text-gray-500 mb-2">
-            Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy total width per coin applies. 0 / 0 = exchange prices.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                value={numInputValue(s.cryptoSpreadUsdPerSide)}
-                onChange={(e) => handleChange('cryptoSpreadUsdPerSide', parseNonNegativeNumInput(e.target.value))}
-                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Spread ( total / coin, legacy)</label>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                value={numInputValue(s.cryptoSpreadInr)}
-                onChange={(e) => handleChange('cryptoSpreadInr', parseNonNegativeNumInput(e.target.value))}
-                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-        </div>
+        <CryptoClientSpreadFields
+          slice={s}
+          onFieldChange={(field, value) => handleChange(field, value)}
+        />
       )}
 
       {isOpt && (

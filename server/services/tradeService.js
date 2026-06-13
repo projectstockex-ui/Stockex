@@ -648,6 +648,17 @@ static _SEGMENT_MERGE_FALLBACK = {
     const fb = TradeService._SEGMENT_MERGE_FALLBACK;
     let m = { ...fb, ...(systemSlicePlain && typeof systemSlicePlain === 'object' ? systemSlicePlain : {}) };
 
+    const SESSION_TIMING_OVERLAY_KEYS = new Set([
+      'cryptoStartTime',
+      'cryptoClosingTime',
+      'mcxStartTime',
+      'mcxClosingTime',
+      'nseStartTime',
+      'nseClosingTime',
+      'startTime',
+      'closingTime',
+    ]);
+
     const applyOverlay = (overlay, explicitKeysMaybe) => {
       const o = TradeService._normalizeSegmentSlice(overlay);
       if (!o) return;
@@ -655,26 +666,11 @@ static _SEGMENT_MERGE_FALLBACK = {
       const keysToVisit = legacyFullOverlay ? Object.keys(o) : explicitKeysMaybe;
 
       console.log(`[_mergeSegmentStack] applyOverlay called with keys:`, keysToVisit);
-      console.log(`[_mergeSegmentStack] overlay cryptoStartTime:`, o.cryptoStartTime, 'cryptoClosingTime:', o.cryptoClosingTime);
 
       for (const k of keysToVisit) {
         if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
+        if (SESSION_TIMING_OVERLAY_KEYS.has(k)) continue;
         const vv = o[k];
-        if (
-          k === 'cryptoStartTime' ||
-          k === 'cryptoClosingTime' ||
-          k === 'mcxStartTime' ||
-          k === 'mcxClosingTime' ||
-          k === 'nseStartTime' ||
-          k === 'nseClosingTime'
-        ) {
-          console.log(`[_mergeSegmentStack] Processing ${k}:`, vv, 'type:', typeof vv);
-          // Don't overwrite with empty strings - keep existing value from hierarchy
-          if (vv === '' || vv === undefined || vv === null) {
-            console.log(`[_mergeSegmentStack] Skipping ${k} - value is empty, keeping existing:`, m[k]);
-            continue;
-          }
-        }
         if (k === 'exposureIntraday' || k === 'exposureCarryForward') {
           const num = Number(vv);
           if (Number.isFinite(num) && num > 0) {
@@ -815,78 +811,40 @@ static _SEGMENT_MERGE_FALLBACK = {
       }
     }
 
-    // Crypto: inherit CRYPTOFUT session timing from parent admin chain → SystemSettings fallback (same as MCX)
+    // Crypto: platform-wide session timing from SystemSettings only
     const isCrypto = ['CRYPTOFUT', 'CRYPTOOPT'].includes(String(segmentKey || '').toUpperCase());
     if (isCrypto) {
       const cryptoFutSystem = TradeService._normalizeSegmentSlice(adm.CRYPTOFUT || adm.CRYPTO);
-      const hierCrypto =
-        TradeService._sliceFromHierarchy(user, 'CRYPTOFUT', segment) ||
-        TradeService._sliceFromHierarchy(user, 'CRYPTOOPT', segment);
-      let start = String(
-        hierCrypto?.cryptoStartTime ||
-          hierCrypto?.startTime ||
-          cryptoFutSystem?.cryptoStartTime ||
-          cryptoFutSystem?.startTime ||
-          ''
+      const start = String(
+        cryptoFutSystem?.cryptoStartTime || cryptoFutSystem?.startTime || ''
       ).trim();
-      let close = String(
-        hierCrypto?.cryptoClosingTime ||
-          hierCrypto?.closingTime ||
-          cryptoFutSystem?.cryptoClosingTime ||
-          cryptoFutSystem?.closingTime ||
-          ''
+      const close = String(
+        cryptoFutSystem?.cryptoClosingTime || cryptoFutSystem?.closingTime || ''
       ).trim();
-
-      if (!start || !close) {
-        const { resolveCryptoTimingFromAdminChain } = await import('../utils/cryptoSessionTiming.js');
-        const chainTiming = await resolveCryptoTimingFromAdminChain(user);
-        if (!start) start = chainTiming.cryptoStartTime || '';
-        if (!close) close = chainTiming.cryptoClosingTime || '';
-      }
-
       if (start) result.cryptoStartTime = start;
       if (close) result.cryptoClosingTime = close;
       console.log(
-        `[getUserSegmentSettings] Crypto timing for ${segmentKey}: start=${start}, close=${close}`
+        `[getUserSegmentSettings] Crypto timing for ${segmentKey}: start=${start}, close=${close} (system)`
       );
     }
 
-    // MCX: always inherit session timing from parent admin MCXFUT (Ram → users), not blocked by segmentExplicitKeys
+    // MCX: platform-wide session timing from SystemSettings only
     const segUpper = String(segmentKey || '').toUpperCase();
     if (segUpper === 'MCXFUT' || segUpper === 'MCXOPT' || segUpper === 'MCX') {
       const mcxFutSystem = TradeService._normalizeSegmentSlice(adm.MCXFUT || adm.MCX);
-      const hierMcx =
-        TradeService._sliceFromHierarchy(user, 'MCXFUT', segment) ||
-        TradeService._sliceFromHierarchy(user, 'MCX', segment);
-      let start = String(
-        hierMcx?.mcxStartTime ||
-          hierMcx?.startTime ||
-          mcxFutSystem?.mcxStartTime ||
-          mcxFutSystem?.startTime ||
-          ''
+      const start = String(
+        mcxFutSystem?.mcxStartTime || mcxFutSystem?.startTime || ''
       ).trim();
-      let close = String(
-        hierMcx?.mcxClosingTime ||
-          hierMcx?.closingTime ||
-          mcxFutSystem?.mcxClosingTime ||
-          mcxFutSystem?.closingTime ||
-          ''
+      const close = String(
+        mcxFutSystem?.mcxClosingTime || mcxFutSystem?.closingTime || ''
       ).trim();
-
-      if (!start || !close) {
-        const { resolveMcxTimingFromAdminChain } = await import('../utils/mcxSessionTiming.js');
-        const chainTiming = await resolveMcxTimingFromAdminChain(user);
-        if (!start) start = chainTiming.mcxStartTime || '';
-        if (!close) close = chainTiming.mcxClosingTime || '';
-      }
-
       if (start) result.mcxStartTime = start;
       if (close) {
         result.mcxClosingTime = close;
         if (!String(result.closingTime || '').trim()) result.closingTime = close;
       }
       console.log(
-        `[getUserSegmentSettings] MCX timing for ${segmentKey}: start=${start}, close=${close} (parent admin slice)`
+        `[getUserSegmentSettings] MCX timing for ${segmentKey}: start=${start}, close=${close} (system)`
       );
     }
 

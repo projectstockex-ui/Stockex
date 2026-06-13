@@ -12,6 +12,21 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, './src'),
       },
     },
+    build: {
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return
+            if (id.includes('react-dom') || id.includes('react-router')) return 'vendor-react'
+            if (id.includes('lightweight-charts')) return 'vendor-charts'
+            if (id.includes('@radix-ui') || id.includes('lucide-react')) return 'vendor-ui'
+            if (id.includes('socket.io-client') || id.includes('axios')) return 'vendor-network'
+            return 'vendor'
+          },
+        },
+      },
+    },
     server: {
       host: true,
       port: 5173,

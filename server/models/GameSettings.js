@@ -156,8 +156,8 @@ const gameSettingsSchema = new mongoose.Schema({
       profitSubBrokerPercent: { type: Number, default: 10 },
       profitBrokerPercent: { type: Number, default: 20 },
       profitAdminPercent: { type: Number, default: 30 },
-      biddingStartTime: { type: String, default: '09:15' },
-      biddingEndTime: { type: String, default: '14:59' },
+      biddingStartTime: { type: String, default: '00:00' },
+      biddingEndTime: { type: String, default: '23:59' },
       /** Per-rank % of total pool (kitty); rank 1 default 45% — see server/utils/niftyJackpotPrize.js */
       prizePercentages: {
         type: mongoose.Schema.Types.Mixed,
@@ -233,7 +233,9 @@ const gameSettingsSchema = new mongoose.Schema({
       /** % of trade stake on a winning bracket resolve; one referrer credit per resolved trade */
       referralDistribution: {
         winPercent: { type: Number, default: 2 }
-      }
+      },
+      /** Max tickets per single BUY/SELL order; 0 = unlimited (aside from maxTickets) */
+      maxTicketsPerNumber: { type: Number, default: 2 },
     },
     btcUpDown: {
       ...gameConfigSchema.obj,
@@ -469,6 +471,19 @@ gameSettingsSchema.statics.getSettings = async function() {
       mutated = true;
     }
   }
+
+  // Legacy Nifty Jackpot day-session window → 24h bidding (00:00–23:59 IST).
+  const nj = settings.games?.niftyJackpot;
+  if (
+    nj &&
+    (nj.biddingStartTime === '09:15' || nj.biddingStartTime === '09:15:00') &&
+    (nj.biddingEndTime === '14:59' || nj.biddingEndTime === '14:59:00' || nj.biddingEndTime === '15:29')
+  ) {
+    nj.biddingStartTime = '00:00';
+    nj.biddingEndTime = '23:59';
+    mutated = true;
+  }
+
   if (mutated) {
     settings.markModified('games');
     try {

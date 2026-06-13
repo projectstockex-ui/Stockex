@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { acquireStockexSocket, releaseStockexSocket } from '../lib/stockexSocket';
 import {
   triggerAutosquareSound,
+  triggerMarginWarningSound,
   primeTradingSounds,
   playStopLossHitSound,
   playTargetHitSound,
@@ -70,6 +71,12 @@ export default function TradingSoundAlerts() {
       window.dispatchEvent(new CustomEvent('stockex:ledger-autosquare', { detail: data }));
     };
 
+    const handleMarginWarning = (data) => {
+      if (!isEventForUser(data, myId)) return;
+      triggerMarginWarningSound();
+      window.dispatchEvent(new CustomEvent('stockex:margin-warning', { detail: data }));
+    };
+
     const onTradeUpdate = (data) => {
       if (isSlTpCloseForUser(data, myId)) {
         const reason = data?.trade?.closeReason;
@@ -81,10 +88,12 @@ export default function TradingSoundAlerts() {
     };
 
     socket.on('ledger_autosquare', handleAutosquare);
+    socket.on('margin_call', handleMarginWarning);
     socket.on('trade_update', onTradeUpdate);
 
     return () => {
       socket.off('ledger_autosquare', handleAutosquare);
+      socket.off('margin_call', handleMarginWarning);
       socket.off('trade_update', onTradeUpdate);
       releaseStockexSocket();
     };

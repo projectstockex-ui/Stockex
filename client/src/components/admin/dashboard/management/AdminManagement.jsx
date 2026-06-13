@@ -475,6 +475,7 @@ const AdminManagement = () => {
       </div>
 
       {/* Stats Summary */}
+      {!loading && (
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div className="bg-dark-800 rounded-lg p-4">
           <div className="text-sm text-gray-400">Total</div>
@@ -501,9 +502,13 @@ const AdminManagement = () => {
           <div className="text-2xl font-bold text-purple-400">{admins.reduce((sum, a) => sum + (a.stats?.totalUsers || 0), 0)}</div>
         </div>
       </div>
+      )}
 
       {loading ? (
-        <div className="text-center py-8"><RefreshCw className="animate-spin inline" /></div>
+        <div className="text-center py-12">
+          <RefreshCw className="animate-spin inline text-yellow-400" size={32} />
+          <p className="text-gray-500 text-sm mt-3">Loading hierarchy…</p>
+        </div>
       ) : totalItems === 0 ? (
         <div className="text-center py-8 text-gray-400">No admins found</div>
       ) : (

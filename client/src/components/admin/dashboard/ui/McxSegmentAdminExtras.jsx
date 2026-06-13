@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { normalizeCryptoIstClock24, formatStoredCryptoIstClock } from '../utils/cryptoUtils';
+import { normalizeCryptoIstClock24, formatStoredCryptoIstClock, tryCommitSessionClockDraft } from '../utils/cryptoUtils';
 
 /** MCX (MCXFUT): IST session gates — Super Admin only. */
 function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = false }) {
@@ -35,13 +35,11 @@ function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = fal
       return;
     }
     setStartDraft(n);
-    const prev =
-      slice?.mcxStartTime != null
-        ? String(slice.mcxStartTime).trim()
-        : slice?.startTime != null
-          ? String(slice.startTime).trim()
-          : '';
-    if ((n || '') !== prev) onFieldChange('mcxStartTime', n);
+    tryCommitSessionClockDraft(
+      n,
+      slice?.mcxStartTime ?? slice?.startTime,
+      (value) => onFieldChange('mcxStartTime', value)
+    );
   };
 
   const commitCloseBlur = () => {
@@ -65,11 +63,31 @@ function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = fal
     }
   };
 
+  const handleStartChange = (e) => {
+    const v = e.target.value;
+    setStartDraft(v);
+    tryCommitSessionClockDraft(
+      v,
+      slice?.mcxStartTime ?? slice?.startTime,
+      (value) => onFieldChange('mcxStartTime', value)
+    );
+  };
+
+  const handleCloseChange = (e) => {
+    const v = e.target.value;
+    setCloseDraft(v);
+    tryCommitSessionClockDraft(v, slice?.mcxClosingTime ?? slice?.closingTime, (value) => {
+      onFieldChange('mcxClosingTime', value);
+      if (!slice?.closingTime || String(slice.closingTime).trim() === '') {
+        onFieldChange('closingTime', value);
+      }
+    });
+  };
+
   return (
     <div className="mb-4 rounded-lg border border-yellow-700/40 bg-dark-800/60 p-3 space-y-3">
       <p className="text-xs text-yellow-400/90">
-        Super Admin only. Session times apply to this admin and all users/brokers below. End time triggers
-        carry-forward + wallet update.
+        Platform-wide standard timing — applies to all admins and all users. Set once under System Settings.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
         <div>
@@ -81,7 +99,7 @@ function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = fal
             spellCheck={false}
             placeholder="09:00:00"
             value={startDraft}
-            onChange={(e) => setStartDraft(e.target.value)}
+            onChange={handleStartChange}
             onBlur={commitStartBlur}
             className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm font-mono"
           />
@@ -95,7 +113,7 @@ function McxSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = fal
             spellCheck={false}
             placeholder="23:30:00"
             value={closeDraft}
-            onChange={(e) => setCloseDraft(e.target.value)}
+            onChange={handleCloseChange}
             onBlur={commitCloseBlur}
             className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm font-mono"
           />

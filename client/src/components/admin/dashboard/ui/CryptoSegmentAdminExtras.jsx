@@ -49,7 +49,7 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange, segmentKey, canEdit = 
   return (
     <div className="mb-4 rounded-lg border border-cyan-700/40 bg-dark-800/60 p-3 space-y-3">
       <p className="text-xs text-cyan-400/90">
-        Super Admin only. Session times apply to this admin and all users/brokers below.
+        Platform-wide standard timing — applies to all admins and all users. Set once under System Settings.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
         <div>

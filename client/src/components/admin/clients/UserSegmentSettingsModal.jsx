@@ -468,24 +468,16 @@ const UserSegmentSettingsModal = ({ user, onClose, onSave }) => {
                         <h4 className="text-sm font-semibold text-white mb-3">Crypto Settings</h4>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                           <div>
-                            <label className="block text-xs text-gray-400 mb-1">Spread</label>
+                            <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
                             <input
                               type="number"
                               step="0.01"
-                              value={numInputValue(segmentPermissions[segment]?.cryptoSpreadInr)}
-                              onChange={(e) => handleSegmentChange(segment, 'cryptoSpreadInr', parseNonNegativeNumInput(e.target.value))}
-                              className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Spread (USD/Side)</label>
-                            <input
-                              type="number"
-                              step="0.01"
+                              min={0}
                               value={numInputValue(segmentPermissions[segment]?.cryptoSpreadUsdPerSide)}
                               onChange={(e) => handleSegmentChange(segment, 'cryptoSpreadUsdPerSide', parseNonNegativeNumInput(e.target.value))}
                               className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
                             />
+                            <p className="text-[10px] text-gray-500 mt-1">Bid − spread, ask + spread (e.g. 25 → bid −25, ask +25)</p>
                           </div>
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Price Per Lot</label>
