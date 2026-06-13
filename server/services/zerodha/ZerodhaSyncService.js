@@ -60,6 +60,11 @@ export class ZerodhaSyncService {
         progressSpan: 50,
       });
 
+      if (result.upserted === 0 && parsedInstruments.length > 0) {
+        const detail = result.errors?.[0]?.error || 'Database write returned zero rows';
+        throw new Error(`Failed to save instruments: ${detail}`);
+      }
+
       const counts = await this.buildExchangeCounts();
       const verification = await this.verifySync(null);
 
@@ -74,7 +79,7 @@ export class ZerodhaSyncService {
         subscribedTokens: 0,
       };
 
-      this.progressService.completeJob(jobId, { result: completionPayload });
+      this.progressService.completeJob(jobId, completionPayload);
       return completionPayload;
     } catch (error) {
       this.progressService.failJob(jobId, { error: error.message });
@@ -182,6 +187,11 @@ export class ZerodhaSyncService {
       const result = await this.replaceZerodhaInstruments(parsedInstruments, config, jobId);
       this.progressService.updateJob(jobId, { step: 4, message: 'Database updated', progress: 92 });
 
+      if (result.inserted === 0 && parsedInstruments.length > 0) {
+        const detail = result.errors?.[0]?.error || 'Database write returned zero rows';
+        throw new Error(`Failed to save instruments: ${detail}`);
+      }
+
       // Step 5: Verify sync
       const verification = await this.verifySync(parsedInstruments.length);
       this.progressService.updateJob(jobId, { step: 5, message: 'Sync verified' });
@@ -207,7 +217,7 @@ export class ZerodhaSyncService {
         totalInstruments: parsedInstruments.length,
       };
 
-      this.progressService.completeJob(jobId, { result: completionPayload });
+      this.progressService.completeJob(jobId, completionPayload);
 
       return completionPayload;
 
@@ -419,7 +429,7 @@ export class ZerodhaSyncService {
           this.loggerService.error(`Error inserting chunk ${Math.floor(i / chunkSize) + 1}:`, error.message);
           errors.push({
             chunk: Math.floor(i / chunkSize) + 1,
-            error: error.message,
+            error: error?.writeErrors?.[0]?.errmsg || error.message,
             startIndex: i,
             endIndex: Math.min(i + chunkSize, instruments.length),
           });
@@ -477,7 +487,14 @@ export class ZerodhaSyncService {
         });
       } catch (error) {
         this.loggerService.error(`Error upserting chunk ${Math.floor(i / chunkSize) + 1}:`, error.message);
-        errors.push({ chunk: Math.floor(i / chunkSize) + 1, error: error.message });
+        if (error?.writeErrors?.length) {
+          errors.push({
+            chunk: Math.floor(i / chunkSize) + 1,
+            error: error.writeErrors[0]?.errmsg || error.message,
+          });
+        } else {
+          errors.push({ chunk: Math.floor(i / chunkSize) + 1, error: error.message });
+        }
       }
     }
 
@@ -487,7 +504,7 @@ export class ZerodhaSyncService {
   /**
    * Process instrument chunk with data transformation
    */
-  async processInstrumentChunk(chunk) {
+  processInstrumentChunk(chunk) {
     return chunk.map((instrument) => {
       const tokenNum = parseInt(instrument.instrument_token, 10);
       const token = Number.isFinite(tokenNum) ? String(tokenNum) : String(instrument.instrument_token || '');

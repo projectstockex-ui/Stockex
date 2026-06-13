@@ -28,6 +28,25 @@ const SAMPLE_CSV = [
   '666001,NSE,RANDOMOBSCURE,RANDOMOBSCURE,EQ,1,0.05,,',
 ].join('\n');
 
+test('processInstrumentChunk returns a plain array (not a Promise)', () => {
+  const row = {
+    instrument_token: '256265',
+    tradingsymbol: 'NIFTY 50',
+    name: 'NIFTY 50',
+    exchange: 'NSE',
+    instrument_type: 'EQ',
+    lot_size: '1',
+    tick_size: '0.05',
+    expiry: '',
+    strike: '',
+  };
+  const out = sync.processInstrumentChunk([row]);
+  assert.equal(out instanceof Promise, false);
+  assert.equal(Array.isArray(out), true);
+  assert.equal(out[0].token, '256265');
+  assert.equal(out[0].displaySegment, 'NSE-EQ');
+});
+
 test('parseInstruments full mode keeps Zerodha exchanges only', async () => {
   const rows = await sync.parseInstruments(SAMPLE_CSV, { filterMode: 'full', minCount: 1 });
   const exchanges = new Set(rows.map((r) => r.exchange));

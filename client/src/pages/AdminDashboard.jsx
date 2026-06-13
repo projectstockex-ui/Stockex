@@ -223,9 +223,11 @@ async function pollZerodhaResetSyncResult(authToken, statusUrl, options = {}) {
 
   const normalizeResult = (jobData) => {
     // Progress service stores completion payload under `job.result`.
-    // Older flows may nest one more level: { result: {...} }.
     const payload = jobData?.result ?? null;
-    if (payload?.result && typeof payload.result === 'object') return payload.result;
+    if (!payload || typeof payload !== 'object') return payload;
+    if (payload.result && typeof payload.result === 'object' && payload.message == null) {
+      return payload.result;
+    }
     return payload;
   };
 
@@ -21801,7 +21803,11 @@ const MarketControl = () => {
 
                 <ZerodhaSyncProgressBar
                   job={zerodhaSyncJob}
-                  hint={syncBusy ? 'Full reset takes 2–5 min. Use Sync Popular for a faster daily refresh.' : null}
+                  hint={
+                    syncBusy
+                      ? 'First time? Use Reset & Sync (full catalog). Sync Popular only refreshes key symbols.'
+                      : (zerodhaStatus?.connected ? 'No instruments yet? Click Reset & Sync once after connecting Zerodha.' : null)
+                  }
                 />
 
                 <div className="flex gap-2 mb-2">
@@ -21880,7 +21886,11 @@ const MarketControl = () => {
 
                       );
 
-                      alert(`${data.message}\n\nAdded/Updated: ${data.added ?? data.inserted}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens ?? 0}`);
+                      alert(`${data.message}\n\nAdded/Updated: ${data.added ?? data.inserted ?? 0}\nTotal in DB: ${data.totalInDatabase ?? '—'}\nSubscribed: ${data.subscribedTokens ?? 0}${
+                        (data.totalInDatabase ?? 0) < 100
+                          ? '\n\nTip: Run Reset & Sync for the full instrument catalog (Segment Grouping needs this).'
+                          : ''
+                      }`);
 
                     } catch (error) {
 

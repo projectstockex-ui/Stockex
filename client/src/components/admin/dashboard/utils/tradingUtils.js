@@ -19,7 +19,11 @@ export async function pollZerodhaResetSyncResult(authToken, statusUrl, options =
 
   const normalizeResult = (jobData) => {
     const payload = jobData?.result ?? null;
-    if (payload?.result && typeof payload.result === 'object') return payload.result;
+    if (!payload || typeof payload !== 'object') return payload;
+    // Legacy nested shape: { result: { message, added, ... } }
+    if (payload.result && typeof payload.result === 'object' && payload.message == null) {
+      return payload.result;
+    }
     return payload;
   };
 

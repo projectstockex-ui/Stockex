@@ -194,7 +194,11 @@ const MarketControl = () => {
                 <div className="text-xs text-gray-400 mb-3">User ID: {zerodhaStatus.userId}</div>
                 <ZerodhaSyncProgressBar
                   job={zerodhaSyncJob}
-                  hint={syncBusy ? 'Full reset takes 2–5 min. Use Sync Popular for a faster daily refresh.' : null}
+                  hint={
+                    syncBusy
+                      ? 'First time? Use Reset & Sync (full catalog). Sync Popular only refreshes key symbols.'
+                      : (zerodhaStatus?.connected ? 'No instruments yet? Click Reset & Sync once after connecting Zerodha.' : null)
+                  }
                 />
                 <div className="flex gap-2 mb-2">
                   <button disabled={syncBusy} onClick={async (ev) => {
@@ -234,7 +238,13 @@ const MarketControl = () => {
                         '/api/zerodha/sync-all-instruments',
                         { onProgress: setZerodhaSyncJob },
                       );
-                      alert(`${data.message}\n\nAdded/Updated: ${data.added ?? data.inserted}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens ?? 0}`);
+                      alert(
+                        `${data.message}\n\nAdded/Updated: ${data.added ?? data.inserted ?? 0}\nTotal in DB: ${data.totalInDatabase ?? '—'}\nSubscribed: ${data.subscribedTokens ?? 0}${
+                          (data.totalInDatabase ?? 0) < 100
+                            ? '\n\nTip: Run Reset & Sync for the full instrument catalog (Segment Grouping needs this).'
+                            : ''
+                        }`
+                      );
                     } catch (error) {
                       alert(error.response?.data?.message || error.message || 'Error syncing instruments');
                     } finally {
