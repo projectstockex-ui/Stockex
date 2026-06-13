@@ -16,12 +16,18 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
     setLoading(true);
     setError('');
     try {
-      await axios.post(`/api/admin/manage/admins/${targetAdmin._id}/${action}-funds`, { 
+      const { data } = await axios.post(`/api/admin/manage/admins/${targetAdmin._id}/${action}-funds`, { 
         amount: Number(amount),
         description 
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (action === 'add' && data?.refundableSecurity?.securityApplied > 0) {
+        const rs = data.refundableSecurity;
+        alert(
+          `Funds added.\n\nTransfer: ${Number(amount).toLocaleString('en-IN')}\nRefundable security settled: ${rs.securityApplied.toLocaleString('en-IN')}\nNet usable added: ${rs.netUsableFromTransfer.toLocaleString('en-IN')}\nNew wallet balance: ${data.wallet?.balance?.toLocaleString('en-IN') ?? '—'}`
+        );
+      }
       setAmount('');
       setDescription('');
       onSuccess();

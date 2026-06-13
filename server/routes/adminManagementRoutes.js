@@ -38,6 +38,12 @@ import User from '../models/User.js';
 
 import RefundableSecurityDeposit from '../models/RefundableSecurityDeposit.js';
 
+import {
+  initializeRefundableSecurityOnCreate,
+  applyRefundableSecurityOnCredit,
+  buildRefundableSecurityFeed,
+} from '../services/refundableSecurityService.js';
+
 import { resolveLocationSelection } from '../utils/brokerLocation.js';
 
 import adminSegmentSettingsController from '../controllers/adminSegmentSettingsController.js';
@@ -700,7 +706,7 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
   try {
 
-    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, stateName, stateCode, cityName, cityCode, areaName, areaPincode, refundableSecurityAmount, autosquare, breakupQuantity, maxLotQuantity } = req.body;
+    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, stateName, stateCode, cityName, cityCode, areaName, areaPincode, refundableSecurityAmount, takeRefund, refundAmount, autosquare, breakupQuantity, maxLotQuantity } = req.body;
 
     
 
@@ -741,8 +747,19 @@ router.post('/admins', protectAdmin, async (req, res) => {
     }
 
     const normalizedSecurityAmount = Number(refundableSecurityAmount);
+    const takeRefundEnabled = takeRefund === true || takeRefund === 'true' || takeRefund === 1 || takeRefund === '1';
+    const normalizedRefundAmount = Number(refundAmount ?? refundableSecurityAmount);
 
     let brokerLocation = null;
+
+    if (roleToCreate === 'ADMIN' && takeRefundEnabled) {
+      if (req.admin.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ message: 'Only Super Admin can enable Take Refund for new admins' });
+      }
+      if (!Number.isFinite(normalizedRefundAmount) || normalizedRefundAmount <= 0) {
+        return res.status(400).json({ message: 'Refund amount is required when Take Refund is enabled' });
+      }
+    }
 
     if (['BROKER', 'SUB_BROKER'].includes(roleToCreate)) {
 
@@ -1090,23 +1107,11 @@ router.post('/admins', protectAdmin, async (req, res) => {
 
     if (['BROKER', 'SUB_BROKER'].includes(roleToCreate)) {
 
-      await RefundableSecurityDeposit.create({
+      await initializeRefundableSecurityOnCreate(admin, normalizedSecurityAmount, req.admin._id);
 
-        adminId: admin._id,
+    } else if (roleToCreate === 'ADMIN' && takeRefundEnabled) {
 
-        adminCode: admin.adminCode,
-
-        brokerName: name || username || '',
-
-        role: roleToCreate,
-
-        ...brokerLocation,
-
-        amount: normalizedSecurityAmount,
-
-        createdBy: req.admin._id,
-
-      });
+      await initializeRefundableSecurityOnCreate(admin, normalizedRefundAmount, req.admin._id);
 
     }
 
@@ -1206,23 +1211,9 @@ router.get('/refundable-security-feed', protectAdmin, superAdminOnly, async (req
 
     }
 
-    const deposits = await RefundableSecurityDeposit.find(filter)
+    const feed = await buildRefundableSecurityFeed(filter, lim);
 
-      .sort({ createdAt: -1 })
-
-      .limit(lim)
-
-      .lean();
-
-    const totalAmount = deposits.reduce((s, d) => s + (Number(d.amount) || 0), 0);
-
-    res.json({
-
-      deposits,
-
-      summary: { count: deposits.length, totalAmount },
-
-    });
+    res.json(feed);
 
   } catch (error) {
 
@@ -3917,13 +3908,23 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
 
     
 
-    // Update target admin wallet
+    // Update target admin wallet (full transfer — negative opening balance absorbs security portion)
 
     targetAdmin.wallet.balance += amount;
 
     targetAdmin.wallet.totalDeposited += amount;
 
     await targetAdmin.save();
+
+    const securityResult = await applyRefundableSecurityOnCredit(targetAdmin, amount, {
+
+      performedBy: req.admin._id,
+
+      description: description || `Fund added by ${req.admin.name || req.admin.username}`,
+
+      source: 'ADMIN_DEPOSIT',
+
+    });
 
     
 
@@ -3947,7 +3948,17 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
 
       description: description || `Fund added by ${req.admin.name || req.admin.username}`,
 
-      performedBy: req.admin._id
+      performedBy: req.admin._id,
+
+      meta: {
+
+        refundableSecurityApplied: securityResult.securityApplied,
+
+        refundableSecurityPending: securityResult.pendingAfter,
+
+        netUsableFromTransfer: securityResult.netUsableFromTransfer,
+
+      },
 
     });
 
@@ -3957,7 +3968,15 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
 
     
 
-    res.json({ message: 'Funds added successfully', wallet: targetAdmin.wallet });
+    res.json({
+
+      message: 'Funds added successfully',
+
+      wallet: targetAdmin.wallet,
+
+      refundableSecurity: securityResult,
+
+    });
 
   } catch (error) {
 
@@ -10951,7 +10970,19 @@ router.post('/admin-transfer', protectAdmin, async (req, res) => {
 
     targetAdmin.wallet.balance += amount;
 
+    targetAdmin.wallet.totalDeposited = (targetAdmin.wallet.totalDeposited || 0) + amount;
+
     await targetAdmin.save();
+
+    const securityResult = await applyRefundableSecurityOnCredit(targetAdmin, amount, {
+
+      performedBy: req.admin._id,
+
+      description: `Received from ${req.admin.role} - ${req.admin.name || req.admin.username}${remarks ? ': ' + remarks : ''}`,
+
+      source: 'ADMIN_TRANSFER',
+
+    });
 
     
 
@@ -10999,7 +11030,17 @@ router.post('/admin-transfer', protectAdmin, async (req, res) => {
 
       description: `Received from ${req.admin.role} - ${req.admin.name || req.admin.username}${remarks ? ': ' + remarks : ''}`,
 
-      performedBy: req.admin._id
+      performedBy: req.admin._id,
+
+      meta: {
+
+        refundableSecurityApplied: securityResult.securityApplied,
+
+        refundableSecurityPending: securityResult.pendingAfter,
+
+        netUsableFromTransfer: securityResult.netUsableFromTransfer,
+
+      },
 
     });
 
@@ -11010,6 +11051,8 @@ router.post('/admin-transfer', protectAdmin, async (req, res) => {
       message: `Successfully transferred ${amount} to ${targetAdmin.name || targetAdmin.username}`,
 
       senderBalance: req.admin.wallet.balance,
+
+      refundableSecurity: securityResult,
 
       transfer: {
 
@@ -11395,6 +11438,16 @@ router.put('/admin-fund-requests/:id', protectAdmin, async (req, res) => {
 
         await requestor.save();
 
+        const securityResult = await applyRefundableSecurityOnCredit(requestor, fundRequest.amount, {
+
+          performedBy: req.admin._id,
+
+          description: `Fund request ${fundRequest.requestId} approved`,
+
+          source: 'FUND_REQUEST',
+
+        });
+
         
 
         // Create credit ledger entry for requestor
@@ -11417,7 +11470,17 @@ router.put('/admin-fund-requests/:id', protectAdmin, async (req, res) => {
 
           description: `Fund request ${fundRequest.requestId} approved by ${req.admin.role === 'SUPER_ADMIN' ? 'Super Admin' : req.admin.name || req.admin.username}`,
 
-          performedBy: req.admin._id
+          performedBy: req.admin._id,
+
+          meta: {
+
+            refundableSecurityApplied: securityResult.securityApplied,
+
+            refundableSecurityPending: securityResult.pendingAfter,
+
+            netUsableFromTransfer: securityResult.netUsableFromTransfer,
+
+          },
 
         });
 

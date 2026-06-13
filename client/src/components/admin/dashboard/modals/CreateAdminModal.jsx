@@ -29,6 +29,8 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
     parentAdminId: '', // For assigning broker/sub-broker under specific parent
     ...EMPTY_BROKER_LOCATION,
     refundableSecurityAmount: '',
+    takeRefund: false,
+    refundAmount: '',
   });
 
   const [loading, setLoading] = useState(false);
@@ -102,6 +104,19 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
       if (!payload.parentAdminId) {
         delete payload.parentAdminId;
       }
+      if (payload.role === 'ADMIN') {
+        payload.takeRefund = !!formData.takeRefund;
+        if (formData.takeRefund) {
+          payload.refundAmount = Number(formData.refundAmount);
+        } else {
+          delete payload.takeRefund;
+          delete payload.refundAmount;
+        }
+        delete payload.refundableSecurityAmount;
+      } else {
+        delete payload.takeRefund;
+        delete payload.refundAmount;
+      }
       await axios.post('/api/admin/manage/admins', payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -134,7 +149,7 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
                   <button
                     key={role}
                     type="button"
-                    onClick={() => { setFormData({...formData, role, parentAdminId: ''}); setSelectedAdminFilter(''); }}
+                    onClick={() => { setFormData({...formData, role, parentAdminId: '', takeRefund: false, refundAmount: ''}); setSelectedAdminFilter(''); }}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
                       formData.role === role ? getRoleBadgeColor(role) + ' text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
                     }`}
@@ -226,6 +241,46 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
           <input type="email" placeholder="Email *" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" required />
           <input type="text" placeholder="Phone" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
 
+          {creatorRole === 'SUPER_ADMIN' && formData.role === 'ADMIN' && (
+            <div className="bg-dark-700/50 rounded-lg p-4 border border-purple-500/20 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-purple-300">Take Refund</div>
+                  <p className="text-[10px] text-gray-500 mt-0.5">
+                    Admin wallet opens at minus refund amount. When you add funds, refund is settled first.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFormData((prev) => ({
+                    ...prev,
+                    takeRefund: !prev.takeRefund,
+                    refundAmount: !prev.takeRefund ? prev.refundAmount : '',
+                  }))}
+                  className={`relative w-12 h-6 rounded-full shrink-0 transition-colors ${formData.takeRefund ? 'bg-green-600' : 'bg-slate-600 border border-slate-500'}`}
+                  aria-pressed={formData.takeRefund}
+                >
+                  <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${formData.takeRefund ? 'left-6' : 'left-0.5'}`} />
+                </button>
+              </div>
+              {formData.takeRefund && (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Refund Amount *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    placeholder="e.g. 100000"
+                    value={formData.refundAmount}
+                    onChange={(e) => setFormData({ ...formData, refundAmount: e.target.value })}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                    required
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           {['BROKER', 'SUB_BROKER'].includes(formData.role) && (
             <div className="bg-dark-700/50 rounded-lg p-4 border border-cyan-500/20 space-y-3">
               <h4 className="text-sm font-semibold text-cyan-400">Broker area (shown in Choose Your Broker)</h4>
@@ -245,7 +300,9 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
                   className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
                   required
                 />
-                <p className="text-[10px] text-gray-500 mt-1">Shown in Super Admin → All Transactions → Refundable Security</p>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Broker wallet opens at minus this amount. When you add funds, this security is settled first (rest goes to usable balance).
+                  </p>
               </div>
             </div>
           )}

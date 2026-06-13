@@ -58,6 +58,8 @@ const walletLedgerSchema = new mongoose.Schema({
       'PLATFORM_CHARGE_CREDIT',      // Super Admin wallet — daily platform fee collection
       'CLIENT_TRANSFER_OUT',         // Main wallet → another client's main wallet (debit)
       'CLIENT_TRANSFER_IN',          // Main wallet ← another client's main wallet (credit)
+      'REFUNDABLE_SECURITY_DUE',       // Broker create — opening security liability (wallet goes negative)
+      'REFUNDABLE_SECURITY_COLLECTED', // Security portion collected when admin funds broker
     ],
     required: true
   },
@@ -167,6 +169,15 @@ const walletLedgerSchema = new mongoose.Schema({
     chargeKind: { type: String },
     platformPct: { type: Number },
     clientNetPnL: { type: Number },
+    /** Refundable security on broker fund transfers */
+    refundableSecurityApplied: { type: Number },
+    refundableSecurityPending: { type: Number },
+    netUsableFromTransfer: { type: Number },
+    depositId: { type: mongoose.Schema.Types.ObjectId },
+    collectionId: { type: mongoose.Schema.Types.ObjectId },
+    brokerAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+    brokerAdminCode: { type: String },
+    securityAmount: { type: Number },
   },
 }, { timestamps: true });
 

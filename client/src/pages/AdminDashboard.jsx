@@ -7892,6 +7892,10 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
 
     refundableSecurityAmount: '',
 
+    takeRefund: false,
+
+    refundAmount: '',
+
   });
 
   const [loading, setLoading] = useState(false);
@@ -8036,6 +8040,32 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
 
       }
 
+      if (payload.role === 'ADMIN') {
+
+        payload.takeRefund = !!formData.takeRefund;
+
+        if (formData.takeRefund) {
+
+          payload.refundAmount = Number(formData.refundAmount);
+
+        } else {
+
+          delete payload.takeRefund;
+
+          delete payload.refundAmount;
+
+        }
+
+        delete payload.refundableSecurityAmount;
+
+      } else {
+
+        delete payload.takeRefund;
+
+        delete payload.refundAmount;
+
+      }
+
       await axios.post('/api/admin/manage/admins', payload, {
 
         headers: { Authorization: `Bearer ${token}` }
@@ -8100,7 +8130,7 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
 
                       type="button"
 
-                      onClick={() => { setFormData({ ...formData, role, parentAdminId: '' }); setSelectedAdminFilter(''); }}
+                      onClick={() => { setFormData({ ...formData, role, parentAdminId: '', takeRefund: false, refundAmount: '' }); setSelectedAdminFilter(''); }}
 
                       className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData.role === role ? getRoleBadgeColor(role) + ' text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
 
@@ -8280,6 +8310,46 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
 
             <input type="text" placeholder="Phone" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
 
+            {creatorRole === 'SUPER_ADMIN' && formData.role === 'ADMIN' && (
+              <div className="bg-dark-700/50 rounded-lg p-4 border border-purple-500/20 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-purple-300">Take Refund</div>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      Admin wallet opens at minus refund amount. When you add funds, refund is settled first.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({
+                      ...prev,
+                      takeRefund: !prev.takeRefund,
+                      refundAmount: !prev.takeRefund ? prev.refundAmount : '',
+                    }))}
+                    className={`relative w-12 h-6 rounded-full shrink-0 transition-colors ${formData.takeRefund ? 'bg-green-600' : 'bg-slate-600 border border-slate-500'}`}
+                    aria-pressed={formData.takeRefund}
+                  >
+                    <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${formData.takeRefund ? 'left-6' : 'left-0.5'}`} />
+                  </button>
+                </div>
+                {formData.takeRefund && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Refund Amount *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="0.01"
+                      placeholder="e.g. 100000"
+                      value={formData.refundAmount}
+                      onChange={(e) => setFormData({ ...formData, refundAmount: e.target.value })}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {['BROKER', 'SUB_BROKER'].includes(formData.role) && (
               <div className="bg-dark-700/50 rounded-lg p-4 border border-cyan-500/20 space-y-3">
                 <h4 className="text-sm font-semibold text-cyan-400">Broker area (shown in Choose Your Broker)</h4>
@@ -8299,7 +8369,9 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
                     className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
                     required
                   />
-                  <p className="text-[10px] text-gray-500 mt-1">Shown in Super Admin → All Transactions → Refundable Security</p>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Broker wallet opens at minus this amount. When you add funds, this security is settled first (rest goes to usable balance).
+                  </p>
                 </div>
               </div>
             )}
@@ -8425,7 +8497,7 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess, isSuper
 
     try {
 
-      await axios.post(`/api/admin/manage/admins/${targetAdmin._id}/${action}-funds`, {
+      const { data } = await axios.post(`/api/admin/manage/admins/${targetAdmin._id}/${action}-funds`, {
 
         amount: Number(amount),
 
@@ -8436,6 +8508,18 @@ const AdminFundModal = ({ admin: targetAdmin, token, onClose, onSuccess, isSuper
         headers: { Authorization: `Bearer ${token}` }
 
       });
+
+      if (action === 'add' && data?.refundableSecurity?.securityApplied > 0) {
+
+        const rs = data.refundableSecurity;
+
+        alert(
+
+          `Funds added.\n\nTransfer: ${Number(amount).toLocaleString('en-IN')}\nRefundable security settled: ${rs.securityApplied.toLocaleString('en-IN')}\nNet usable added: ${rs.netUsableFromTransfer.toLocaleString('en-IN')}\nNew wallet balance: ${data.wallet?.balance?.toLocaleString('en-IN') ?? '—'}`
+
+        );
+
+      }
 
       setAmount('');
 
@@ -32451,11 +32535,11 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
       {scope === 'security' && securitySummary && (
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-xl">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-3xl">
 
           <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2">
 
-            <div className="text-[10px] text-gray-500 uppercase">Total security deposited</div>
+            <div className="text-[10px] text-gray-500 uppercase">Total security due</div>
 
             <div className="text-base font-bold text-amber-300 tabular-nums">
 
@@ -32464,6 +32548,32 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
             </div>
 
             <div className="text-[10px] text-gray-600">{securitySummary.count ?? 0} broker(s)</div>
+
+          </div>
+
+          <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Collected</div>
+
+            <div className="text-base font-bold text-green-400 tabular-nums">
+
+              {Number(securitySummary.totalCollected || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
+
+            <div className="text-[10px] text-gray-600">{securitySummary.collectionCount ?? 0} collection(s)</div>
+
+          </div>
+
+          <div className="rounded-lg border border-orange-500/25 bg-orange-950/15 px-3 py-2">
+
+            <div className="text-[10px] text-gray-500 uppercase">Pending</div>
+
+            <div className="text-base font-bold text-orange-300 tabular-nums">
+
+              {Number(securitySummary.totalPending || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+            </div>
 
           </div>
 
@@ -33338,6 +33448,8 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                 <tr>
 
+                  <th className="text-left px-3 py-2 text-gray-400 font-semibold">Type</th>
+
                   <th className="text-left px-3 py-2 text-gray-400 font-semibold">Broker name</th>
 
                   <th className="text-left px-3 py-2 text-gray-400 font-semibold">Date</th>
@@ -33356,11 +33468,21 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                   <tr key={row._id} className="border-t border-dark-600 hover:bg-dark-700/40">
 
+                    <td className="px-3 py-2">
+
+                      <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded ${row.rowType === 'COLLECTED' ? 'bg-green-500/20 text-green-400' : 'bg-amber-500/20 text-amber-300'}`}>
+
+                        {row.rowType === 'COLLECTED' ? 'Collected' : 'Due'}
+
+                      </span>
+
+                    </td>
+
                     <td className="px-3 py-2 text-gray-200">
 
                       <div className="font-medium">{row.brokerName || '—'}</div>
 
-                      <div className="text-[10px] text-gray-500 font-mono">{row.adminCode} · {row.role === 'SUB_BROKER' ? 'Sub-Broker' : 'Broker'}</div>
+                      <div className="text-[10px] text-gray-500 font-mono">{row.adminCode} · {row.role === 'ADMIN' ? 'Admin' : row.role === 'SUB_BROKER' ? 'Sub-Broker' : 'Broker'}</div>
 
                     </td>
 
@@ -33372,9 +33494,25 @@ function SuperAdminClientWallet({ embedded = false, feedMode = 'superadmin' }) {
 
                     <td className="px-3 py-2 text-gray-300 text-xs">{formatBrokerLocation(row) || '—'}</td>
 
-                    <td className="px-3 py-2 text-right font-bold text-amber-300 tabular-nums">
+                    <td className="px-3 py-2 text-right font-bold tabular-nums">
 
-                      {Number(row.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      <span className={row.rowType === 'COLLECTED' ? 'text-green-400' : 'text-amber-300'}>
+
+                        {row.rowType === 'COLLECTED' ? '+' : ''}
+
+                        {Number(row.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+                      </span>
+
+                      {row.rowType === 'DUE' && row.pendingAmount != null && Number(row.pendingAmount) > 0 && (
+
+                        <div className="text-[10px] text-orange-400 font-normal">
+
+                          Pending: {Number(row.pendingAmount).toLocaleString('en-IN')}
+
+                        </div>
+
+                      )}
 
                     </td>
 
