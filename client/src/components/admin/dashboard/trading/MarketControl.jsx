@@ -191,7 +191,15 @@ const MarketControl = () => {
             </div>
             {zerodhaStatus?.connected ? (
               <>
-                <div className="text-xs text-gray-400 mb-3">User ID: {zerodhaStatus.userId}</div>
+                <div className="text-xs text-gray-400 mb-3">
+                  User ID: {zerodhaStatus.userId}
+                  {zerodhaStatus.instrumentCount != null && (
+                    <span className={zerodhaStatus.instrumentCount > 0 ? ' text-green-400' : ' text-amber-400'}>
+                      {' '}· Instruments in DB: {zerodhaStatus.instrumentCount.toLocaleString()}
+                      {zerodhaStatus.instrumentCount === 0 ? ' — run Reset & Sync on this server' : ''}
+                    </span>
+                  )}
+                </div>
                 <ZerodhaSyncProgressBar
                   job={zerodhaSyncJob}
                   hint={

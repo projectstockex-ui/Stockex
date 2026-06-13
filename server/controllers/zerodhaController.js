@@ -986,7 +986,13 @@ class ZerodhaController {
 
       }
 
-
+      let instrumentCount = null;
+      try {
+        const Instrument = (await import('../models/Instrument.js')).default;
+        instrumentCount = await Instrument.countDocuments({ isEnabled: true });
+      } catch {
+        instrumentCount = null;
+      }
 
       return res.json({
 
@@ -1000,7 +1006,9 @@ class ZerodhaController {
 
         isProduction,
 
-        callbackUrlMatch: expectedCallbackUrl === this.session?.callbackUrl
+        callbackUrlMatch: expectedCallbackUrl === this.session?.callbackUrl,
+
+        instrumentCount,
 
       });
 
