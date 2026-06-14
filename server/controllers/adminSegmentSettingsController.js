@@ -183,7 +183,7 @@ class AdminSegmentSettingsController {
             return res.status(400).json({ message: enableCheck.message });
           }
 
-          const intradayOnlyCheck = validateSegmentIntradayOnlyHierarchy(parentSeg, segData, currentAdmin.role);
+          const intradayOnlyCheck = validateSegmentIntradayOnlyHierarchy(parentSeg, segData, currentAdmin.role, segName);
           if (!intradayOnlyCheck.allowed) {
             console.log('[AdminSegmentSettings] BLOCKING:', segName, '-', intradayOnlyCheck.message);
             return res.status(400).json({ message: intradayOnlyCheck.message });
@@ -332,7 +332,7 @@ class AdminSegmentSettingsController {
           for (const [segName, segData] of Object.entries(plain)) {
             if (!segData || typeof segData !== 'object') continue;
             const parentSeg = parentSegPerms[segName] || {};
-            plain[segName] = enforceIntradayOnlyHierarchyOnSegment(parentSeg, segData, currentAdmin.role);
+            plain[segName] = enforceIntradayOnlyHierarchyOnSegment(parentSeg, segData, currentAdmin.role, segName);
           }
         }
 

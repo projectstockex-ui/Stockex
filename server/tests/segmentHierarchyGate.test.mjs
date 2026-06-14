@@ -54,6 +54,26 @@ test('intraday-only parent locks child from disabling flag or opening lot/qty se
   assert.equal(superAdminLot.allowed, true);
 });
 
+test('CRYPTOFUT lot/qty settings allowed when parent intraday-only locked', () => {
+  const parentSeg = { defaultIntradayOnly: true, enableLotSettings: true, enableQuantitySettings: true };
+
+  const lotAllowed = validateEditorCanEnableLotQtyMode(parentSeg, 'enableLotSettings', true, 'ADMIN', 'CRYPTOFUT');
+  assert.equal(lotAllowed.allowed, true);
+
+  const qtyAllowed = validateEditorCanEnableLotQtyMode(parentSeg, 'enableQuantitySettings', true, 'ADMIN', 'CRYPTOFUT');
+  assert.equal(qtyAllowed.allowed, true);
+
+  const childAttempt = {
+    defaultIntradayOnly: true,
+    enableLotSettings: true,
+    enableQuantitySettings: true,
+  };
+  const enforced = enforceIntradayOnlyHierarchyOnSegment(parentSeg, childAttempt, 'ADMIN', 'CRYPTOFUT');
+  assert.equal(enforced.defaultIntradayOnly, true);
+  assert.equal(enforced.enableLotSettings, true);
+  assert.equal(enforced.enableQuantitySettings, true);
+});
+
 test('validateSegmentIntradayOnlyHierarchy and enforce on save', () => {
   const parentSeg = { defaultIntradayOnly: true };
   const childAttempt = {
@@ -62,10 +82,10 @@ test('validateSegmentIntradayOnlyHierarchy and enforce on save', () => {
     enableQuantitySettings: true,
   };
 
-  const blocked = validateSegmentIntradayOnlyHierarchy(parentSeg, childAttempt, 'ADMIN');
+  const blocked = validateSegmentIntradayOnlyHierarchy(parentSeg, childAttempt, 'ADMIN', 'NSEFUT');
   assert.equal(blocked.allowed, false);
 
-  const enforced = enforceIntradayOnlyHierarchyOnSegment(parentSeg, childAttempt, 'ADMIN');
+  const enforced = enforceIntradayOnlyHierarchyOnSegment(parentSeg, childAttempt, 'ADMIN', 'NSEFUT');
   assert.equal(enforced.defaultIntradayOnly, true);
   assert.equal(enforced.enableLotSettings, false);
   assert.equal(enforced.enableQuantitySettings, false);
