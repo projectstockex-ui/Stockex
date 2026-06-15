@@ -33,7 +33,7 @@ const niftyNumberBetSchema = new mongoose.Schema({
   // Status: pending (waiting for result), won, lost, expired (removed after deadline, stake refunded)
   status: {
     type: String,
-    enum: ['pending', 'won', 'lost', 'expired'],
+    enum: ['pending', 'settling', 'won', 'lost', 'expired'],
     default: 'pending'
   },
   // The actual Nifty closing decimal (.00-.99)

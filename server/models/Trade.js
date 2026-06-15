@@ -443,5 +443,6 @@ tradeSchema.index({ token: 1, status: 1 }); // For price updates by token
 tradeSchema.index({ openedAt: -1 });
 tradeSchema.index({ closedAt: -1 });
 tradeSchema.index({ isCrypto: 1, status: 1 }); // For crypto trades
+tradeSchema.index({ user: 1, status: 1, symbol: 1 }); // For position queries by user and symbol
 
 export default mongoose.model('Trade', tradeSchema);

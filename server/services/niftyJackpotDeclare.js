@@ -3,6 +3,7 @@ import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import { buildNiftyJackpotIstDayQuery } from '../utils/niftyJackpotDayScope.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import User from '../models/User.js';
+import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import { sortJackpotBidsByDistanceToReference } from '../utils/niftyJackpotRank.js';
 import { resolveJackpotPrizePercentForRank } from '../utils/niftyJackpotPrize.js';
 import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.js';
@@ -100,8 +101,28 @@ export async function declareNiftyJackpotResult(date) {
   let totalBrokerageDistributed = 0;
 
   for (let i = 0; i < pendingBids.length; i++) {
-    const bid = pendingBids[i];
-    const prizeInfo = bidPrizeMap.get(bid._id.toString());
+    const pendingBid = pendingBids[i];
+    const prizeInfo = bidPrizeMap.get(pendingBid._id.toString());
+    const bid = await NiftyJackpotBid.findOneAndUpdate(
+      { _id: pendingBid._id, status: 'pending' },
+      { $set: { status: 'settling' } },
+      { new: true }
+    );
+    if (!bid) continue;
+    const alreadyCredited = await GamesWalletLedger.exists({
+      user: bid.user,
+      gameId: 'niftyJackpot',
+      entryType: 'credit',
+      'meta.bidId': bid._id,
+      'meta.rank': prizeInfo.displayRank,
+    });
+    if (alreadyCredited) {
+      bid.rank = prizeInfo.displayRank;
+      bid.resultDeclaredAt = new Date();
+      bid.status = prizeInfo.grossPrizePercent > 0 ? 'won' : 'lost';
+      await bid.save();
+      continue;
+    }
     bid.rank = prizeInfo.displayRank;
     bid.resultDeclaredAt = new Date();
 

@@ -3065,8 +3065,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   );
 
   // Ticket conversion helpers
-  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
-  const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
+  const toTokens = (rs) => parseFloat((rs / actualTokenValue).toFixed(2));
+  const toRupees = (tokens) => parseFloat((tokens * actualTokenValue).toFixed(2));
   const balanceTokens = toTokens(balance);
   const minBetTokens = settings?.minTickets || 1;
   const maxBetTokens = settings?.maxTickets || 500;
@@ -6230,7 +6230,7 @@ const NiftyNumberScreen = ({
                             </span>
                           </div>
                           <p className="text-[10px] text-center text-gray-500 mt-2">
-                            Single digit is also allowed (5 -> 05)
+                            Single digit is also allowed (5 - 05)
                           </p>
                           <button
                             type="button"
@@ -7217,9 +7217,9 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
     import.meta.env.VITE_NIFTY_JACKPOT_TEST_BIDDING === '1';
 
   // Ticket conversion helpers
-  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
+  const toTokens = (rs) => parseFloat((rs / actualTokenValue).toFixed(2));
   const balanceTokens = toTokens(balance);
-  const oneTicketRs = Number(tokenValue) || 300;
+  const oneTicketRs = Number(actualTokenValue) || 300;
 
   const prizeStructureRows = useMemo(() => {
     const n = Math.max(1, Math.min(100, Number(topWinners) || 20));

@@ -1,6 +1,7 @@
 import User from '../models/User.js';
 import GameSettings from '../models/GameSettings.js';
 import BtcNumberBet from '../models/BtcNumberBet.js';
+import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import { closingPriceToLeftTwoDigits } from '../utils/niftyNumberResult.js';
 import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.js';
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
@@ -77,15 +78,37 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
       : null;
 
   for (const bet of pendingBets) {
-    const won = bet.selectedNumber === num;
-    bet.resultNumber = num;
-    bet.closingPrice = closingNum;
-    bet.resultDeclaredAt = new Date();
+    const claimed = await BtcNumberBet.findOneAndUpdate(
+      { _id: bet._id, status: 'pending' },
+      { $set: { status: 'settling' } },
+      { new: true }
+    );
+    if (!claimed) continue;
+    const alreadyCredited = await GamesWalletLedger.exists({
+      user: claimed.user,
+      gameId: 'btcNumber',
+      entryType: 'credit',
+      'meta.betId': claimed._id,
+      'meta.resultNumber': num,
+    });
+    if (alreadyCredited) {
+      claimed.status = claimed.selectedNumber === num ? 'won' : 'lost';
+      claimed.resultNumber = num;
+      claimed.closingPrice = closingNum;
+      claimed.resultDeclaredAt = new Date();
+      await claimed.save();
+      continue;
+    }
+    const betDoc = claimed;
+    const won = betDoc.selectedNumber === num;
+    betDoc.resultNumber = num;
+    betDoc.closingPrice = closingNum;
+    betDoc.resultDeclaredAt = new Date();
 
-    const user = await User.findById(bet.user).populate('admin');
+    const user = await User.findById(betDoc.user).populate('admin');
 
     if (won) {
-      const grossPrize = computeDecimalNumberWinGrossPrize(gameConfig, settings, bet.quantity);
+      const grossPrize = computeDecimalNumberWinGrossPrize(gameConfig, settings, betDoc.quantity);
       let totalWinnerBrokerage = 0;
       let grossBreakdown = null;
 
@@ -100,35 +123,35 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
       }
 
       const userCredit = grossPrize;
-      bet.status = 'won';
-      bet.profit = parseFloat((grossPrize - bet.amount).toFixed(2));
+      betDoc.status = 'won';
+      betDoc.profit = parseFloat((grossPrize - betDoc.amount).toFixed(2));
 
       if (user) {
         const poolPay = await debitBtcUpDownSuperAdminPool(
           userCredit,
-          `BTC Number — pay winner gross prize (bet ${bet._id})`
+          `BTC Number — pay winner gross prize (bet ${betDoc._id})`
         );
         if (!poolPay.ok) {
-          console.error(`[BTC Number] SA pool debit failed for user ${bet.user} gross ${userCredit}`);
+          console.error(`[BTC Number] SA pool debit failed for user ${betDoc.user} gross ${userCredit}`);
         }
 
-        const roundPnL = parseFloat((grossPrize - bet.amount).toFixed(2));
-        const gw = await atomicGamesWalletUpdate(User, bet.user, {
+        const roundPnL = parseFloat((grossPrize - betDoc.amount).toFixed(2));
+        const gw = await atomicGamesWalletUpdate(User, betDoc.user, {
           balance: userCredit,
-          usedMargin: -bet.amount,
+          usedMargin: -betDoc.amount,
           realizedPnL: roundPnL,
           todayRealizedPnL: roundPnL,
         });
-        await recordGamesWalletLedger(bet.user, {
+        await recordGamesWalletLedger(betDoc.user, {
           gameId: 'btcNumber',
           entryType: 'credit',
           amount: userCredit,
           balanceAfter: gw.balance,
           description: 'BTC Number — result: win (gross prize, stake not re-credited; hierarchy from pool)',
-          orderPlacedAt: bet.createdAt,
+          orderPlacedAt: betDoc.createdAt,
           meta: {
             won: true,
-            betId: bet._id,
+            betId: betDoc._id,
             resultNumber: num,
             grossPrize,
             brokerageDeducted: totalWinnerBrokerage,
@@ -138,14 +161,14 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
         });
 
         if (useGrossPrizeHierarchy && totalWinnerBrokerage > 0 && grossBreakdown) {
-          await creditNiftyJackpotGrossHierarchyFromPool(bet.user, user, grossBreakdown, {
+          await creditNiftyJackpotGrossHierarchyFromPool(betDoc.user, user, grossBreakdown, {
             gameLabel: 'BTC Number',
             gameKey: 'btcNumber',
             logTag: 'BtcNumberGrossHierarchy',
           });
         } else if (totalWinnerBrokerage > 0) {
           await distributeWinBrokerage(
-            bet.user,
+            betDoc.user,
             user,
             totalWinnerBrokerage,
             'BTC Number',
@@ -159,9 +182,9 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
         }
 
         try {
-          const userTotalStake = stakeByUser.get(bet.user.toString()) || 0;
+          const userTotalStake = stakeByUser.get(betDoc.user.toString()) || 0;
           await creditReferralPercentOfTotalStake({
-            referredUserId: bet.user,
+            referredUserId: betDoc.user,
             gameType: 'btcNumber',
             totalStake: userTotalStake,
             settlementDay: date,
@@ -175,23 +198,23 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
       totalPaidOut += userCredit;
       winnersCount++;
     } else {
-      bet.status = 'lost';
-      bet.profit = -bet.amount;
+      betDoc.status = 'lost';
+      betDoc.profit = -betDoc.amount;
 
       if (user) {
-        await atomicGamesWalletUpdate(User, bet.user, {
-          usedMargin: -bet.amount,
-          realizedPnL: -bet.amount,
-          todayRealizedPnL: -bet.amount,
+        await atomicGamesWalletUpdate(User, betDoc.user, {
+          usedMargin: -betDoc.amount,
+          realizedPnL: -betDoc.amount,
+          todayRealizedPnL: -betDoc.amount,
         });
-        bet.distribution = { adminShare: 0, superAdminShare: 0, platformShare: 0 };
+        betDoc.distribution = { adminShare: 0, superAdminShare: 0, platformShare: 0 };
       }
 
-      totalCollected += bet.amount;
+      totalCollected += betDoc.amount;
       losersCount++;
     }
 
-    await bet.save();
+    await betDoc.save();
   }
 
   return {

@@ -28,7 +28,7 @@ const btcNumberBetSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'won', 'lost', 'expired'],
+    enum: ['pending', 'settling', 'won', 'lost', 'expired'],
     default: 'pending',
   },
   resultNumber: {

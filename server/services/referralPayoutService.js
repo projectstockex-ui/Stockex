@@ -8,6 +8,8 @@ import {
   getReferralEligibilitySettings 
 } from './superAdminEarningsService.js';
 import { isReferralEnabledForUser } from '../utils/referralDistributionHelper.js';
+import { atomicGamesWalletUpdate, ensureGamesWallet } from '../utils/gamesWallet.js';
+import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 
 /**
  * Referral Payout Service
@@ -110,42 +112,105 @@ async function processImmediatePayout(referredUserId, amount, segment, metadata 
     }
 
     // Get the referrer
-    const referrer = await User.findById(referredUser.referredBy).select('username email wallet');
+    const referrer = await User.findById(referredUser.referredBy).select('username email wallet gamesWallet mcxWallet');
     if (!referrer) {
       return { success: false, reason: 'Referrer not found' };
     }
 
-    // Credit the referrer's wallet
-    referrer.wallet = referrer.wallet || {};
-    referrer.wallet.cashBalance = (referrer.wallet.cashBalance || 0) + amount;
-    referrer.wallet.tradingBalance = (referrer.wallet.tradingBalance || 0) + amount;
-    referrer.wallet.realizedPnL = (referrer.wallet.realizedPnL || 0) + amount;
-    referrer.wallet.todayRealizedPnL = (referrer.wallet.todayRealizedPnL || 0) + amount;
-    referrer.wallet.balance = (referrer.wallet.balance || 0) + amount;
+    // Credit the appropriate wallet based on segment
+    let balanceAfter;
+    if (segment === 'games') {
+      // Credit games wallet
+      ensureGamesWallet(referrer);
+      const updatedGamesWallet = await atomicGamesWalletUpdate(User, referrer._id, {
+        balance: amount,
+        realizedPnL: amount,
+        todayRealizedPnL: amount,
+      });
+      balanceAfter = updatedGamesWallet.balance;
+
+      // Create games wallet ledger entry
+      await recordGamesWalletLedger(referrer._id, {
+        gameId: metadata.gameKey || 'referral',
+        entryType: 'credit',
+        amount,
+        balanceAfter,
+        description: `Referral commission: ${referredUser.username} (${segment})`,
+        meta: {
+          profitKind: 'REFERRAL_COMMISSION',
+          relatedUserId: referredUserId,
+          segment,
+          referredUsername: referredUser.username,
+          kind: 'referral_payout',
+          ...metadata
+        }
+      });
+    } else if (segment === 'trading' || segment === 'mcx') {
+      // Credit MCX wallet for trading/MCX referrals
+      referrer.mcxWallet = referrer.mcxWallet || {};
+      referrer.mcxWallet.balance = (referrer.mcxWallet.balance || 0) + amount;
+      referrer.mcxWallet.realizedPnL = (referrer.mcxWallet.realizedPnL || 0) + amount;
+      referrer.mcxWallet.todayRealizedPnL = (referrer.mcxWallet.todayRealizedPnL || 0) + amount;
+      await referrer.save();
+      balanceAfter = referrer.mcxWallet.balance;
+
+      // Create wallet ledger entry with MCX segment
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: referrer._id,
+        userId: referrer._id,
+        username: referrer.username,
+        type: 'CREDIT',
+        reason: 'REFERRAL_COMMISSION',
+        amount,
+        balanceAfter,
+        description: `Referral commission: ${referredUser.username} (${segment})`,
+        meta: {
+          profitKind: 'REFERRAL_COMMISSION',
+          relatedUserId: referredUserId,
+          segment: 'mcx',
+          referredUsername: referredUser.username,
+          kind: 'referral_payout',
+          ...metadata
+        }
+      });
+    } else {
+      // Credit main wallet for other segments (crypto, forex, etc.)
+      referrer.wallet = referrer.wallet || {};
+      referrer.wallet.cashBalance = (referrer.wallet.cashBalance || 0) + amount;
+      referrer.wallet.tradingBalance = (referrer.wallet.tradingBalance || 0) + amount;
+      referrer.wallet.realizedPnL = (referrer.wallet.realizedPnL || 0) + amount;
+      referrer.wallet.todayRealizedPnL = (referrer.wallet.todayRealizedPnL || 0) + amount;
+      referrer.wallet.balance = (referrer.wallet.balance || 0) + amount;
+      await referrer.save();
+      balanceAfter = referrer.wallet.balance;
+
+      // Create wallet ledger entry
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: referrer._id,
+        userId: referrer._id,
+        username: referrer.username,
+        type: 'CREDIT',
+        reason: 'REFERRAL_COMMISSION',
+        amount,
+        balanceAfter,
+        description: `Referral commission: ${referredUser.username} (${segment})`,
+        meta: {
+          profitKind: 'REFERRAL_COMMISSION',
+          relatedUserId: referredUserId,
+          segment,
+          referredUsername: referredUser.username,
+          kind: 'referral_payout',
+          ...metadata
+        }
+      });
+    }
+
+    // Update referral stats
     referrer.referralStats = referrer.referralStats || {};
     referrer.referralStats.totalReferralEarnings = (referrer.referralStats.totalReferralEarnings || 0) + amount;
-    
     await referrer.save();
-
-    // Create wallet ledger entry
-    await WalletLedger.create({
-      ownerType: 'USER',
-      ownerId: referrer._id,
-      userId: referrer._id,
-      username: referrer.username,
-      type: 'CREDIT',
-      reason: 'REFERRAL_COMMISSION',
-      amount,
-      balanceAfter: referrer.wallet.balance,
-      description: `Referral commission: ${referredUser.username} (${segment})`,
-      meta: {
-        profitKind: 'REFERRAL_COMMISSION',
-        relatedUserId: referredUserId,
-        segment,
-        referredUsername: referredUser.username,
-        ...metadata
-      }
-    });
 
     // Update referral record
     await Referral.findOneAndUpdate(

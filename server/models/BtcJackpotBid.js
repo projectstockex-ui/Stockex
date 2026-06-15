@@ -32,7 +32,7 @@ const btcJackpotBidSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['pending', 'won', 'lost', 'voided'],
+      enum: ['pending', 'settling', 'won', 'lost', 'voided'],
       default: 'pending',
     },
 

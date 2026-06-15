@@ -5,6 +5,7 @@ import BtcJackpotResult from '../models/BtcJackpotResult.js';
 import BtcJackpotBank from '../models/BtcJackpotBank.js';
 import GameSettings from '../models/GameSettings.js';
 import User from '../models/User.js';
+import GamesWalletLedger from '../models/GamesWalletLedger.js';
 
 import { btcJackpotDayFilter } from '../utils/btcJackpotDay.js';
 import {
@@ -278,8 +279,30 @@ export async function declareBtcJackpotForDate(date) {
     const perBidGross = perBidPct > 0 ? round2((totalPool * perBidPct) / 100) : 0;
 
     for (let k = 0; k < g.bids.length; k++) {
-      const bid = g.bids[k];
+      const groupedBid = g.bids[k];
       const rankDisplay = g.startRank + k;
+      const bid = await BtcJackpotBid.findOneAndUpdate(
+        { _id: groupedBid._id, status: 'pending' },
+        { $set: { status: 'settling' } },
+        { new: true }
+      );
+      if (!bid) continue;
+      const alreadyCredited = await GamesWalletLedger.exists({
+        user: bid.user,
+        gameId: 'btcJackpot',
+        entryType: 'credit',
+        'meta.bidId': bid._id,
+        'meta.rank': rankDisplay,
+      });
+      if (alreadyCredited) {
+        bid.rank = rankDisplay;
+        bid.resultDeclaredAt = new Date();
+        bid.isTied = g.tied;
+        bid.tiedGroupSize = g.bids.length;
+        bid.status = perBidGross > 0 ? 'won' : 'lost';
+        await bid.save();
+        continue;
+      }
       bid.rank = rankDisplay;
       bid.resultDeclaredAt = new Date();
       bid.isTied = g.tied;

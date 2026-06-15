@@ -67,7 +67,7 @@ const niftyJackpotBidSchema = new mongoose.Schema({
   // Status: pending (waiting for result), won (in top N), lost, expired (removed after deadline, stake refunded)
   status: {
     type: String,
-    enum: ['pending', 'won', 'lost', 'expired'],
+    enum: ['pending', 'settling', 'won', 'lost', 'expired'],
     default: 'pending'
   },
   // Admin who manages this user

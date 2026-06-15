@@ -385,6 +385,7 @@ instrumentSchema.index({ exchange: 1, segment: 1, isEnabled: 1 });
 instrumentSchema.index({ category: 1, isEnabled: 1 });
 instrumentSchema.index({ isEnabled: 1, adminScheduledReopenAt: 1 });
 instrumentSchema.index({ symbol: 'text', name: 'text' });
+instrumentSchema.index({ symbol: 1, exchange: 1 }); // For instrument lookup by symbol and exchange
 
 // Static method to get enabled instruments for a user's admin
 instrumentSchema.statics.getEnabledForAdmin = async function(adminCode) {

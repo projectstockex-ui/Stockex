@@ -256,7 +256,8 @@ export const registerDemoUser = async (req, res) => {
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
+    const user = await User.findOne({ email: String(email || '').trim().toLowerCase() })
+      .populate('createdBy', 'adminCode name username role');
     
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ message: 'Invalid email or password' });
@@ -269,14 +270,16 @@ export const loginUser = async (req, res) => {
     // Track login metadata (web + mobile may be active concurrently).
     const userAgent = req.headers['user-agent'] || 'Unknown device';
     const deviceType = userAgent.includes('Mobile') ? 'Mobile' : 'Desktop';
-    await User.updateOne(
+    User.updateOne(
       { _id: user._id },
       {
         isLogin: true,
         lastLoginAt: new Date(),
         lastLoginDevice: deviceType
       }
-    );
+    ).catch((error) => {
+      console.warn('[AuthController] Login metadata update failed:', error?.message || error);
+    });
 
     const parentAdmin = user.createdBy
       ? {
@@ -306,7 +309,9 @@ export const loginUser = async (req, res) => {
     });
   } catch (error) {
     console.error('[AuthController] Error in user login:', error);
-    res.status(500).json({ message: 'Login failed', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+    res.status(500).json({
+      message: error?.message || 'Login failed'
+    });
   }
 };
 

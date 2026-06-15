@@ -12,6 +12,8 @@ import Referral from '../models/Referral.js';
 import GameSettings from '../models/GameSettings.js';
 import WalletLedger from '../models/WalletLedger.js';
 import { isReferralEnabledForUser } from '../utils/referralDistributionHelper.js';
+import { atomicGamesWalletUpdate, ensureGamesWallet } from '../utils/gamesWallet.js';
+import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 
 const GAME_LABELS = {
   btcUpDown: 'BTC Up/Down',
@@ -205,26 +207,25 @@ export async function creditReferralPercentOfTotalStake({
           : `${rewardPercent}% of total stake (${stake.toFixed(2)})`;
     const description = `Referral bonus: ${baseDesc} — ${referredUser.username} in ${gl}${rankBit} · ${day} · ${scope}`;
 
-    referrer.wallet = referrer.wallet || {};
-    referrer.wallet.cashBalance = (referrer.wallet.cashBalance || 0) + rewardAmount;
-    referrer.wallet.tradingBalance = (referrer.wallet.tradingBalance || 0) + rewardAmount;
-    referrer.wallet.realizedPnL = (referrer.wallet.realizedPnL || 0) + rewardAmount;
-    referrer.wallet.todayRealizedPnL = (referrer.wallet.todayRealizedPnL || 0) + rewardAmount;
-    referrer.wallet.balance = (referrer.wallet.balance || 0) + rewardAmount;
+    // Credit games wallet for game referrals
+    ensureGamesWallet(referrer);
+    const updatedGamesWallet = await atomicGamesWalletUpdate(User, referrer._id, {
+      balance: rewardAmount,
+      realizedPnL: rewardAmount,
+      todayRealizedPnL: rewardAmount,
+    });
+
     referrer.referralStats = referrer.referralStats || {};
     referrer.referralStats.totalReferralEarnings =
       (referrer.referralStats.totalReferralEarnings || 0) + rewardAmount;
     await referrer.save();
 
-    await WalletLedger.create({
-      ownerType: 'USER',
-      ownerId: referrer._id,
-      userId: referrer._id,
-      username: referrer.username,
-      type: 'CREDIT',
-      reason: 'REFERRAL_COMMISSION',
+    // Create games wallet ledger entry
+    await recordGamesWalletLedger(referrer._id, {
+      gameId: gameType,
+      entryType: 'credit',
       amount: rewardAmount,
-      balanceAfter: referrer.wallet.balance,
+      balanceAfter: updatedGamesWallet.balance,
       description,
       meta: {
         profitKind: 'REFERRAL_COMMISSION',

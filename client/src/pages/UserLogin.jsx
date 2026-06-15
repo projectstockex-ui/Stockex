@@ -302,7 +302,7 @@ const UserLogin = () => {
       }
       navigate('/user/home');
     } catch (err) {
-      setError(err.response?.data?.message || 'Something went wrong');
+      setError(err.response?.data?.message || err.message || 'Something went wrong');
     } finally {
       setLoading(false);
     }

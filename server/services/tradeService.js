@@ -57,6 +57,9 @@ import {
 } from '../utils/mlmBrokerage.js';
 import { profitAllowedForWallet } from '../utils/walletBlock.js';
 
+const segmentSettingsCache = new Map();
+const SEGMENT_SETTINGS_CACHE_TTL = 5 * 60 * 1000;
+
 class TradeService {
   
   // Check if market is open for trading
@@ -771,9 +774,19 @@ static _SEGMENT_MERGE_FALLBACK = {
   /**
    * Precedence: scaffold → SystemSettings.adminSegmentDefaults[segment] → Hierarchy → User.segmentPermissions.
    * Instrument Rules still merged in margin/order paths via applyInstrumentExposureOverrides().
+   * Cached for 5 minutes to reduce duplicate database queries.
    */
   static async getUserSegmentSettings(user, segment, instrumentType) {
     const segmentKey = TradeService.resolveMarketWatchSegmentKey(segment, instrumentType);
+    const cacheKey = `${user._id}_${segmentKey}_${instrumentType || 'default'}`;
+    
+    // Check cache
+    const cached = segmentSettingsCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < SEGMENT_SETTINGS_CACHE_TTL) {
+      return cached.data;
+    }
+    
+    // Fetch fresh data
     const sysRaw = await SystemSettings.getSettings();
     const adm = TradeService._segmentMapPlain(sysRaw?.adminSegmentDefaults);
     const systemSlicePlain = TradeService._normalizeSegmentSlice(adm[segmentKey]);
@@ -933,6 +946,13 @@ static _SEGMENT_MERGE_FALLBACK = {
       commissionType: result?.commissionType,
       commissionLot: result?.commissionLot
     });
+    
+    // Store in cache
+    segmentSettingsCache.set(cacheKey, {
+      data: result || {},
+      timestamp: Date.now()
+    });
+    
     return result || {};
   }
   
@@ -1422,21 +1442,16 @@ static _SEGMENT_MERGE_FALLBACK = {
     // 1. Check market status (CRYPTO is always open)
     await this.checkMarketOpen(tradeData.segment);
     
-    // 2. Get user and admin
+    // 2. Get user and admin (admin is already populated, no need for separate query)
     const user = await User.findById(userId).populate('admin');
     if (!user) throw new Error('User not found');
     
-    const admin = await Admin.findOne({ adminCode: user.adminCode });
+    const admin = user.admin;
     if (!admin) throw new Error('Admin not found');
     
     // Attach parent admin's segment permissions to user for permission checks
     if (user.admin?.segmentPermissions) {
       user.parentSegmentPermissions = user.admin.segmentPermissions;
-    }
-    
-    // Ensure user.admin is populated for getUserSegmentSettings
-    if (!user.admin) {
-      user.admin = admin;
     }
     
     // 3. Get user's segment and script settings

@@ -74,6 +74,28 @@ import {
   getNseBseUsedMargin,
 } from '../utils/nseBseWallet.js';
 
+// Pre-load frequently used dynamic imports to avoid runtime overhead
+let mcxSessionTimingModule = null;
+let nseBseSessionTimingModule = null;
+let partialCloseServiceModule = null;
+let ledgerAutosquareServiceModule = null;
+let franchiseBrokerageModule = null;
+let orderAvailableMarginModule = null;
+let marginMonitorServiceModule = null;
+let appSocketModule = null;
+
+// Pre-load modules in background
+Promise.all([
+  import('../utils/mcxSessionTiming.js').then(m => { mcxSessionTimingModule = m; }),
+  import('../utils/nseBseSessionTiming.js').then(m => { nseBseSessionTimingModule = m; }),
+  import('./partialCloseService.js').then(m => { partialCloseServiceModule = m; }),
+  import('./ledgerAutosquareService.js').then(m => { ledgerAutosquareServiceModule = m; }),
+  import('../utils/franchiseBrokerage.js').then(m => { franchiseBrokerageModule = m; }),
+  import('../utils/orderAvailableMargin.js').then(m => { orderAvailableMarginModule = m; }),
+  import('./marginMonitorService.js').then(m => { marginMonitorServiceModule = m; }),
+  import('../utils/appSocket.js').then(m => { appSocketModule = m; }),
+]).catch(err => console.error('[TradingService] Pre-load error:', err));
+
 /** Close reasons that count as intraday / ledger / session autosquare (not manual user close). */
 const AUTOSQUARE_CLOSE_REASONS = new Set([
   'TIME_BASED',
@@ -456,7 +478,7 @@ class TradingService {
       const result = await MarketState.isTradingAllowed(segment);
       if (exchange === 'MCX') {
         if (user) {
-          const { isMcxSessionActiveForUser } = await import('../utils/mcxSessionTiming.js');
+          const { isMcxSessionActiveForUser } = mcxSessionTimingModule || (await import('../utils/mcxSessionTiming.js'));
           let sessionUser = user;
           if (!sessionUser.admin?.segmentPermissions) {
             const User = (await import('../models/User.js')).default;
@@ -481,7 +503,7 @@ class TradingService {
       }
 
       if (user && (exchange === 'NSE' || exchange === 'NFO' || exchange === 'BSE' || exchange === 'BFO')) {
-        const { isNseBseSessionActiveForUser } = await import('../utils/nseBseSessionTiming.js');
+        const { isNseBseSessionActiveForUser } = nseBseSessionTimingModule || (await import('../utils/nseBseSessionTiming.js'));
         let sessionUser = user;
         if (!sessionUser.admin?.segmentPermissions) {
           const User = (await import('../models/User.js')).default;
@@ -837,7 +859,7 @@ class TradingService {
         remainingQty = roundBookMoney(Math.max(0, remainingQty - openQty));
       } else {
         if (!partialCloseFn) {
-          const partialMod = await import('./partialCloseService.js');
+          const partialMod = partialCloseServiceModule || (await import('./partialCloseService.js'));
           partialCloseFn = partialMod.executePartialClose;
         }
         const partialRes = await partialCloseFn(userId, openTrade._id.toString(), {
@@ -887,12 +909,19 @@ class TradingService {
     }
 
     // ==================== STEP 1: USER ACTIVE CHECK ====================
+    // Parallelize independent queries for better performance
     const user = await User.findById(userId).populate({
       path: 'admin',
       select:
         'segmentPermissions segmentExplicitKeys restrictions hierarchyPath role adminCode parentId createdBy',
     });
     if (!user) throw new Error('User not found');
+    
+    // Parallelize admin settings and risk config fetch
+    const [admin, riskConfig] = await Promise.all([
+      this.getAdminSettings(user),
+      RiskConfig.getConfig(user.adminCode || 'SYSTEM').catch(() => null)
+    ]);
     
     if (!user.isActive) {
       throw new Error('Account is suspended/inactive. Contact admin.');
@@ -910,8 +939,6 @@ class TradingService {
       user.parentSegmentPermissions = user.admin.segmentPermissions;
     }
 
-    const admin = await this.getAdminSettings(user);
-
     // Validate leverage against admin's maxLeverageFromParent
     if (admin && admin.leverageSettings) {
       const leverageType = orderData.product === 'MIS' ? 'intraday' : 'carryforward';
@@ -921,9 +948,6 @@ class TradingService {
         throw new Error(validation.error);
       }
     }
-
-    // Get risk config for this user
-    const riskConfig = await RiskConfig.getConfig(user.adminCode);
 
     if (user.rmsSettings?.tradingBlocked) {
       throw new Error('Trading blocked. Contact admin.');
@@ -947,7 +971,7 @@ class TradingService {
         { token: orderData.token?.toString() },
         { symbol: orderData.symbol, exchange: orderData.exchange }
       ]
-    });
+    }).select('isEnabled tradingDefaults symbol exchange token lotSize strike optionType segment category').lean();
     
     if (instrument) {
       if (!instrument.isEnabled) {
@@ -1154,7 +1178,7 @@ class TradingService {
 
     if (!(totalQuantity > 0)) {
       const flatWalletField = WalletService.getWalletFieldFromTrade(orderData);
-      const { reseedLedgerReferenceWhenFlat } = await import('./ledgerAutosquareService.js');
+      const { reseedLedgerReferenceWhenFlat } = ledgerAutosquareServiceModule || (await import('./ledgerAutosquareService.js'));
       await reseedLedgerReferenceWhenFlat(userId, flatWalletField);
       return {
         success: true,
@@ -1173,7 +1197,7 @@ class TradingService {
     }
 
     const orderWalletField = WalletService.getWalletFieldFromTrade(orderData);
-    const { assertLedgerAutosquareAllowsNewOrder } = await import('./ledgerAutosquareService.js');
+    const { assertLedgerAutosquareAllowsNewOrder } = ledgerAutosquareServiceModule || (await import('./ledgerAutosquareService.js'));
     await assertLedgerAutosquareAllowsNewOrder(userId, orderWalletField, {
       segment: orderData.segment,
       segmentSettings,
@@ -1338,7 +1362,7 @@ class TradingService {
       lotSize: contractLotSize > 0 ? contractLotSize : lotSize,
     };
     const { resolveFranchiseTradingContext, getUserFranchiseRatePerCrore, computeFranchiseUserOneWayBrokerage } =
-      await import('../utils/franchiseBrokerage.js');
+      franchiseBrokerageModule || (await import('../utils/franchiseBrokerage.js'));
     const franchiseCtx = await resolveFranchiseTradingContext(user, admin);
     const userFranchiseRate = getUserFranchiseRatePerCrore(user);
     let oneWayBrokerage;
@@ -1441,7 +1465,7 @@ class TradingService {
     const isMCXTradeEarly = orderData.exchange === 'MCX' || orderData.segment === 'MCX' ||
                            orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
 
-    const { computeOrderAvailableBalance } = await import('../utils/orderAvailableMargin.js');
+    const { computeOrderAvailableBalance } = orderAvailableMarginModule || (await import('../utils/orderAvailableMargin.js'));
 
     // Use appropriate wallet based on trade type (cash free + open MTM, same as dashboard)
     let availableBalance;
@@ -1920,7 +1944,7 @@ class TradingService {
       if (brk > 0) {
         try {
           const brokerageLeg = trade.brokeragePrepaidRoundTrip ? 'OPEN+CLOSE' : 'OPEN';
-          const { resolveUserDirectAdmin } = await import('../utils/franchiseBrokerage.js');
+          const { resolveUserDirectAdmin } = franchiseBrokerageModule || (await import('../utils/franchiseBrokerage.js'));
           const directAdminForBrokerage = (await resolveUserDirectAdmin(user)) || admin;
           console.log('[placeOrder] Distributing brokerage on open:', {
             brk,
@@ -1967,7 +1991,7 @@ class TradingService {
           trade.entryPrice = executed.entryPrice;
           trade.currentPrice = executed.currentPrice;
           trade.openedAt = executed.openedAt;
-          const { invalidateMarginOpenTradesCache } = await import('./marginMonitorService.js');
+          const { invalidateMarginOpenTradesCache } = marginMonitorServiceModule || (await import('./marginMonitorService.js'));
           invalidateMarginOpenTradesCache?.();
         }
       }
@@ -2115,7 +2139,7 @@ class TradingService {
       ) {
         try {
           const brokerageLeg = trade.brokeragePrepaidRoundTrip ? 'OPEN+CLOSE' : 'OPEN';
-          const { resolveUserDirectAdmin } = await import('../utils/franchiseBrokerage.js');
+          const { resolveUserDirectAdmin } = franchiseBrokerageModule || (await import('../utils/franchiseBrokerage.js'));
           const directAdminForBrokerage = (await resolveUserDirectAdmin(usr)) || adm;
           await TradeService.distributeBrokerage(
             trade,
@@ -2215,7 +2239,7 @@ class TradingService {
         try {
           const turnover = Number(trade.entryPrice || 0) * Number(trade.quantity || 0);
           const { resolveFranchiseTradingContext, getUserFranchiseRatePerCrore, computeFranchiseUserOneWayBrokerage } =
-            await import('../utils/franchiseBrokerage.js');
+            franchiseBrokerageModule || (await import('../utils/franchiseBrokerage.js'));
           const franchiseCtx = await resolveFranchiseTradingContext(user, admin);
           const userFranchiseRate = getUserFranchiseRatePerCrore(user);
           if (franchiseCtx.active && userFranchiseRate > 0) {
@@ -2278,7 +2302,7 @@ class TradingService {
     await trade.save();
 
     try {
-      const { emitToUser } = await import('../utils/appSocket.js');
+      const { emitToUser } = appSocketModule || (await import('../utils/appSocket.js'));
       const plain = typeof trade.toObject === 'function' ? trade.toObject() : trade;
       emitToUser(trade.user, 'trade_update', {
         type: 'TRADE_CLOSED',
