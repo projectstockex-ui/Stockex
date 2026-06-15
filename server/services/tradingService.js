@@ -818,7 +818,10 @@ class TradingService {
     if (segment) query.segment = segment;
     if (productType) query.productType = productType;
 
-    const openOpposite = await Trade.find(query).sort({ openedAt: 1, createdAt: 1, _id: 1 });
+    const openOpposite = await Trade.find(query)
+      .select('_id tradeId user side quantity openedAt')
+      .sort({ openedAt: 1, createdAt: 1, _id: 1 })
+      .lean();
     if (!openOpposite.length) {
       return { remainingQty, nettedQty: 0, closedTrades: [], lastTrade: null };
     }
@@ -2617,23 +2620,30 @@ class TradingService {
       }
     }
 
-    // Credit referral reward for first-time trading win (brokerage amount)
-    if (netPnL > 0) {
-      const brokerageAmount =
-        (charges.brokerage || 0) > 0
-          ? charges.brokerage
-          : trade.commission || 0;
-      if (brokerageAmount > 0) {
-        const referralResult = await creditReferralTradingReward(
-          user._id,
-          brokerageAmount,
-          trade._id
+    // Credit referral reward for every closed trade (% of brokerage)
+    const brokerageAmount =
+      (charges.brokerage || 0) > 0
+        ? charges.brokerage
+        : trade.commission || 0;
+    if (brokerageAmount > 0) {
+      const tradeSegment =
+        trade.exchange === 'MCX' || trade.segment === 'MCX'
+          ? 'mcx'
+          : trade.isCrypto
+            ? 'crypto'
+            : trade.isForex
+              ? 'forex'
+              : 'trading';
+      const referralResult = await creditReferralTradingReward(
+        user._id,
+        brokerageAmount,
+        trade._id,
+        tradeSegment
+      );
+      if (referralResult.credited) {
+        console.log(
+          `[Referral] Credited ${referralResult.amount} to referrer for ${user.userId}'s ${tradeSegment} trade (${trade.symbol})`
         );
-        if (referralResult.credited) {
-          console.log(
-            `[Referral] Credited ${referralResult.amount} to referrer for ${user.userId}'s first winning trade (${trade.symbol})`
-          );
-        }
       }
     }
 
@@ -2650,7 +2660,8 @@ class TradingService {
 
   // Update P&L for all open trades
   static async updateTradesPnL(priceUpdates) {
-    const openTrades = await Trade.find({ status: 'OPEN' });
+    const openTrades = await Trade.find({ status: 'OPEN' })
+      .select('user symbol token pair isCrypto isForex side entryPrice quantity currentPrice unrealizedPnL stopLoss target marginUsed');
     const results = [];
 
     for (const trade of openTrades) {
@@ -2670,16 +2681,29 @@ class TradingService {
         continue;
       }
 
-      // Margin call check
-      const user = await User.findById(trade.user);
-      if (user && trade.unrealizedPnL < 0) {
-        const walletBalance = getNseBseBalance(user);
-        const blockedMargin = user.wallet?.usedMargin || user.wallet?.blocked || 0;
-        const availableBalance = walletBalance - blockedMargin;
-        if (Math.abs(trade.unrealizedPnL) >= availableBalance) {
-          const closeResult = await this.closeTrade(trade._id, currentPrice, 'RMS');
-          results.push({ trade: closeResult.trade, action: 'MARGIN_CALL', pnl: closeResult.pnl });
-        }
+    }
+
+    // Margin call check — batch user fetches to avoid N+1 queries
+    const userIds = [...new Set(openTrades.map((t) => String(t.user)))];
+    const users = await User.find({ _id: { $in: userIds } })
+      .select('wallet nseBseWallet')
+      .lean();
+    const userMap = new Map(users.map((u) => [String(u._id), u]));
+
+    for (const trade of openTrades) {
+      if (trade.isCrypto || trade.isForex) continue;
+      const currentPrice = priceUpdates[trade.symbol];
+      if (!currentPrice) continue;
+      if (trade.unrealizedPnL >= 0) continue;
+
+      const user = userMap.get(String(trade.user));
+      if (!user) continue;
+      const walletBalance = getNseBseBalance(user);
+      const blockedMargin = user.wallet?.usedMargin || user.wallet?.blocked || 0;
+      const availableBalance = walletBalance - blockedMargin;
+      if (Math.abs(trade.unrealizedPnL) >= availableBalance) {
+        const closeResult = await this.closeTrade(trade._id, currentPrice, 'RMS');
+        results.push({ trade: closeResult.trade, action: 'MARGIN_CALL', pnl: closeResult.pnl });
       }
     }
 
@@ -3261,7 +3285,9 @@ class TradingService {
         { target: { $ne: null, $gt: 0 } },
       ],
       $and: [{ $or: or }],
-    });
+    })
+      .select('_id tradeId symbol side stopLoss target')
+      .lean();
 
     const closed = [];
     for (const trade of openTrades) {

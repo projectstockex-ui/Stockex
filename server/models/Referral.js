@@ -59,6 +59,19 @@ const referralSchema = new mongoose.Schema({
       default: null
     }
   },
+  tradingReferralCount: {
+    type: Number,
+    default: 0
+  },
+  tradingReferrals: [
+    {
+      tradeId: { type: String, default: null },
+      amount: { type: Number, default: 0 },
+      brokerageAmount: { type: Number, default: 0 },
+      segment: { type: String, default: 'trading' },
+      creditedAt: { type: Date, default: Date.now }
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now

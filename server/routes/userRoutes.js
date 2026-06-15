@@ -2709,7 +2709,7 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
     if (isNaN(betAmount) || betAmount <= 0) {
       return res.status(400).json({ message: 'Invalid bet amount' });
     }
-    const tValue = settings.tokenValue || 300;
+    const tValue = gameConfig?.ticketPrice || settings.tokenValue || 300;
     const minAmt = (gameConfig.minTickets || 1) * tValue;
     const maxAmt = (gameConfig.maxTickets || 500) * tValue;
     if (betAmount < minAmt) {

@@ -174,8 +174,64 @@ async function processImmediatePayout(referredUserId, amount, segment, metadata 
           ...metadata
         }
       });
+    } else if (segment === 'crypto') {
+      // Credit crypto wallet for crypto referrals
+      referrer.cryptoWallet = referrer.cryptoWallet || {};
+      referrer.cryptoWallet.balance = (referrer.cryptoWallet.balance || 0) + amount;
+      referrer.cryptoWallet.realizedPnL = (referrer.cryptoWallet.realizedPnL || 0) + amount;
+      referrer.cryptoWallet.todayRealizedPnL = (referrer.cryptoWallet.todayRealizedPnL || 0) + amount;
+      await referrer.save();
+      balanceAfter = referrer.cryptoWallet.balance;
+
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: referrer._id,
+        userId: referrer._id,
+        username: referrer.username,
+        type: 'CREDIT',
+        reason: 'REFERRAL_COMMISSION',
+        amount,
+        balanceAfter,
+        description: `Referral commission: ${referredUser.username} (crypto)`,
+        meta: {
+          profitKind: 'REFERRAL_COMMISSION',
+          relatedUserId: referredUserId,
+          segment: 'crypto',
+          referredUsername: referredUser.username,
+          kind: 'referral_payout',
+          ...metadata
+        }
+      });
+    } else if (segment === 'forex') {
+      // Credit forex wallet for forex referrals
+      referrer.forexWallet = referrer.forexWallet || {};
+      referrer.forexWallet.balance = (referrer.forexWallet.balance || 0) + amount;
+      referrer.forexWallet.realizedPnL = (referrer.forexWallet.realizedPnL || 0) + amount;
+      referrer.forexWallet.todayRealizedPnL = (referrer.forexWallet.todayRealizedPnL || 0) + amount;
+      await referrer.save();
+      balanceAfter = referrer.forexWallet.balance;
+
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: referrer._id,
+        userId: referrer._id,
+        username: referrer.username,
+        type: 'CREDIT',
+        reason: 'REFERRAL_COMMISSION',
+        amount,
+        balanceAfter,
+        description: `Referral commission: ${referredUser.username} (forex)`,
+        meta: {
+          profitKind: 'REFERRAL_COMMISSION',
+          relatedUserId: referredUserId,
+          segment: 'forex',
+          referredUsername: referredUser.username,
+          kind: 'referral_payout',
+          ...metadata
+        }
+      });
     } else {
-      // Credit main wallet for other segments (crypto, forex, etc.)
+      // Credit main wallet for any other segments
       referrer.wallet = referrer.wallet || {};
       referrer.wallet.cashBalance = (referrer.wallet.cashBalance || 0) + amount;
       referrer.wallet.tradingBalance = (referrer.wallet.tradingBalance || 0) + amount;
@@ -185,7 +241,6 @@ async function processImmediatePayout(referredUserId, amount, segment, metadata 
       await referrer.save();
       balanceAfter = referrer.wallet.balance;
 
-      // Create wallet ledger entry
       await WalletLedger.create({
         ownerType: 'USER',
         ownerId: referrer._id,

@@ -3319,7 +3319,8 @@ static _SEGMENT_MERGE_FALLBACK = {
   // Update live P&L for all open trades
   static async updateLivePnL(priceUpdates) {
     // priceUpdates = { 'SYMBOL': price, ... }
-    const openTrades = await Trade.find({ status: 'OPEN' });
+    const openTrades = await Trade.find({ status: 'OPEN' })
+      .select('symbol user unrealizedPnL currentPrice entryPrice side quantity');
     
     for (const trade of openTrades) {
       const currentPrice = priceUpdates[trade.symbol];
