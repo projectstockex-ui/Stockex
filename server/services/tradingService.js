@@ -1053,18 +1053,9 @@ class TradingService {
     const rawScriptSettings = TradeService.getUserScriptSettings(user, orderData.symbol, orderData.category);
     const scriptSettings = TradeService.mergeScriptSettingsWithInstrument(instrument, rawScriptSettings);
     
-    // Validate segment is enabled
-    // For crypto/forex, skip enabled check if segmentSettings is null or not explicitly set
-    const isCryptoOrForex = orderData.isCrypto || orderData.exchange === 'BINANCE' ||
-      ['FOREX', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'].includes(String(orderData.segment || '').toUpperCase()) ||
-      orderData.isForex || orderData.exchange === 'FOREX';
-    if (!isCryptoOrForex && !segmentSettings.enabled) {
+    // Validate segment is enabled for all segments (including crypto/forex/MCX)
+    if (!segmentSettings?.enabled) {
       throw new Error(`Trading in ${orderData.segment} segment is not enabled for your account`);
-    }
-    // For crypto/forex, if segmentSettings exists but is not enabled, still allow trading with default settings
-    if (isCryptoOrForex && (!segmentSettings || !segmentSettings.enabled)) {
-      console.log(`[placeOrder] Crypto/forex segment ${orderData.segment} not explicitly enabled, using default settings`);
-      // Don't throw error for crypto/forex
     }
 
     if (segmentSettings.defaultIntradayOnly === true) {

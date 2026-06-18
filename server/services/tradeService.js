@@ -1492,18 +1492,9 @@ static _SEGMENT_MERGE_FALLBACK = {
       user,
     });
 
-    // 4. Validate segment is enabled for user
-    // For crypto/forex, skip enabled check if segmentSettings is null or not explicitly set
-    const isCryptoOrForex = tradeData.isCrypto || tradeData.exchange === 'BINANCE' ||
-      ['FOREX', 'FOREXFUT', 'FOREXOPT'].includes(String(tradeData.segment || '').toUpperCase()) ||
-      tradeData.isForex || tradeData.exchange === 'FOREX';
-    if (!isCryptoOrForex && !segmentSettings.enabled) {
+    // 4. Validate segment is enabled for user (all segments including crypto/forex/MCX)
+    if (!segmentSettings?.enabled) {
       throw new Error(`Trading in ${tradeData.segment} segment is not enabled for your account`);
-    }
-    // For crypto/forex, if segmentSettings exists but is not enabled, still allow trading with default settings
-    if (isCryptoOrForex && (!segmentSettings || !segmentSettings.enabled)) {
-      console.log(`[placeOrder] Crypto/forex segment ${tradeData.segment} not explicitly enabled, using default settings`);
-      // Don't throw error for crypto/forex
     }
 
     await this.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, tradeData.segment);
