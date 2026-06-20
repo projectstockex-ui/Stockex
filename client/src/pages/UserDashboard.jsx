@@ -5084,7 +5084,17 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               onClick={() => executeQuickTrade('buy')}
               disabled={quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)}
               className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${(quickTrading || !selectedInstrument || (cryptoOnly && !isCryptoTradingOpen) || (mcxOnly && !isMcxTradingOpen) || (nseBseOnly && !isNseBseTradingOpen)) ? 'bg-gray-600 cursor-not-allowed opacity-50' : 'bg-green-600 hover:bg-green-700'}`}
-              title={selectedInstrument ? 'Buy' : 'Select an instrument first'}
+              title={
+                !selectedInstrument
+                  ? 'Select an instrument first'
+                  : (mcxOnly && !isMcxTradingOpen)
+                    ? `MCX trading closed: ${formatMcxSessionRange(segmentPermissionsGate?.MCXFUT || segmentPermissionsGate?.MCX || {}) || 'see admin timing'}`
+                    : (nseBseOnly && !isNseBseTradingOpen)
+                      ? `NSE/BSE trading closed: ${formatNseBseSessionRange(segmentPermissionsGate?.NSEFUT || {}) || 'see admin timing'}`
+                      : (cryptoOnly && !isCryptoTradingOpen)
+                        ? 'Crypto trading closed'
+                        : 'Buy'
+              }
             >
               B
             </button>
@@ -6361,7 +6371,21 @@ const TradingPanel = ({
       }
       return;
     }
-    
+
+    // Check MCX time window
+    if (isMcxOnly && !isMcxTradingOpen) {
+      const mcxSet = segmentPermissionsGate?.MCXFUT || segmentPermissionsGate?.MCX || {};
+      rejectOrder(`MCX trading is closed. Trading window: ${formatMcxSessionRange(mcxSet) || 'see admin timing'}`);
+      return;
+    }
+
+    // Check NSE/BSE time window
+    if (isNseBseOnly && !isNseBseTradingOpen) {
+      const nseSet = segmentPermissionsGate?.NSEFUT || {};
+      rejectOrder(`NSE/BSE trading is closed. Trading window: ${formatNseBseSessionRange(nseSet) || 'see admin timing'}`);
+      return;
+    }
+
     const sideLower =
       explicitSide === 'buy' || explicitSide === 'sell'
         ? explicitSide
@@ -6982,6 +7006,17 @@ const TradingPanel = ({
                 ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                 : 'bg-dark-700 text-gray-400'
           }`}
+          title={
+            (isMcxOnly && !isMcxTradingOpen)
+              ? `MCX trading closed: ${formatMcxSessionRange(segmentPermissionsGate?.MCXFUT || segmentPermissionsGate?.MCX || {}) || 'see admin timing'}`
+              : (isNseBseOnly && !isNseBseTradingOpen)
+                ? `NSE/BSE trading closed: ${formatNseBseSessionRange(segmentPermissionsGate?.NSEFUT || {}) || 'see admin timing'}`
+                : (isCryptoOnly && !isCryptoTradingOpen)
+                  ? 'Crypto trading closed'
+                  : !canBuyAtAsk
+                    ? 'Ask price not available'
+                    : 'Buy'
+          }
         >
           <div className="text-xs opacity-70">{isUsdSpot ? 'Ask' : 'Ask'}</div>
           <div className="text-lg">{stripeAskPx != null && !isNaN(stripeAskPx) ? stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
@@ -10821,6 +10856,10 @@ const BuySellModal = ({
 
   const isForex = isForexInstrument(instrument);
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.exchange === 'BINANCE');
+  const isMcxOnly =
+    instrument?.exchange === 'MCX' ||
+    ['MCX', 'MCXFUT', 'MCXOPT'].includes(String(instrument?.segment || '').toUpperCase());
+  const isNseBseOnly = isNseBseSegmentRow(instrument || {});
   const isUsdSpot = isUsdSpotInstrument(instrument);
 
   // Crypto timing check - uses dynamic admin settings from localSegmentPermissions
@@ -11171,6 +11210,24 @@ const BuySellModal = ({
         rejectOrder('Crypto trading window not set');
       }
       return;
+    }
+
+    // Check MCX time window
+    if (isMcxOnly) {
+      const mcxSet = localSegmentPermissions?.MCXFUT || localSegmentPermissions?.MCX || {};
+      if (!isMcxWindowLive(mcxSet)) {
+        rejectOrder(`MCX trading is closed. Trading window: ${formatMcxSessionRange(mcxSet) || 'see admin timing'}`);
+        return;
+      }
+    }
+
+    // Check NSE/BSE time window
+    if (isNseBseOnly) {
+      const nseSet = localSegmentPermissions?.NSEFUT || {};
+      if (!isNseBseWindowLive(nseSet)) {
+        rejectOrder(`NSE/BSE trading is closed. Trading window: ${formatNseBseSessionRange(nseSet) || 'see admin timing'}`);
+        return;
+      }
     }
 
     if (totalQuantity <= 0) {

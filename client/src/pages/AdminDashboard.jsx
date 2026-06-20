@@ -34389,12 +34389,14 @@ function normalizeMongoMapOfObjects(raw) {
 }
 
 
-
+  
 // System Default Settings (Super Admin only)
 
 const SystemDefaultSettings = () => {
 
   const { admin } = useAuth();
+
+  const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
 
   const [loading, setLoading] = useState(true);
 
